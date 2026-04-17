@@ -1,9 +1,3 @@
----
-title: agent-staff-engineer
-version: 0.1.0
-status: build + test complete; ready for first kit install
----
-
 # agent-staff-engineer
 
 [![npm](https://img.shields.io/npm/v/@ctxr/agent-staff-engineer)](https://www.npmjs.com/package/@ctxr/agent-staff-engineer)
