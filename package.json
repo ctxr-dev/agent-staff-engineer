@@ -1,6 +1,6 @@
 {
   "name": "@ctxr/agent-staff-engineer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Claude Code agent that acts as a staff engineer for any project: GitHub as source of truth, full PR lifecycle automation, two human gates (merge + Done). Installable via @ctxr/kit, self-bootstraps on first run.",
   "type": "module",
   "license": "MIT",
