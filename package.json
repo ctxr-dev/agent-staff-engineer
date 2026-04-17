@@ -23,6 +23,8 @@
     "agentskills"
   ],
   "files": [
+    "package.json",
+    "npm-shrinkwrap.json",
     "AGENT.md",
     "README.md",
     "INSTALL.md",
