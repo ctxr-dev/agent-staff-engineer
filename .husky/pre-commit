@@ -1,0 +1,1 @@
+npm run preflight && npm run validate && npm run lint

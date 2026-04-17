@@ -450,7 +450,6 @@ to point at the same path so changes are picked up automatically.
 - **Symlinks**: auto-update works, but there is no place to add project-specific overrides.
 - **Wrappers**: give us auto-update (paths stay stable, `git pull` refreshes canonical content behind the include) AND a per-wrapper override surface that survives updates.
 
-
 ## Installer flow (one pass)
 
 ```text
