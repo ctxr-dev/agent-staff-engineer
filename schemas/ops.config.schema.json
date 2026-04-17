@@ -1,0 +1,580 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agent-staff-engineer.local/ops.config.schema.json",
+  "title": "agent-staff-engineer ops.config",
+  "description": "Contract between the portable agent bundle and any target project. Every skill, rule, template, and script reads this file via scripts/lib/schema.mjs. Projects never hand-write this file; bootstrap-ops-config produces it from live project state plus the interview answers.",
+  "type": "object",
+  "required": ["project", "github", "labels", "workflow", "paths", "stack"],
+  "additionalProperties": false,
+
+  "properties": {
+    "$schemaVersion": {
+      "type": "string",
+      "description": "Schema version this config targets. Installer compares against the bundled schema version and triggers --update if they diverge.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+
+    "project": {
+      "type": "object",
+      "required": ["name", "repo", "default_branch", "principals"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Short project name. Used in CLAUDE.md, PR bodies, report headers.",
+          "minLength": 1
+        },
+        "org": {
+          "type": "string",
+          "description": "Optional GitHub org or user owning the primary repo. Derived from repo field if absent."
+        },
+        "repo": {
+          "type": "string",
+          "description": "Primary repo in owner/name form (GitHub-style ASCII identifiers only).",
+          "pattern": "^[A-Za-z0-9_.][A-Za-z0-9_.-]*/[A-Za-z0-9_.][A-Za-z0-9_.-]*$"
+        },
+        "default_branch": {
+          "type": "string",
+          "description": "Default branch to open PRs against.",
+          "minLength": 1
+        },
+        "principals": {
+          "type": "object",
+          "required": ["push_allowed", "reviewers_default"],
+          "additionalProperties": false,
+          "properties": {
+            "push_allowed": {
+              "type": "array",
+              "description": "GitHub logins or identifiers permitted to push to the default branch. The agent never pushes to this branch itself.",
+              "items": { "type": "string", "minLength": 1 },
+              "minItems": 1
+            },
+            "reviewers_default": {
+              "type": "array",
+              "description": "GitHub logins requested as reviewers on every PR the agent opens. May include Copilot.",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+
+    "github": {
+      "type": "object",
+      "required": ["dev_projects", "release_projects"],
+      "additionalProperties": false,
+      "properties": {
+        "auth_login": {
+          "type": "string",
+          "description": "The gh login under which the agent operates. Informational; skills read live gh state for auth."
+        },
+        "dev_projects": {
+          "type": "array",
+          "description": "GitHub Projects v2 tracking dev work. Zero entries means no dev project; skills that require one will halt and ask.",
+          "items": { "$ref": "#/definitions/projectTarget" }
+        },
+        "release_projects": {
+          "type": "array",
+          "description": "GitHub Projects v2 tracking release umbrellas. Zero entries disables release-tracker.",
+          "items": { "$ref": "#/definitions/projectTarget" }
+        },
+        "observed_repos": {
+          "type": "array",
+          "description": "Additional repos the agent reads from and optionally writes to. Useful for cross-repo regression lookups or shared libs.",
+          "items": { "$ref": "#/definitions/repoTarget" },
+          "default": []
+        }
+      }
+    },
+
+    "labels": {
+      "type": "object",
+      "required": ["type", "area", "priority", "intent", "size"],
+      "additionalProperties": false,
+      "description": "Prefixed label scopes. Skills reason about labels by scope prefix, not by hardcoded names.",
+      "properties": {
+        "type": {
+          "type": "array",
+          "description": "Scope type/*. Example values: feature, bug, task, refactor, docs, chore.",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "area": {
+          "type": "array",
+          "description": "Scope area/*. Project-specific. Example defaults: frontend, backend, data, security, performance, compliance, ux, devx, testing, docs.",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "priority": {
+          "type": "array",
+          "description": "Scope priority/*. Example values: p0-blocker, p1-high, p2-medium, p3-low.",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "intent": {
+          "type": "array",
+          "description": "Scope intent/*. One release umbrella is created per intent value. Example: initial, wave-1, wave-2, post-launch.",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "size": {
+          "type": "array",
+          "description": "Scope size/*. Example values: xs, s, m, l, xl.",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "automation": {
+          "type": "array",
+          "description": "Scope automation/*. Labels the agent itself applies. Example: auto-regression, auto-release-tracked.",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "state_modifiers": {
+          "type": "array",
+          "description": "Labels stacked on top of status to express blocked, deferred, cancelled, and similar modifiers.",
+          "items": { "type": "string", "minLength": 1 },
+          "default": ["blocked", "deferred", "cancelled"]
+        }
+      }
+    },
+
+    "workflow": {
+      "type": "object",
+      "required": ["phase_term", "branch_patterns", "commits", "pr"],
+      "additionalProperties": false,
+      "properties": {
+        "phase_term": {
+          "type": "string",
+          "description": "The word used in label scope intent/* and in release umbrella titles. Default: wave.",
+          "default": "wave",
+          "minLength": 1
+        },
+        "branch_patterns": {
+          "type": "object",
+          "required": ["feature", "fix", "chore", "refactor", "docs"],
+          "additionalProperties": false,
+          "description": "Branch name templates per type. Placeholders: {issue}, {slug}.",
+          "properties": {
+            "feature":  { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
+            "fix":      { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
+            "chore":    { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
+            "refactor": { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
+            "docs":     { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" }
+          }
+        },
+        "commits": {
+          "type": "object",
+          "required": ["style", "signed"],
+          "additionalProperties": false,
+          "properties": {
+            "style": {
+              "type": "string",
+              "enum": ["conventional", "free-form"],
+              "default": "conventional"
+            },
+            "signed": {
+              "type": "boolean",
+              "description": "Whether commits are GPG or SSH signed. Agent respects this but does not configure keys.",
+              "default": false
+            },
+            "scope_source": {
+              "type": "string",
+              "enum": ["primary_area_label", "issue_title_keyword", "manual"],
+              "default": "primary_area_label"
+            }
+          }
+        },
+        "pr": {
+          "type": "object",
+          "required": ["title", "body_template", "link_issue_with", "request_reviewers"],
+          "additionalProperties": false,
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Title template. Placeholders: {type}, {summary}.",
+              "pattern": ".*\\{type\\}.*\\{summary\\}.*"
+            },
+            "body_template": {
+              "type": "string",
+              "description": "Path to the PR body template. May be bundle-relative (agents/agent-staff-engineer/templates/pr.md) or project-relative."
+            },
+            "link_issue_with": {
+              "type": "string",
+              "description": "Template for the issue link line. Placeholder: {issue}.",
+              "pattern": ".*\\{issue\\}.*",
+              "default": "Closes #{issue}"
+            },
+            "request_reviewers": {
+              "type": "array",
+              "description": "Reviewers the agent requests on every PR. Usually references principals.reviewers_default plus Copilot if available.",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "tests_required": {
+              "type": "array",
+              "description": "Test categories that must pass locally before the PR opens.",
+              "items": {
+                "type": "string",
+                "enum": ["unit", "integration", "contract", "e2e"]
+              },
+              "default": ["unit", "integration"]
+            },
+            "e2e_required_on": {
+              "type": "array",
+              "description": "Area labels that trigger the e2e test gate. Empty means e2e is never required.",
+              "items": { "type": "string", "minLength": 1 },
+              "default": []
+            },
+            "self_review_required": {
+              "type": "boolean",
+              "description": "If true, dev-loop files a self-review report under paths.reports before opening the PR.",
+              "default": true
+            },
+            "link_release_umbrella": {
+              "type": "boolean",
+              "description": "If true, the agent updates the linked release umbrella when a PR opens or closes.",
+              "default": true
+            },
+            "update_plan_oneliner": {
+              "type": "boolean",
+              "description": "If true, plan-keeper updates the one-liner checkbox when the gate crosses.",
+              "default": true
+            }
+          }
+        },
+        "release": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "umbrella_title": {
+              "type": "string",
+              "description": "Title template for Release umbrella issues. Placeholder: {intent_label_pretty}.",
+              "default": "{intent_label_pretty} Release"
+            }
+          }
+        },
+        "code_review": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Self-review / code-review provider used by dev-loop before opening a PR. Defaults to the external ctxr-dev/skill-code-review skill.",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": ["ctxr-skill-code-review", "internal-template", "none"],
+              "default": "ctxr-skill-code-review",
+              "description": "ctxr-skill-code-review invokes the external multi-specialist skill. internal-template uses the bundle's code-review-report.md as a fallback. none skips the self-review step entirely (only allowed if workflow.pr.self_review_required is false)."
+            },
+            "provider_url": {
+              "type": "string",
+              "description": "Canonical source URL for the selected provider (informational).",
+              "default": "https://github.com/ctxr-dev/skill-code-review"
+            },
+            "invocation": {
+              "type": "string",
+              "description": "Command or slash-skill the dev-loop issues to run the review. For ctxr-skill-code-review this is usually \"/skill-code-review\".",
+              "default": "/skill-code-review"
+            },
+            "mode": {
+              "type": "string",
+              "description": "Provider-specific mode hint. For ctxr-skill-code-review: diff (default), full, thorough, fast.",
+              "default": "diff"
+            },
+            "output_format": {
+              "type": "string",
+              "enum": ["markdown", "json"],
+              "default": "markdown"
+            },
+            "report_dir": {
+              "type": "string",
+              "description": "Where the review artefact lands. Must be inside paths.dev_working_dir. Defaults to paths.reports.",
+              "default": ".development/shared/reports"
+            },
+            "block_on_verdict": {
+              "type": "array",
+              "description": "Verdict values that block the PR from opening. For ctxr-skill-code-review the verdict space is GO / CONDITIONAL / NO-GO.",
+              "items": { "type": "string", "minLength": 1 },
+              "default": ["NO-GO"]
+            },
+            "install_hint": {
+              "type": "string",
+              "description": "One-line hint shown if the provider is configured but not installed in the target project.",
+              "default": "Run: npx @ctxr/kit install @ctxr/skill-code-review  (or clone https://github.com/ctxr-dev/skill-code-review into .claude/skills/)"
+            }
+          }
+        }
+      }
+    },
+
+    "paths": {
+      "type": "object",
+      "required": ["plans_root", "plan_states", "dev_working_dir", "templates", "agent_bundle_dir", "wrappers"],
+      "additionalProperties": false,
+      "description": "Working paths inside the target project. The agent reads and writes only inside these. It never writes under daily/ or knowledge/.",
+      "properties": {
+        "agent_bundle_dir": {
+          "type": "string",
+          "description": "Where the agent-staff-engineer bundle lives inside the target project. The bundle remains its own git repo at this path; updates happen via 'git pull' inside the folder. All canonical skills, rules, memory seeds, templates, schemas, and scripts stay here and never copy out.",
+          "default": ".claude/agents/agent-staff-engineer"
+        },
+        "wrappers": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Where install.mjs writes thin wrapper files that point at canonical content inside agent_bundle_dir. These are the only files the installer writes outside the bundle folder. Every wrapper contains a marker line; content above the marker is regenerated on every 'install.mjs --update' run, content below is preserved byte-for-byte so user overrides survive updates.",
+          "required": ["skills_dir", "rules_dir", "marker"],
+          "properties": {
+            "skills_dir": {
+              "type": "string",
+              "description": "Directory where skill wrappers are written. One <name>/SKILL.md per canonical skill.",
+              "default": ".claude/skills"
+            },
+            "rules_dir": {
+              "type": "string",
+              "description": "Directory where rule wrappers are written. One <name>.md per canonical rule.",
+              "default": ".claude/rules"
+            },
+            "marker": {
+              "type": "string",
+              "description": "Exact string that delimits the auto-regenerated section from user overrides. Every wrapper contains this marker on its own line. Above the marker is refreshed on every update. Below the marker is preserved byte-for-byte.",
+              "default": "<!-- ============ PROJECT OVERRIDES BELOW (preserved across agent updates) ============ -->",
+              "minLength": 8
+            },
+            "header_notice": {
+              "type": "string",
+              "description": "Short notice rendered at the top of every wrapper explaining the model in one sentence.",
+              "default": "Wrapper file. Canonical content lives in the agent bundle and updates via 'git pull' inside the bundle. Edit below the overrides marker only; everything above is regenerated."
+            },
+            "preserve_user_below_marker": {
+              "type": "boolean",
+              "description": "If true (default), install.mjs never touches bytes below the marker on update. If false, install.mjs rewrites the entire wrapper on every update (not recommended; loses user customisation).",
+              "default": true
+            }
+          }
+        },
+        "plans_root": {
+          "type": "string",
+          "description": "Root of the plan folder tree.",
+          "default": ".claude/plans"
+        },
+        "plan_states": {
+          "type": "array",
+          "description": "State folders under plans_root. Only the last entry (typically done) is nested by date.",
+          "items": { "type": "string", "minLength": 1 },
+          "default": ["todo", "in-progress", "in-review", "blocked", "done"]
+        },
+        "done_nested": {
+          "type": "boolean",
+          "description": "If true, the done/ state folder is nested under {yyyy}/{mm}/{dd}/.",
+          "default": true
+        },
+        "done_pattern": {
+          "type": "string",
+          "description": "Pattern relative to plans_root when a plan moves to done. Placeholders: {yyyy}, {mm}, {dd}, {slug}.",
+          "default": "done/{yyyy}/{mm}/{dd}/{slug}"
+        },
+        "dev_working_dir": {
+          "type": "string",
+          "description": "Working directory for generated artefacts. Splits into shared/ (committed), local/ (gitignored), and cache/ (gitignored) subtrees via dev_working_{shared,local,cache}_subdir. Never equal to a daily/ or knowledge/ path.",
+          "default": ".development",
+          "pattern": "^\\.[^/]*(/[^/]+)*$"
+        },
+        "gitignore_dev_working_dir": {
+          "type": "boolean",
+          "description": "If true, installer ensures per-user subfolders under dev_working_dir (local/, cache/) are listed in .gitignore. The shared/ subtree is deliberately NOT ignored so team conventions, reports, and runbooks commit with the project.",
+          "default": true
+        },
+        "dev_working_shared_subdir": {
+          "type": "string",
+          "description": "Sub-path (relative to dev_working_dir) that holds committed, team-shared content (configs, reports, runbooks). Must be a single path segment or relative nested path; no leading slash, no '..'.",
+          "default": "shared",
+          "pattern": "^[A-Za-z0-9_.][A-Za-z0-9_./-]*$",
+          "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+        },
+        "dev_working_local_subdir": {
+          "type": "string",
+          "description": "Sub-path (relative to dev_working_dir) that holds per-user artefacts. Always gitignored. Must be a single path segment or relative nested path; no leading slash, no '..'.",
+          "default": "local",
+          "pattern": "^[A-Za-z0-9_.][A-Za-z0-9_./-]*$",
+          "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+        },
+        "dev_working_cache_subdir": {
+          "type": "string",
+          "description": "Sub-path (relative to dev_working_dir) that holds regenerable caches. Always gitignored. Must be a single path segment or relative nested path; no leading slash, no '..'.",
+          "default": "cache",
+          "pattern": "^[A-Za-z0-9_.][A-Za-z0-9_./-]*$",
+          "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+        },
+        "templates": {
+          "type": "string",
+          "description": "Where templates live. Usually a bundle-relative path so updates to the bundle reach existing installs.",
+          "default": "agents/agent-staff-engineer/templates"
+        },
+        "reports": {
+          "type": "string",
+          "description": "Where self-review and other generated reports land. Defaults into the shared subtree so the team sees review provenance; configurable to local/ when a project prefers per-user reports.",
+          "default": ".development/shared/reports"
+        },
+        "runbooks": {
+          "type": "string",
+          "description": "Where skill-authored runbooks land. Defaults into the shared subtree (team-visible).",
+          "default": ".development/shared/runbooks"
+        }
+      }
+    },
+
+    "stack": {
+      "type": "object",
+      "required": ["language", "testing"],
+      "additionalProperties": false,
+      "description": "Tags describing the project's tech. Controls which memory seeds install and which test commands dev-loop runs.",
+      "properties": {
+        "language": {
+          "type": "array",
+          "description": "Primary programming languages used in the project.",
+          "items": {
+            "type": "string",
+            "enum": ["swift", "kotlin", "typescript", "javascript", "python", "go", "rust", "ruby", "java", "csharp", "cpp", "c", "elixir", "php", "scala", "dart", "objectivec", "shell", "other"]
+          },
+          "minItems": 1
+        },
+        "testing": {
+          "type": "array",
+          "description": "Testing frameworks used by the project.",
+          "items": {
+            "type": "string",
+            "enum": ["xcuitest", "swifttesting", "xctest", "jest", "vitest", "mocha", "playwright", "cypress", "testcafe", "pytest", "unittest", "go-test", "cargo-test", "rspec", "junit", "detox", "espresso", "other"]
+          },
+          "default": []
+        },
+        "platform": {
+          "type": "array",
+          "description": "Deployment platforms the project targets.",
+          "items": {
+            "type": "string",
+            "enum": ["ios", "android", "macos", "windows", "linux", "web", "nodejs", "chrome-extension", "firefox-extension", "vscode-extension", "cli", "api-service", "mobile-cross-platform", "embedded", "other"]
+          },
+          "default": []
+        }
+      }
+    },
+
+    "area_keywords": {
+      "type": "object",
+      "description": "Maps each area/* label value to a list of keywords. Used by regression-handler lookups and by rollout-to-issues conversion.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 },
+        "minItems": 1
+      },
+      "default": {}
+    },
+
+    "compliance": {
+      "type": "object",
+      "description": "Compliance context declared during the bootstrap interview. Adapt-system may expand this later. Empty means none.",
+      "additionalProperties": false,
+      "properties": {
+        "regimes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["hipaa", "gdpr", "ccpa", "soc2", "iso27001", "pci", "mhmda", "appi", "pipa", "lgpd", "none"]
+          },
+          "default": ["none"]
+        },
+        "data_classes": {
+          "type": "array",
+          "description": "Sensitive data classes handled by the project. Influences proposed rules and labels.",
+          "items": {
+            "type": "string",
+            "enum": ["phi", "pii", "payment", "health", "financial", "biometric", "location", "child-data", "none"]
+          },
+          "default": ["none"]
+        }
+      }
+    }
+  },
+
+  "definitions": {
+    "depthValue": {
+      "description": "Observation depth for a GitHub target. `labeled:<label>` is the only parameterized form.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": ["full", "umbrella-only", "assigned-to-principals", "issues-only", "read-only"]
+        },
+        {
+          "type": "string",
+          "pattern": "^labeled:[A-Za-z0-9._/\\-]+$"
+        }
+      ]
+    },
+
+    "statusValues": {
+      "type": "object",
+      "required": ["backlog", "in_progress", "done"],
+      "additionalProperties": false,
+      "description": "Mapping of the agent's status vocabulary to the project's GitHub Project status option names.",
+      "properties": {
+        "backlog":     { "type": "string", "minLength": 1 },
+        "ready":       { "type": "string", "minLength": 1 },
+        "in_progress": { "type": "string", "minLength": 1 },
+        "in_review":   { "type": "string", "minLength": 1 },
+        "done":        { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "projectTarget": {
+      "type": "object",
+      "required": ["owner", "number", "depth", "status_field", "status_values"],
+      "additionalProperties": false,
+      "properties": {
+        "owner": {
+          "type": "string",
+          "description": "Org or user that owns the project.",
+          "minLength": 1
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "role": {
+          "type": "string",
+          "enum": ["dev", "release"],
+          "description": "Whether this project tracks dev work or release umbrellas."
+        },
+        "depth": { "$ref": "#/definitions/depthValue" },
+        "status_field": {
+          "type": "string",
+          "default": "Status"
+        },
+        "status_values": { "$ref": "#/definitions/statusValues" },
+        "fields": {
+          "type": "array",
+          "description": "Custom project fields the agent expects or reconciles.",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "label_scope": {
+          "type": ["string", "null"],
+          "description": "If set, agent only operates on items carrying this label.",
+          "default": null
+        }
+      }
+    },
+
+    "repoTarget": {
+      "type": "object",
+      "required": ["owner", "name", "depth"],
+      "additionalProperties": false,
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "name":  { "type": "string", "minLength": 1 },
+        "scope": {
+          "type": "string",
+          "description": "Optional narrowing pattern. Examples: issues-only, issues-with-label:cross-repo, prs-only.",
+          "default": ""
+        },
+        "depth": { "$ref": "#/definitions/depthValue" }
+      }
+    }
+  }
+}

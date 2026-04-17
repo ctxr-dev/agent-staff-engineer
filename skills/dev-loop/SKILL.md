@@ -1,0 +1,138 @@
+---
+name: dev-loop
+description: Drives one dev issue from branch creation through local review, self-review, and PR opening, up to the In review status. Stops cold at the two human gates; never merges a PR, never sets an issue to Done.
+trigger_on:
+  - User picks a dev issue and asks the agent to work on it.
+  - User explicitly runs /dev-loop <issue-number>.
+do_not_trigger_on:
+  - Issues in `Done` or closed without merge.
+  - Targets where the dev_project has `depth: read-only`.
+  - Without a valid ops.config.json (halt and point at bootstrap-ops-config).
+writes_to_github: yes, via github-sync only (branch push, PR open, reviewer requests, status updates to In review, comments)
+writes_to_filesystem: yes, code edits plus a self-review report under paths.reports
+---
+
+# dev-loop
+
+Before acting, read the target project's `.claude/ops.config.json`. Refuse to run if missing or invalid.
+
+Hard rule baked in: **the dev-loop never merges a PR and never sets a dev issue to Done.** Both are human gates. Every code path ends either at `In review` (awaiting your merge) or at a halt with an explicit message.
+
+## Inputs
+
+- Issue reference (number or URL) on a `dev_project` with `depth` permitting writes.
+- Optional work plan or acceptance-criteria override the user supplies up front.
+
+## Outputs
+
+- A branch following `workflow.branch_patterns.<type>`.
+- Commits following `workflow.commits.style`, with scope derived per `workflow.commits.scope_source`.
+- A self-review artefact under `workflow.code_review.report_dir` (default `.development/shared/reports/`).
+- An open PR rendered from `templates/pr.md` with `workflow.pr.link_issue_with` referencing the issue.
+- The dev issue updated to `In review` (via `github-sync`).
+- Linked Release umbrella updated (via `release-tracker` triggered by `github-sync`).
+- Plan one-liner updated (via `plan-keeper`) when `workflow.pr.update_plan_oneliner` is true.
+
+## State machine
+
+```text
+[issue: Backlog or Ready]
+      |
+      v
+[branch from project.default_branch using workflow.branch_patterns]
+      |
+      v
+[edit / implement against acceptance criteria]
+      |
+      v
+[local review loop]
+   format -> lint -> type -> unit -> integration -> e2e*
+   * e2e required when any area label is in workflow.pr.e2e_required_on
+      |
+      |  any failure: halt, return to edit, do not push
+      v
+[self-review artefact produced]
+   provider = workflow.code_review.provider
+     = ctxr-skill-code-review (default): invoke the external skill
+     = internal-template: render templates/code-review-report.md
+     = none: skip only if workflow.pr.self_review_required is false
+   verdict in workflow.code_review.block_on_verdict halts the flow
+      |
+      v
+[git push branch]
+      |
+      v
+[github-sync: open_pr using templates/pr.md]
+[github-sync: request_review per project.principals.reviewers_default]
+[github-sync: update_issue_status -> In review]
+[plan-keeper: flip plan one-liner to [x]]
+[release-tracker: recompute linked umbrella status]
+      |
+      v
+[address review comments loop]
+   each push keeps the issue at In review
+      |
+      v
+***  HUMAN GATE 1: merge PR  ***
+   dev-loop exits without further action on merge
+      |
+      v
+***  HUMAN GATE 2: mark issue Done  ***
+   dev-loop never initiates this step
+```
+
+## Code-review provider integration
+
+Before pushing or opening the PR, the self-review step runs per `workflow.code_review`:
+
+1. Look up `workflow.code_review.provider`.
+2. If `ctxr-skill-code-review`, check availability in the target's installed skills. If missing, print `workflow.code_review.install_hint` and ask the user whether to fall back to the internal template or to halt. No silent fallback.
+3. Invoke the provider with `workflow.code_review.invocation`, `mode`, `output_format`, scope = diff-since-default-branch.
+4. Write the artefact to `workflow.code_review.report_dir`.
+5. Parse the verdict; if in `workflow.code_review.block_on_verdict`, halt with the verdict and reviewer summary.
+
+The ctxr-skill-code-review default is the recommended path. Projects opt out via `workflow.code_review.provider = "internal-template"` (falls back to [../../templates/code-review-report.md](../../templates/code-review-report.md)) or `"none"` when `workflow.pr.self_review_required` is false.
+
+## Commit policy
+
+- `workflow.commits.style = conventional`: title `<type>(<scope>): <summary>`, body contains the issue reference.
+- Scope source per `workflow.commits.scope_source` (default `primary_area_label`).
+- `workflow.commits.signed`: if true, sign commits; do not configure keys.
+
+## Push policy
+
+- Push to the feature branch only. Never to `project.default_branch`.
+- If push is rejected because the branch was force-pushed by someone else, halt and surface; do not force-push.
+
+## Idempotency
+
+- Re-invoking `dev-loop` on an issue whose branch already exists resumes from the appropriate stage based on current branch/PR state: if no diff, prompt user; if diff but no PR, proceed from push; if PR open, proceed to comment-address loop.
+- Does not duplicate PRs, reports, or status updates.
+
+## Failure modes
+
+- **Tests fail**: halt at the failing stage; do not push.
+- **Code-review provider unavailable and fallback declined**: halt; surface `install_hint`.
+- **Code-review verdict in `block_on_verdict`**: halt with the verdict and reasons.
+- **PR template missing required sections**: halt and ask the user to fill them.
+- **gh API failure during open_pr**: rollback any partial state (local commits stay, remote ref remains), halt and surface.
+- **User tries to force dev-loop to mark issue Done**: explicit refusal; point at the human gate.
+
+## Cross-skill handoffs
+
+- `github-sync`: open PR, request review, update issue status, post comments on the PR.
+- `release-tracker`: triggered by `github-sync` side-effects when a dev issue moves or links change.
+- `plan-keeper`: flip plan one-liner on gate crossings if `workflow.pr.update_plan_oneliner` is true.
+- External skill `ctxr-skill-code-review`: invoked as the default self-review step.
+
+## Project contract
+
+- `project.default_branch`, `project.principals.push_allowed`, `project.principals.reviewers_default`.
+- `github.dev_projects[]` (needs depth that allows writes for the chosen target).
+- `labels.type`, `labels.area`, `labels.priority`, `labels.size`, `labels.state_modifiers`.
+- `workflow.branch_patterns.*`.
+- `workflow.commits.style`, `workflow.commits.signed`, `workflow.commits.scope_source`.
+- `workflow.pr.title`, `workflow.pr.body_template`, `workflow.pr.link_issue_with`, `workflow.pr.request_reviewers`, `workflow.pr.tests_required`, `workflow.pr.e2e_required_on`, `workflow.pr.self_review_required`, `workflow.pr.link_release_umbrella`, `workflow.pr.update_plan_oneliner`.
+- `workflow.code_review.provider`, `workflow.code_review.invocation`, `workflow.code_review.mode`, `workflow.code_review.output_format`, `workflow.code_review.report_dir`, `workflow.code_review.block_on_verdict`, `workflow.code_review.install_hint`.
+- `paths.plans_root`, `paths.reports`, `paths.templates`.
+- `stack.testing` (to select test runners), `stack.language` (to select lint/format tools).

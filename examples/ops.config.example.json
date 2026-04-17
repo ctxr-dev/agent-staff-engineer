@@ -1,0 +1,178 @@
+{
+  "$schemaVersion": "0.1.0",
+  "project": {
+    "name": "ferrycart",
+    "org": "acme-corp",
+    "repo": "acme-corp/ferrycart",
+    "default_branch": "main",
+    "principals": {
+      "push_allowed": ["jane-doe", "claude-bot", "ops-bot"],
+      "reviewers_default": ["copilot", "jane-doe"]
+    }
+  },
+
+  "github": {
+    "auth_login": "claude-bot",
+    "dev_projects": [
+      {
+        "owner": "acme-corp",
+        "number": 7,
+        "role": "dev",
+        "depth": "full",
+        "status_field": "Status",
+        "status_values": {
+          "backlog": "Backlog",
+          "ready": "Ready",
+          "in_progress": "In progress",
+          "in_review": "In review",
+          "done": "Done"
+        },
+        "fields": ["Area", "Intent", "Priority", "Size", "Estimate", "Iteration", "Linked Release"],
+        "label_scope": null
+      }
+    ],
+    "release_projects": [
+      {
+        "owner": "acme-corp",
+        "number": 8,
+        "role": "release",
+        "depth": "umbrella-only",
+        "status_field": "Status",
+        "status_values": {
+          "backlog": "Backlog",
+          "in_progress": "In progress",
+          "done": "Done"
+        },
+        "fields": ["Target Date", "Scope Tag", "Linked Dev Issues"]
+      }
+    ],
+    "observed_repos": [
+      {
+        "owner": "acme-corp",
+        "name": "ferrycart-shared",
+        "scope": "issues-with-label:cross-repo",
+        "depth": "labeled:cross-repo"
+      },
+      {
+        "owner": "acme-corp",
+        "name": "ferrycart-docs",
+        "scope": "issues-only",
+        "depth": "read-only"
+      }
+    ]
+  },
+
+  "labels": {
+    "type": ["feature", "bug", "task", "refactor", "docs", "chore"],
+    "area": [
+      "frontend",
+      "backend",
+      "data",
+      "security",
+      "performance",
+      "compliance",
+      "ux",
+      "devx",
+      "testing",
+      "docs",
+      "checkout",
+      "payments",
+      "catalog"
+    ],
+    "priority": ["p0-blocker", "p1-high", "p2-medium", "p3-low"],
+    "intent": ["initial", "wave-1", "wave-2", "wave-3", "post-launch"],
+    "size": ["xs", "s", "m", "l", "xl"],
+    "automation": ["auto-regression", "auto-release-tracked"],
+    "state_modifiers": ["blocked", "deferred", "cancelled"]
+  },
+
+  "workflow": {
+    "phase_term": "wave",
+    "branch_patterns": {
+      "feature":  "feat/{issue}-{slug}",
+      "fix":      "fix/{issue}-{slug}",
+      "chore":    "chore/{issue}-{slug}",
+      "refactor": "refactor/{issue}-{slug}",
+      "docs":     "docs/{issue}-{slug}"
+    },
+    "commits": {
+      "style": "conventional",
+      "signed": true,
+      "scope_source": "primary_area_label"
+    },
+    "pr": {
+      "title": "{type}: {summary}",
+      "body_template": "agents/agent-staff-engineer/templates/pr.md",
+      "link_issue_with": "Closes #{issue}",
+      "request_reviewers": ["copilot", "jane-doe"],
+      "tests_required": ["unit", "integration"],
+      "e2e_required_on": ["checkout", "payments", "ux"],
+      "self_review_required": true,
+      "link_release_umbrella": true,
+      "update_plan_oneliner": true
+    },
+    "release": {
+      "umbrella_title": "{intent_label_pretty} Release"
+    },
+    "code_review": {
+      "provider": "ctxr-skill-code-review",
+      "provider_url": "https://github.com/ctxr-dev/skill-code-review",
+      "invocation": "/skill-code-review",
+      "mode": "thorough",
+      "output_format": "markdown",
+      "report_dir": ".development/shared/reports",
+      "block_on_verdict": ["NO-GO"],
+      "install_hint": "npx @ctxr/kit install @ctxr/skill-code-review"
+    }
+  },
+
+  "paths": {
+    "agent_bundle_dir": ".claude/agents/agent-staff-engineer",
+    "wrappers": {
+      "skills_dir": ".claude/skills",
+      "rules_dir": ".claude/rules",
+      "marker": "<!-- ============ PROJECT OVERRIDES BELOW (preserved across agent updates) ============ -->",
+      "header_notice": "Wrapper file. Canonical content lives in the agent bundle and updates via 'git pull' inside the bundle. Edit below the overrides marker only; everything above is regenerated.",
+      "preserve_user_below_marker": true
+    },
+    "plans_root": ".claude/plans",
+    "plan_states": ["todo", "in-progress", "in-review", "blocked", "done"],
+    "done_nested": true,
+    "done_pattern": "done/{yyyy}/{mm}/{dd}/{slug}",
+    "dev_working_dir": ".development",
+    "gitignore_dev_working_dir": true,
+    "dev_working_shared_subdir": "shared",
+    "dev_working_local_subdir": "local",
+    "dev_working_cache_subdir": "cache",
+    "templates": ".claude/agents/agent-staff-engineer/templates",
+    "reports": ".development/shared/reports",
+    "runbooks": ".development/shared/runbooks"
+  },
+
+  "stack": {
+    "language": ["typescript", "python"],
+    "testing": ["vitest", "pytest", "playwright"],
+    "platform": ["web", "api-service"]
+  },
+
+  "area_keywords": {
+    "frontend":   ["React", "Next.js", "CSS", "Tailwind", "component", "hydration"],
+    "backend":    ["FastAPI", "Django", "endpoint", "router", "middleware", "worker"],
+    "data":       ["Postgres", "migration", "schema", "Alembic", "query", "index"],
+    "security":   ["auth", "JWT", "session", "CSRF", "XSS", "CSP", "vulnerability"],
+    "performance":["profiling", "latency", "p95", "bundle size", "cache"],
+    "compliance": ["GDPR", "PCI", "consent", "cookie", "audit trail"],
+    "ux":         ["accessibility", "a11y", "WCAG", "keyboard", "screen reader"],
+    "devx":       ["lint", "format", "CI", "tooling", "developer setup"],
+    "testing":    ["Playwright", "pytest", "vitest", "fixture", "coverage"],
+    "docs":       ["README", "ADR", "runbook", "API docs"],
+    "checkout":   ["cart", "Stripe", "webhook", "refund", "order"],
+    "payments":   ["Stripe", "intent", "charge", "dispute", "subscription"],
+    "catalog":    ["product", "SKU", "inventory", "pricing", "variants"]
+  },
+
+  "compliance": {
+    "regimes": ["gdpr", "pci"],
+    "data_classes": ["pii", "payment"]
+  }
+}

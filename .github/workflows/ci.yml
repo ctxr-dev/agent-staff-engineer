@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Preflight, Validate, Lint & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dev dependencies
+        run: npm ci
+
+      - name: Preflight
+        run: npm run preflight
+
+      - name: Portability gate
+        run: npm run validate
+
+      - name: Markdown lint
+        run: npm run lint
+
+      - name: Unit + E2E tests
+        run: npm test

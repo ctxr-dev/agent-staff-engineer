@@ -1,0 +1,63 @@
+{
+  "name": "@ctxr/agent-staff-engineer",
+  "version": "0.1.0",
+  "description": "Claude Code agent that acts as a staff engineer for any project: GitHub as source of truth, full PR lifecycle automation, two human gates (merge + Done). Installable via @ctxr/kit, self-bootstraps on first run.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ctxr-dev/agent-staff-engineer.git"
+  },
+  "homepage": "https://github.com/ctxr-dev/agent-staff-engineer#readme",
+  "bugs": {
+    "url": "https://github.com/ctxr-dev/agent-staff-engineer/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "agent",
+    "ai",
+    "agents",
+    "github",
+    "workflow",
+    "pr-automation",
+    "agentskills"
+  ],
+  "files": [
+    "AGENT.md",
+    "README.md",
+    "INSTALL.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "skills/",
+    "rules/",
+    "memory-seeds/",
+    "templates/",
+    "schemas/",
+    "scripts/",
+    "examples/",
+    "design/"
+  ],
+  "ctxr": {
+    "type": "agent",
+    "target": "folder"
+  },
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "validate": "node scripts/validate_bundle.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "lint": "markdownlint-cli2 '**/*.md' '#node_modules' '#tests'"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "diff": "^9.0.0",
+    "gray-matter": "^4.0.3",
+    "semver": "^7.7.3"
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "^0.22.0"
+  }
+}
