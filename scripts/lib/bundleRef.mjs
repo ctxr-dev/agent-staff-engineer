@@ -17,6 +17,34 @@ import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 /**
+ * Inverse of `portableRef`: take a portable path (relative to target, `~/...`,
+ * or already-absolute) and resolve it back to an absolute path on this
+ * machine. Used when reading paths out of a persisted manifest so we can
+ * operate on the real file. Accepts old manifests that stored raw absolute
+ * paths verbatim; those come through unchanged.
+ *
+ * @param {string} ref portable path previously produced by `portableRef`, or
+ *                     a legacy absolute path from an older manifest
+ * @param {string} target absolute path to the project root
+ * @returns {string} absolute path
+ */
+export function resolvePortable(ref, target) {
+  if (typeof ref !== "string" || ref.length === 0) {
+    throw new TypeError("resolvePortable: ref must be a non-empty string");
+  }
+  if (typeof target !== "string" || !isAbsolute(target)) {
+    throw new Error("resolvePortable: target must be an absolute path");
+  }
+  if (ref === "~") return realHome() || homedir();
+  if (ref.startsWith("~/") || ref.startsWith("~" + sep)) {
+    const home = realHome() || homedir();
+    return resolve(home, ref.slice(2));
+  }
+  if (isAbsolute(ref)) return ref;
+  return resolve(target, ref);
+}
+
+/**
  * @param {string} abs absolute path to render
  * @param {string} target absolute path to the project root
  * @returns {string} portable display form

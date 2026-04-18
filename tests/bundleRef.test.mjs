@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { portableRef } from "../scripts/lib/bundleRef.mjs";
+import { portableRef, resolvePortable } from "../scripts/lib/bundleRef.mjs";
 
 describe("portableRef: inside TARGET", () => {
   it("returns the project-relative POSIX path", () => {
@@ -60,5 +60,46 @@ describe("portableRef: error paths", () => {
   });
   it("throws on relative target", () => {
     assert.throws(() => portableRef("/a", "foo/bar"));
+  });
+});
+
+describe("resolvePortable: inverse of portableRef", () => {
+  const home = homedir();
+  it("resolves a project-relative ref against target", () => {
+    assert.equal(
+      resolvePortable(".claude/skills/foo/SKILL.md", "/work/proj"),
+      "/work/proj/.claude/skills/foo/SKILL.md",
+    );
+  });
+  it("resolves '.' to target itself", () => {
+    assert.equal(resolvePortable(".", "/work/proj"), "/work/proj");
+  });
+  it("expands '~' alone to home", () => {
+    assert.equal(resolvePortable("~", "/work/proj"), home);
+  });
+  it("expands '~/...' to a home-nested absolute path", () => {
+    assert.equal(
+      resolvePortable("~/.claude/agents/foo", "/work/proj"),
+      join(home, ".claude/agents/foo"),
+    );
+  });
+  it("passes a legacy absolute path through unchanged", () => {
+    // Back-compat: manifests written before the portable-path fix stored raw
+    // absolute paths. resolvePortable must accept them verbatim.
+    assert.equal(
+      resolvePortable("/Users/alice/work/proj/.claude/skills/foo/SKILL.md", "/work/proj"),
+      "/Users/alice/work/proj/.claude/skills/foo/SKILL.md",
+    );
+  });
+  it("round-trips portableRef output back to the original absolute path", () => {
+    const target = "/work/proj";
+    const abs = "/work/proj/.claude/memory/seed-x.md";
+    assert.equal(resolvePortable(portableRef(abs, target), target), abs);
+  });
+  it("throws on empty ref", () => {
+    assert.throws(() => resolvePortable("", "/work/proj"));
+  });
+  it("throws on relative target", () => {
+    assert.throws(() => resolvePortable(".claude/x", "foo/bar"));
   });
 });

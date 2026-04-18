@@ -28,7 +28,7 @@ Makes regression triage reproducible. Every proposed action is logged in the rep
 
 ## Outputs
 
-- A regression report filed under `{{ paths.reports }}/` (which resolves under `.development/shared/reports/` by default), rendered from `templates/regression-report.md`. Per `rules/llm-wiki.md`, this write goes through `@ctxr/skill-llm-wiki`: consult that skill's SKILL.md for the report's exact target path and frontmatter, and invoke its validate/fix operation after the write so the wiki's index picks up the new leaf.
+- A regression report filed under `{{ paths.reports }}/` (which resolves under `.development/shared/reports/` by default), rendered from `templates/regression-report.md`. Per `rules/llm-wiki.md`, this write goes through `@ctxr/skill-llm-wiki` in a **nested, scalable layout**: never as a flat date-prefixed sibling, and never with a hand-rolled versioned filename (no `.v1.md`, `-v2.md`, or any user-visible `.vN` scheme; history lives in the skill's private git). Regression reports are a dated topic: the wiki must be built in hosted mode with `dynamic_subdirs.template: "{yyyy}/{mm}/{dd}"` so leaves land at `.../reports/{yyyy}/{mm}/{dd}/<slug>.md`. Consult the skill's SKILL.md for the exact leaf path and frontmatter, and invoke its validate/fix operation after the write so the wiki's index picks up the new leaf. If the current reports wiki still has flat siblings, run `skill-llm-wiki fix` or `rebuild` to migrate the layout before writing.
 - A proposal block with one or more of:
   - Reopen issue `#NNN` (if its close date is within a tunable window and the match is strong).
   - Create new bug issue linked to `#NNN` as the suspected origin.

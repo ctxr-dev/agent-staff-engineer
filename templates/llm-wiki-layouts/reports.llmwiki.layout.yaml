@@ -1,0 +1,35 @@
+# Layout contract for .development/shared/reports/
+# Read by @ctxr/skill-llm-wiki when invoked with --layout-mode hosted.
+# Place a copy of this file at the reports topic root before building:
+#
+#   cp <bundle>/templates/llm-wiki-layouts/reports.llmwiki.layout.yaml \
+#      .development/shared/reports/.llmwiki.layout.yaml
+#   skill-llm-wiki build .development/shared/reports \
+#      --layout-mode hosted --target .development/shared/reports
+#
+# Reports are a dated topic with unbounded growth. Leaves MUST land at
+# {yyyy}/{mm}/{dd}/<slug>.md, not as flat date-prefixed siblings.
+
+mode: hosted
+
+versioning:
+  style: in-place
+  backup_before_mutate: true
+  backup_dir: .llmwiki.backups
+
+purpose: "Self-review, code-review, and other generated reports, filed by date."
+
+global_invariants:
+  - "no flat date-prefixed leaves at the topic root; reports live under {yyyy}/{mm}/{dd}/"
+  - "no user-visible versioned filenames (.v1.md, -v2.md, etc.); history lives in the private git"
+
+layout:
+  - path: .
+    purpose: "reports filed by date"
+    dynamic_subdirs:
+      template: "{yyyy}/{mm}/{dd}"
+      purpose: "all reports written on a given day"
+      allow_entry_types: [primary]
+      content_rules:
+        - "one leaf per reviewed PR or standalone investigation"
+        - "slug encodes subject, not date (date is the path)"

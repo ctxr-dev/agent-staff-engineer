@@ -107,6 +107,27 @@ describe("install.mjs: portable wrapper paths — bundle inside TARGET", () => {
       );
     }
   });
+
+  it(".install-manifest.json contains no raw /Users/<name>/ or /home/<name>/ path", async () => {
+    const manifestPath = join(scratch, ".claude/.install-manifest.json");
+    const body = await readFile(manifestPath, "utf8");
+    const m = body.match(RAW_HOME_PATH_RE);
+    assert.equal(m, null, `raw home path in manifest: ${m?.[0]}`);
+  });
+
+  it(".install-manifest.json wrappers[].path is project-relative", async () => {
+    const manifestPath = join(scratch, ".claude/.install-manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    assert.ok(Array.isArray(manifest.wrappers) && manifest.wrappers.length > 0);
+    for (const entry of manifest.wrappers) {
+      assert.ok(
+        typeof entry.path === "string" &&
+          !entry.path.startsWith("/") &&
+          !entry.path.startsWith("~"),
+        `manifest entry.path should be project-relative, got "${entry.path}"`,
+      );
+    }
+  });
 });
 
 describe("install.mjs: portable wrapper paths — bundle under $HOME, outside TARGET", () => {
@@ -169,6 +190,29 @@ describe("install.mjs: portable wrapper paths — bundle under $HOME, outside TA
     for (const { path, body } of wrappers) {
       const m = body.match(RAW_HOME_PATH_RE);
       assert.equal(m, null, `raw home path in ${path}: ${m?.[0]}`);
+    }
+  });
+
+  it(".install-manifest.json contains no raw /Users/<name>/ or /home/<name>/ path", async () => {
+    const manifestPath = join(target, ".claude/.install-manifest.json");
+    const body = await readFile(manifestPath, "utf8");
+    const m = body.match(RAW_HOME_PATH_RE);
+    assert.equal(m, null, `raw home path in manifest: ${m?.[0]}`);
+  });
+
+  it(".install-manifest.json wrappers[].path is project-relative (target-local)", async () => {
+    const manifestPath = join(target, ".claude/.install-manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    assert.ok(Array.isArray(manifest.wrappers) && manifest.wrappers.length > 0);
+    for (const entry of manifest.wrappers) {
+      // Wrappers are written inside TARGET, so even when the bundle is
+      // user-global, wrappers[].path stays project-relative.
+      assert.ok(
+        typeof entry.path === "string" &&
+          !entry.path.startsWith("/") &&
+          !entry.path.startsWith("~"),
+        `manifest entry.path should be project-relative, got "${entry.path}"`,
+      );
     }
   });
 });

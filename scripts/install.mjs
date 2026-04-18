@@ -49,7 +49,7 @@ import { mergeWrapper } from "./lib/wrapper.mjs";
 import { ensureGitignore } from "./lib/gitignore.mjs";
 import { injectManagedBlock, removeManagedBlock } from "./lib/inject.mjs";
 import { getAgentPrefix, prefixed } from "./lib/agentName.mjs";
-import { portableRef } from "./lib/bundleRef.mjs";
+import { portableRef, resolvePortable } from "./lib/bundleRef.mjs";
 
 // Managed-block markers used to own a region inside a project-authored
 // CLAUDE.md. Any content outside these two lines belongs to the user and the
@@ -306,15 +306,18 @@ for (const file of ruleFiles) {
 }
 
 // Orphan detection: walk existing manifest and flag wrappers whose canonical
-// is no longer present in the bundle.
+// is no longer present in the bundle. Manifest paths are portable (project-
+// relative or "~/..."); resolve them back to absolute so the comparison and
+// any subsequent filesystem ops operate on real paths on this machine.
 const existingManifest = await readJsonOrNull(MANIFEST_PATH);
 if (existingManifest && Array.isArray(existingManifest.wrappers)) {
   const currentSet = new Set(writes.map((w) => w.path));
   for (const entry of existingManifest.wrappers) {
-    if (!currentSet.has(entry.path)) {
+    const abs = resolvePortable(entry.path, TARGET);
+    if (!currentSet.has(abs)) {
       writes.push({
         action: "orphan-flag (canonical removed)",
-        path: entry.path,
+        path: abs,
         content: null,
         warn: true,
         meta: entry,
@@ -395,14 +398,19 @@ for (const w of writes) {
   await atomicWriteText(w.path, w.content);
   if (w.meta?.canonical) {
     manifestEntries.push({
-      path: w.path,
+      path: portableRef(w.path, TARGET),
       kind: w.meta.kind,
       canonical: w.meta.canonical,
       sha: w.meta.sha,
       written_at: new Date().toISOString(),
     });
   } else if (w.meta) {
-    manifestEntries.push({ path: w.path, kind: w.meta.kind, written_at: new Date().toISOString(), sha: w.meta.sha });
+    manifestEntries.push({
+      path: portableRef(w.path, TARGET),
+      kind: w.meta.kind,
+      written_at: new Date().toISOString(),
+      sha: w.meta.sha,
+    });
   }
 }
 
@@ -641,15 +649,17 @@ async function runUninstall({ dryRun = false } = {}) {
   if (dryRun) {
     process.stdout.write(`\n(dry-run) uninstall would touch ${manifest.wrappers.length} wrapper(s):\n`);
     for (const entry of manifest.wrappers) {
-      process.stdout.write(`  would remove: ${relative(TARGET, entry.path)}\n`);
+      const abs = resolvePortable(entry.path, TARGET);
+      process.stdout.write(`  would remove: ${relative(TARGET, abs)}\n`);
     }
     process.stdout.write(`\nRe-run without --dry-run to actually remove them.\n`);
     return;
   }
   for (const entry of manifest.wrappers) {
-    const content = await readTextOrNull(entry.path);
+    const absPath = resolvePortable(entry.path, TARGET);
+    const content = await readTextOrNull(absPath);
     if (content == null) {
-      process.stdout.write(`skip (missing): ${relative(TARGET, entry.path)}\n`);
+      process.stdout.write(`skip (missing): ${relative(TARGET, absPath)}\n`);
       continue;
     }
 
@@ -663,17 +673,17 @@ async function runUninstall({ dryRun = false } = {}) {
       });
       if (stripped === content) {
         process.stdout.write(
-          `skip: ${relative(TARGET, entry.path)} (managed block already absent)\n`
+          `skip: ${relative(TARGET, absPath)} (managed block already absent)\n`
         );
         continue;
       }
       const remaining = stripped.replace(/\s+/g, "");
       if (remaining.length === 0) {
-        await rm(entry.path, { force: true });
-        process.stdout.write(`removed: ${relative(TARGET, entry.path)} (no user content outside managed block)\n`);
+        await rm(absPath, { force: true });
+        process.stdout.write(`removed: ${relative(TARGET, absPath)} (no user content outside managed block)\n`);
       } else {
-        await atomicWriteText(entry.path, stripped);
-        process.stdout.write(`stripped managed block from: ${relative(TARGET, entry.path)} (user content preserved)\n`);
+        await atomicWriteText(absPath, stripped);
+        process.stdout.write(`stripped managed block from: ${relative(TARGET, absPath)} (user content preserved)\n`);
       }
       continue;
     }
@@ -682,9 +692,9 @@ async function runUninstall({ dryRun = false } = {}) {
     // pointed at a sidecar CLAUDE.agent.md file. Preserve user content by
     // renaming to .userkeep.md rather than deleting outright.
     if (entry.kind === "project-claude-md-alt") {
-      const keepPath = entry.path.replace(/\.md$/, ".userkeep.md");
+      const keepPath = absPath.replace(/\.md$/, ".userkeep.md");
       await atomicWriteText(keepPath, content);
-      await rm(entry.path, { force: true });
+      await rm(absPath, { force: true });
       process.stdout.write(
         `legacy CLAUDE.agent.md migrated: ${relative(TARGET, keepPath)} (please review and fold any edits into your CLAUDE.md)\n`
       );
@@ -697,13 +707,13 @@ async function runUninstall({ dryRun = false } = {}) {
     const below = markerIdx >= 0 ? content.slice(markerIdx + marker.length) : "";
     const belowHasUserText = below.replace(/\s+/g, "").length > 0;
     if (belowHasUserText) {
-      const keepPath = entry.path.replace(/\.md$/, ".userkeep.md");
+      const keepPath = absPath.replace(/\.md$/, ".userkeep.md");
       await atomicWriteText(keepPath, content);
-      await rm(entry.path, { force: true });
+      await rm(absPath, { force: true });
       process.stdout.write(`preserved user overrides: ${relative(TARGET, keepPath)}\n`);
     } else {
-      await rm(entry.path, { force: true });
-      process.stdout.write(`removed: ${relative(TARGET, entry.path)}\n`);
+      await rm(absPath, { force: true });
+      process.stdout.write(`removed: ${relative(TARGET, absPath)}\n`);
     }
   }
   await rm(MANIFEST_PATH, { force: true });

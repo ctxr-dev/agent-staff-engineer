@@ -1,0 +1,41 @@
+# Layout contract for .development/shared/plans/
+# Read by @ctxr/skill-llm-wiki when invoked with --layout-mode hosted.
+# Place a copy of this file at the plans topic root before building:
+#
+#   cp <bundle>/templates/llm-wiki-layouts/plans.llmwiki.layout.yaml \
+#      .development/shared/plans/.llmwiki.layout.yaml
+#   skill-llm-wiki build .development/shared/plans \
+#      --layout-mode hosted --target .development/shared/plans
+#
+# Plans captured in the wiki (distinct from the plan-keeper's .claude/plans)
+# nest by date-of-writing for dated drafts, and by subject for long-running
+# plan families. The leaf path is always nested; flat date-prefixed siblings
+# are a failure mode.
+
+mode: hosted
+
+versioning:
+  style: in-place
+  backup_before_mutate: true
+  backup_dir: .llmwiki.backups
+
+purpose: "Planning docs and design drafts filed by date, with subject subcategories for long-running plan families."
+
+global_invariants:
+  - "no flat date-prefixed leaves at the topic root"
+  - "no user-visible versioned filenames; prior revisions live in the private git"
+
+layout:
+  - path: drafts
+    purpose: "dated drafts and one-off plans"
+    dynamic_subdirs:
+      template: "{yyyy}/{mm}/{dd}"
+      purpose: "plan drafts written on a given day"
+      allow_entry_types: [primary]
+      content_rules:
+        - "slug encodes the plan subject, not the date"
+
+  - path: tracks
+    purpose: "long-running plan families grouped by subject"
+    allow_entry_types: [primary, overlay]
+    max_depth: 3

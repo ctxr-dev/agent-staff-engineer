@@ -1,0 +1,49 @@
+# Layout contract for .development/shared/runbooks/
+# Read by @ctxr/skill-llm-wiki when invoked with --layout-mode hosted.
+# Place a copy of this file at the runbooks topic root before building:
+#
+#   cp <bundle>/templates/llm-wiki-layouts/runbooks.llmwiki.layout.yaml \
+#      .development/shared/runbooks/.llmwiki.layout.yaml
+#   skill-llm-wiki build .development/shared/runbooks \
+#      --layout-mode hosted --target .development/shared/runbooks
+#
+# Runbooks are a subject-categorised topic, not a dated stream. Leaves nest
+# under descriptive subject folders. Pick the subject folder on the first
+# write; never pile runbooks at the topic root.
+
+mode: hosted
+
+versioning:
+  style: in-place
+  backup_before_mutate: true
+  backup_dir: .llmwiki.backups
+
+purpose: "Operational runbooks grouped by subject (deploy, incident response, oncall, recovery, etc.)."
+
+global_invariants:
+  - "every runbook lives under a subject subfolder; never at the topic root as a flat sibling"
+  - "no user-visible versioned filenames (e.g. `.v1.md`, `-v2.md`); history lives in the private git"
+
+layout:
+  - path: deploy
+    purpose: "release, rollout, and rollback procedures"
+    allow_entry_types: [primary, overlay]
+    max_depth: 2
+
+  - path: incident
+    purpose: "incident response and postmortem procedures"
+    allow_entry_types: [primary, overlay]
+    max_depth: 2
+
+  - path: oncall
+    purpose: "oncall rotation, paging, and escalation procedures"
+    allow_entry_types: [primary, overlay]
+    max_depth: 2
+
+  - path: recovery
+    purpose: "data recovery, failover, and disaster-recovery procedures"
+    allow_entry_types: [primary, overlay]
+    max_depth: 2
+
+  # Add additional subject folders here as new domains appear. Do not write
+  # runbook leaves at the topic root; always pick (or create) a subject.

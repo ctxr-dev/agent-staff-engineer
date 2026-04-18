@@ -256,7 +256,7 @@ async function main() {
     for (const w of writes) {
       if (w.content == null) continue;
       const entry = {
-        path: w.path,
+        path: portableRef(w.path, TARGET),
         kind: "memory-seed-wrapper",
         canonical: w.canonical,
         sha: w.sha,
