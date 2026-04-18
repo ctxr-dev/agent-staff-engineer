@@ -13,8 +13,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { seedWikiSkillStub } from "./fixtures/wikiSkillStub.mjs";
+import { deriveScopedSlug } from "../scripts/lib/agentName.mjs";
 
 const BUNDLE_SRC = dirname(dirname(fileURLToPath(import.meta.url))); // repo root
+const MANIFEST_SLUG = deriveScopedSlug(
+  JSON.parse(await readFile(join(BUNDLE_SRC, "package.json"), "utf8")).name
+);
+const MANIFEST_FILE = `.${MANIFEST_SLUG}-install-manifest.json`;
 const MARKER =
   "<!-- ============ PROJECT OVERRIDES BELOW (preserved across agent updates) ============ -->";
 
@@ -47,6 +52,7 @@ before(async () => {
   });
   // Strip any install artefacts that might have snuck in via cp.
   await rm(join(installed, ".install-manifest.json"), { force: true });
+  await rm(join(installed, `.${MANIFEST_SLUG}-install-manifest.json`), { force: true });
   await rm(join(installed, ".bootstrap-answers.json"), { force: true });
   // Symlink node_modules from the source bundle so runtime deps (ajv, gray-matter, diff)
   // are available inside the installed copy. In production, `npm install` happens via
@@ -87,7 +93,7 @@ describe("install.mjs end-to-end", () => {
     // Manifest lives in the TARGET project (not inside the bundle) so that
     // user-global / shared bundles don't have per-project state bleed.
     const manifest = JSON.parse(
-      await readFile(join(scratch, ".claude", ".install-manifest.json"), "utf8")
+      await readFile(join(scratch, ".claude", MANIFEST_FILE), "utf8")
     );
     assert.ok(manifest.wrappers.length >= 13, `manifest is too small: ${manifest.wrappers.length}`);
     assert.ok(

@@ -124,7 +124,7 @@ node <bundle-dir>/scripts/install.mjs --target <project> --uninstall
 
 The installer:
 
-1. Reads the `.install-manifest.json` at `<target>/.claude/.install-manifest.json`.
+1. Reads the install manifest at `<target>/.claude/.<scoped-agent-slug>-install-manifest.json` (for this agent, `.ctxr-agent-staff-engineer-install-manifest.json`). A legacy generic `.install-manifest.json` from a pre-rename install is read as a fallback and removed on the next `--apply`/`--update`.
 2. For each wrapper listed: if the below-marker section is empty, removes the wrapper. If it contains user content, preserves it as `<name>.userkeep.md` so your overrides survive the uninstall.
 3. Removes the manifest.
 4. Leaves `ops.config.json`, any `rules/product-*.md`, and the `.development/` folder (including `shared/` committed content) untouched. Those belong to your project, not the agent.

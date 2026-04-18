@@ -18,8 +18,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { seedWikiSkillStub } from "./fixtures/wikiSkillStub.mjs";
+import { deriveScopedSlug } from "../scripts/lib/agentName.mjs";
 
 const BUNDLE_SRC = dirname(dirname(fileURLToPath(import.meta.url)));
+const MANIFEST_SLUG = deriveScopedSlug(
+  JSON.parse(await readFile(join(BUNDLE_SRC, "package.json"), "utf8")).name
+);
+const MANIFEST_FILE = `.${MANIFEST_SLUG}-install-manifest.json`;
 
 const RAW_HOME_PATH_RE = /\/(?:Users|home)\/[a-zA-Z0-9_.-]+\//;
 
@@ -34,6 +39,7 @@ async function copyBundle(dest) {
     },
   });
   await rm(join(dest, ".install-manifest.json"), { force: true });
+  await rm(join(dest, MANIFEST_FILE), { force: true });
   await rm(join(dest, ".bootstrap-answers.json"), { force: true });
   await symlink(join(BUNDLE_SRC, "node_modules"), join(dest, "node_modules"));
 }
@@ -108,15 +114,15 @@ describe("install.mjs: portable wrapper paths — bundle inside TARGET", () => {
     }
   });
 
-  it(".install-manifest.json contains no raw /Users/<name>/ or /home/<name>/ path", async () => {
-    const manifestPath = join(scratch, ".claude/.install-manifest.json");
+  it("install manifest contains no raw /Users/<name>/ or /home/<name>/ path", async () => {
+    const manifestPath = join(scratch, ".claude", MANIFEST_FILE);
     const body = await readFile(manifestPath, "utf8");
     const m = body.match(RAW_HOME_PATH_RE);
     assert.equal(m, null, `raw home path in manifest: ${m?.[0]}`);
   });
 
-  it(".install-manifest.json wrappers[].path is project-relative", async () => {
-    const manifestPath = join(scratch, ".claude/.install-manifest.json");
+  it("install manifest wrappers[].path is project-relative", async () => {
+    const manifestPath = join(scratch, ".claude", MANIFEST_FILE);
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     assert.ok(Array.isArray(manifest.wrappers) && manifest.wrappers.length > 0);
     for (const entry of manifest.wrappers) {
@@ -193,15 +199,15 @@ describe("install.mjs: portable wrapper paths — bundle under $HOME, outside TA
     }
   });
 
-  it(".install-manifest.json contains no raw /Users/<name>/ or /home/<name>/ path", async () => {
-    const manifestPath = join(target, ".claude/.install-manifest.json");
+  it("install manifest contains no raw /Users/<name>/ or /home/<name>/ path", async () => {
+    const manifestPath = join(target, ".claude", MANIFEST_FILE);
     const body = await readFile(manifestPath, "utf8");
     const m = body.match(RAW_HOME_PATH_RE);
     assert.equal(m, null, `raw home path in manifest: ${m?.[0]}`);
   });
 
-  it(".install-manifest.json wrappers[].path is project-relative (target-local)", async () => {
-    const manifestPath = join(target, ".claude/.install-manifest.json");
+  it("install manifest wrappers[].path is project-relative (target-local)", async () => {
+    const manifestPath = join(target, ".claude", MANIFEST_FILE);
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     assert.ok(Array.isArray(manifest.wrappers) && manifest.wrappers.length > 0);
     for (const entry of manifest.wrappers) {

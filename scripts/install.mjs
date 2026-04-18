@@ -14,7 +14,10 @@
 //   7. generate SKILL wrappers at paths.wrappers.skills_dir
 //   8. generate RULE wrappers at paths.wrappers.rules_dir (exclude product-*.md)
 //   9. call install_memory_seeds.mjs to generate memory wrappers
-//  10. write <target>/.claude/.install-manifest.json
+//  10. write <target>/.claude/.<scoped-agent-slug>-install-manifest.json
+//      (e.g. `.ctxr-agent-staff-engineer-install-manifest.json`); a legacy
+//      generic `.install-manifest.json` from a pre-rename install is read
+//      once and then removed so only one manifest remains.
 //  11. summary report
 //
 // Update mode:
@@ -106,7 +109,28 @@ const BUNDLE_REF = portableRef(BUNDLE_ABS, TARGET);
 //   (c) the state is project-specific by nature.
 // `.claude/` is always writable inside the user's project.
 const STATE_DIR = join(TARGET, ".claude");
-const MANIFEST_PATH = join(STATE_DIR, ".install-manifest.json");
+
+// Agent-scoped manifest name so two agents installed into the same target
+// (e.g. `@ctxr/agent-staff-engineer` and a sibling agent) keep independent
+// install state. The slug is the package name with the leading `@` stripped
+// and `/` replaced by `-`.
+//
+// The installer writes only to MANIFEST_PATH. On read we also accept the
+// legacy generic name `.install-manifest.json` for back-compat with installs
+// made before the per-agent rename; the legacy file is removed at the end
+// of a successful `--apply`/`--update` so only one manifest remains on disk.
+const { prefix: AGENT_PREFIX, scopedSlug: AGENT_SCOPED_SLUG } =
+  await getAgentPrefix(BUNDLE_ABS);
+const MANIFEST_PATH = join(STATE_DIR, `.${AGENT_SCOPED_SLUG}-install-manifest.json`);
+const LEGACY_MANIFEST_PATH = join(STATE_DIR, ".install-manifest.json");
+
+async function readManifestJson() {
+  const current = await readJsonOrNull(MANIFEST_PATH);
+  if (current) return { manifest: current, path: MANIFEST_PATH, legacy: false };
+  const legacy = await readJsonOrNull(LEGACY_MANIFEST_PATH);
+  if (legacy) return { manifest: legacy, path: LEGACY_MANIFEST_PATH, legacy: true };
+  return { manifest: null, path: null, legacy: false };
+}
 
 /** Current ops.config.json contents, populated once we load or bootstrap it. */
 let opsConfig = null;
@@ -207,9 +231,9 @@ const localSub = opsConfig.paths.dev_working_local_subdir ?? "local";
 const cacheSub = opsConfig.paths.dev_working_cache_subdir ?? "cache";
 
 // Derive the wrapper-filename prefix ONCE, from package.json. Used below to
-// prefix every file the installer writes into the target project so wrappers
-// do not collide with those from other agents/skills.
-const { prefix: AGENT_PREFIX } = await getAgentPrefix(BUNDLE_ABS);
+// AGENT_PREFIX was resolved earlier (needed for the manifest filename); it
+// also prefixes every file the installer writes into the target project so
+// wrappers do not collide with those from other agents/skills.
 
 // Plan writes.
 const writes = [];
@@ -309,7 +333,7 @@ for (const file of ruleFiles) {
 // is no longer present in the bundle. Manifest paths are portable (project-
 // relative or "~/..."); resolve them back to absolute so the comparison and
 // any subsequent filesystem ops operate on real paths on this machine.
-const existingManifest = await readJsonOrNull(MANIFEST_PATH);
+const { manifest: existingManifest } = await readManifestJson();
 if (existingManifest && Array.isArray(existingManifest.wrappers)) {
   const currentSet = new Set(writes.map((w) => w.path));
   for (const entry of existingManifest.wrappers) {
@@ -461,6 +485,16 @@ const manifest = {
   wrappers: manifestEntries,
 };
 await atomicWriteJson(MANIFEST_PATH, manifest);
+
+// Retire a legacy generic manifest from a pre-rename install if one exists.
+// The new agent-scoped manifest is now canonical; leaving the legacy file in
+// place would let two files drift. Only remove after a successful write.
+if (await readJsonOrNull(LEGACY_MANIFEST_PATH)) {
+  await rm(LEGACY_MANIFEST_PATH, { force: true });
+  process.stdout.write(
+    `migrated legacy manifest: ${relative(TARGET, LEGACY_MANIFEST_PATH)} -> ${relative(TARGET, MANIFEST_PATH)}\n`
+  );
+}
 
 process.stdout.write(
   `\ninstall ${MODE} complete. manifest at ${relative(TARGET, MANIFEST_PATH)}.\n`
@@ -640,10 +674,17 @@ function buildClaudeMdManagedBlock(cfg, agentPrefix) {
 // ensureGitignore lives in scripts/lib/gitignore.mjs so it is unit-testable.
 
 async function runUninstall({ dryRun = false } = {}) {
-  const manifest = await readJsonOrNull(MANIFEST_PATH);
+  const { manifest, path: manifestPath, legacy: manifestIsLegacy } = await readManifestJson();
   if (!manifest || !Array.isArray(manifest.wrappers)) {
-    process.stderr.write(`no manifest at ${MANIFEST_PATH}; nothing to uninstall.\n`);
+    process.stderr.write(
+      `no manifest at ${MANIFEST_PATH} (or legacy ${LEGACY_MANIFEST_PATH}); nothing to uninstall.\n`
+    );
     process.exit(1);
+  }
+  if (manifestIsLegacy) {
+    process.stdout.write(
+      `reading legacy manifest at ${relative(TARGET, manifestPath)}; it will be removed at the end of uninstall.\n`
+    );
   }
   const marker = opsConfigOrDefault().paths.wrappers.marker;
   if (dryRun) {
@@ -717,6 +758,7 @@ async function runUninstall({ dryRun = false } = {}) {
     }
   }
   await rm(MANIFEST_PATH, { force: true });
+  await rm(LEGACY_MANIFEST_PATH, { force: true });
   process.stdout.write(
     `\nuninstall complete. bundle folder still at ${BUNDLE_ABS}; remove it with 'rm -rf ${BUNDLE_ABS}' if desired.\n`
   );

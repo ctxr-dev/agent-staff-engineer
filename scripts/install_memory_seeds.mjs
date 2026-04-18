@@ -286,7 +286,7 @@ function printHelp() {
       "  --update               refresh above-marker section of existing wrappers",
       "  --force                overwrite even non-marker wrappers (dangerous)",
       "  --emit-manifest        print one __MANIFEST__ <json> line per write,",
-      "                         for install.mjs to fold into .install-manifest.json",
+      "                         for install.mjs to fold into the agent-scoped install manifest",
       "",
     ].join("\n")
   );

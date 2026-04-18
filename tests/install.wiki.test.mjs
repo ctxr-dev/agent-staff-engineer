@@ -29,6 +29,7 @@ async function copyBundle(dest) {
     },
   });
   await rm(join(dest, ".install-manifest.json"), { force: true });
+  await rm(join(dest, ".ctxr-agent-staff-engineer-install-manifest.json"), { force: true });
   await rm(join(dest, ".bootstrap-answers.json"), { force: true });
   await symlink(join(BUNDLE_SRC, "node_modules"), join(dest, "node_modules"));
 }

@@ -240,7 +240,8 @@ user runs: node .../install.mjs --target <project>
       |  each wrapper includes the canonical|
       |  in-bundle file and carries the     |
       |  user-overrides marker              |
-      |  write .install-manifest.json       |
+      |  write the agent-scoped            |
+      |    .<slug>-install-manifest.json    |
       +----------+--------------------------+
                  |
                  v
@@ -319,7 +320,7 @@ user: "this is a HIPAA product handling PHI"
 |  write files                  |
 |  relabel GitHub issues via    |
 |    github-sync                |
-|  append to .install-manifest  |
+|  append to the install manifest|
 +-------------------------------+
 ```
 
@@ -443,7 +444,7 @@ to point at the same path so changes are picked up automatically.
 - **On update (`--update`)**: for each existing wrapper, parse the marker; rewrite everything **above** it from current bundle state (refreshed frontmatter, header notice, include instruction, path). Preserve everything **below** the marker byte-for-byte.
 - **On new canonical files between updates**: create fresh wrappers for them. Existing wrappers untouched.
 - **On removed canonical files between updates**: leave the orphaned wrapper in place with a one-line warning inserted above the marker. User decides to keep it (their overrides may still be valuable) or delete it.
-- **On `--uninstall`**: remove every wrapper listed in `.install-manifest.json`. Warn before removing any wrapper whose below-marker section contains user content.
+- **On `--uninstall`**: remove every wrapper listed in `.<scoped-agent-slug>-install-manifest.json`. Warn before removing any wrapper whose below-marker section contains user content.
 
 ### Why wrappers and not copies or symlinks
 
@@ -492,7 +493,7 @@ install.mjs --target T --apply
   |     write a wrapper memory entry at seed-<agent>_<name>.md in the target's Claude memory folder
   |     (frontmatter name description type, include directive, marker, empty overrides)
   |     |
-  +-- write .install-manifest.json inside the bundle:
+  +-- write .<scoped-agent-slug>-install-manifest.json inside the bundle:
   |     every wrapper path + its canonical source + content hash
   |     used by --update (hash drift) and --uninstall (rollback)
   |
@@ -504,7 +505,7 @@ install.mjs --target T --apply
 ```text
 install.mjs --target T --uninstall
   |
-  +-- read .install-manifest.json
+  +-- read .<scoped-agent-slug>-install-manifest.json
   |
   +-- for each listed wrapper:
   |     parse at marker
@@ -525,7 +526,7 @@ install.mjs --target T --uninstall
   |     any .development/local/ and .development/cache/ content (per-user)
   |     memory wrapper entries whose below-marker sections carry user text
   |
-  +-- remove .install-manifest.json
+  +-- remove .<scoped-agent-slug>-install-manifest.json
   |
   +-- summary: "bundle folder can be removed with 'rm -rf <paths.agent_bundle_dir>'; your below-marker overrides that were preserved are listed above."
 ```
@@ -545,7 +546,7 @@ install.mjs --target T --update
   |     run adapt-system internally to propose values
   |     user confirms; write the diff to ops.config.json
   |
-  +-- for each entry in .install-manifest.json:
+  +-- for each entry in .<scoped-agent-slug>-install-manifest.json:
   |     read the existing wrapper
   |     split at the marker (paths.wrappers.marker)
   |     rewrite everything ABOVE the marker from current bundle state

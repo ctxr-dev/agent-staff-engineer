@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { derivePrefix, prefixed, getAgentPrefix, PREFIX_SEPARATOR } from "../scripts/lib/agentName.mjs";
+import { derivePrefix, deriveScopedSlug, prefixed, getAgentPrefix, PREFIX_SEPARATOR } from "../scripts/lib/agentName.mjs";
 
 const scratch = await mkdtemp(join(tmpdir(), "agent-name-"));
 after(async () => {
@@ -32,6 +32,24 @@ describe("agentName.derivePrefix", () => {
   });
 });
 
+describe("agentName.deriveScopedSlug", () => {
+  it("turns a scoped name into a slash-free slug", () => {
+    assert.equal(deriveScopedSlug("@ctxr/agent-staff-engineer"), "ctxr-agent-staff-engineer");
+  });
+  it("passes an unscoped name through unchanged", () => {
+    assert.equal(deriveScopedSlug("agent-staff-engineer"), "agent-staff-engineer");
+  });
+  it("only strips a single leading @", () => {
+    assert.equal(deriveScopedSlug("@a/b/c"), "a-b-c");
+  });
+  it("rejects empty or non-string input", () => {
+    assert.throws(() => deriveScopedSlug(""));
+    assert.throws(() => deriveScopedSlug(undefined));
+    assert.throws(() => deriveScopedSlug(null));
+    assert.throws(() => deriveScopedSlug(123));
+  });
+});
+
 describe("agentName.prefixed", () => {
   it("joins prefix and short name with a single underscore", () => {
     assert.equal(prefixed("agent-staff-engineer", "pr-workflow"), "agent-staff-engineer_pr-workflow");
@@ -49,6 +67,7 @@ describe("agentName.getAgentPrefix (reads package.json)", () => {
     await writeFile(join(dir, "package.json"), JSON.stringify({ name: "@ctxr/agent-staff-engineer" }));
     const info = await getAgentPrefix(dir);
     assert.equal(info.prefix, "agent-staff-engineer");
+    assert.equal(info.scopedSlug, "ctxr-agent-staff-engineer");
     assert.equal(info.packageName, "@ctxr/agent-staff-engineer");
     assert.equal(info.separator, "_");
   });

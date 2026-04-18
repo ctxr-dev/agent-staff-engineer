@@ -48,7 +48,7 @@ Reshapes a live installation when the project's context changes. Every change is
 5. **Narrate**: for each change, emit a one-line reason tying it back to the original intent. No silent edits.
 6. **Prompt user**: approve, edit, or reject. Edits can narrow scope ("skip the label changes, keep the config").
 7. **Apply** (only on approval): write file changes, commit nothing (user owns commits), call `github-sync` for label plan.
-8. **Record**: append an entry to `.install-manifest.json` with the signals, the diff summary, and the date.
+8. **Record**: append an entry to the agent-scoped install manifest (`.claude/.<scoped-agent-slug>-install-manifest.json`) with the signals, the diff summary, and the date.
 
 ## Cascade targets
 

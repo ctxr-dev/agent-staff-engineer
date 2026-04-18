@@ -70,7 +70,7 @@ A signal delivered twice with the same content produces no-op diffs the second t
 
 ## Contradictions
 
-A signal that reverses an earlier adaptation is explicit and is handled. Example: "we dropped the legacy analytics SDK". The cascade includes removal of the related area labels, deprecation of related templates sections, and a list of any open GitHub issues tagged with the removed label so the user can reassign or close them. The historical `.bootstrap-answers.json` entry and any `.install-manifest.json` records of the earlier adaptation stay intact; the audit trail is preserved.
+A signal that reverses an earlier adaptation is explicit and is handled. Example: "we dropped the legacy analytics SDK". The cascade includes removal of the related area labels, deprecation of related templates sections, and a list of any open GitHub issues tagged with the removed label so the user can reassign or close them. The historical `.bootstrap-answers.json` entry and any records of the earlier adaptation in the agent-scoped install manifest (`.claude/.<scoped-agent-slug>-install-manifest.json`) stay intact; the audit trail is preserved.
 
 ## Related rules
 

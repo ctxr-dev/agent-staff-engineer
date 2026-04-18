@@ -18,7 +18,7 @@ const PREFIX_SEPARATOR = "_";
 
 /**
  * @param {string} bundleAbs absolute path to the bundle root
- * @returns {Promise<{ prefix: string, packageName: string, separator: string }>}
+ * @returns {Promise<{ prefix: string, scopedSlug: string, packageName: string, separator: string }>}
  */
 export async function getAgentPrefix(bundleAbs) {
   const text = await readFile(join(bundleAbs, "package.json"), "utf8");
@@ -30,6 +30,7 @@ export async function getAgentPrefix(bundleAbs) {
   }
   return {
     prefix: derivePrefix(pkg.name),
+    scopedSlug: deriveScopedSlug(pkg.name),
     packageName: pkg.name,
     separator: PREFIX_SEPARATOR,
   };
@@ -49,6 +50,24 @@ export function derivePrefix(packageName) {
     return packageName.slice(slash + 1);
   }
   return packageName;
+}
+
+/**
+ * Slugified scoped package name, used for file/folder names that must
+ * distinguish this agent from any other installed in the same target.
+ * Strips the leading `@` and replaces `/` with `-`.
+ *
+ * Example: `@ctxr/agent-staff-engineer` -> `ctxr-agent-staff-engineer`.
+ *
+ * An unscoped package name round-trips unchanged.
+ *
+ * @param {string} packageName
+ */
+export function deriveScopedSlug(packageName) {
+  if (typeof packageName !== "string" || packageName.length === 0) {
+    throw new Error("deriveScopedSlug: package name must be a non-empty string");
+  }
+  return packageName.replace(/^@/, "").replace(/\//g, "-");
 }
 
 /** Returns the canonical wrapper-filename form: "<prefix>_<short>". */

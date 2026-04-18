@@ -13,8 +13,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { seedWikiSkillStub } from "./fixtures/wikiSkillStub.mjs";
+import { deriveScopedSlug } from "../scripts/lib/agentName.mjs";
 
 const BUNDLE_SRC = dirname(dirname(fileURLToPath(import.meta.url)));
+const MANIFEST_SLUG = deriveScopedSlug(
+  JSON.parse(await readFile(join(BUNDLE_SRC, "package.json"), "utf8")).name
+);
+const MANIFEST_FILE = `.${MANIFEST_SLUG}-install-manifest.json`;
 const MARKER =
   "<!-- ============ PROJECT OVERRIDES BELOW (preserved across agent updates) ============ -->";
 
@@ -72,7 +77,7 @@ describe("install e2e: user-global bundle (absolute bundle path)", () => {
     assert.equal(code, 0, `install --apply failed\nstdout:\n${stdout}\nstderr:\n${stderr}`);
     // The manifest must live in the TARGET project, not the bundle.
     const manifestText = await readFile(
-      join(targetRoot, ".claude/.install-manifest.json"),
+      join(targetRoot, ".claude", MANIFEST_FILE),
       "utf8"
     );
     const manifest = JSON.parse(manifestText);
@@ -248,7 +253,7 @@ describe("install e2e: manifest records the CLAUDE.md entry (kind='project-claud
   it("writes a `project-claude-md` kind entry so uninstall can find CLAUDE.md", async () => {
     runInstall(bundleRoot, ["--target", scratch, "--apply", "--yes"]);
     const manifest = JSON.parse(
-      await readFile(join(scratch, ".claude/.install-manifest.json"), "utf8")
+      await readFile(join(scratch, ".claude", MANIFEST_FILE), "utf8")
     );
     assert.ok(
       manifest.wrappers.some((w) => w.kind === "project-claude-md"),
