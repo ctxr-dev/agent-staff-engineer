@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { seedWikiSkillStub } from "./fixtures/wikiSkillStub.mjs";
 
 const BUNDLE_SRC = dirname(dirname(fileURLToPath(import.meta.url))); // repo root
 const MARKER =
@@ -57,6 +58,9 @@ before(async () => {
   await cp(join(installed, "examples/ops.config.example.json"), join(scratch, ".claude/ops.config.json"), {
     recursive: false,
   });
+  // The example config declares wiki.required: true; stub the provider
+  // skill so the installer's dep check passes in this isolated scratch.
+  await seedWikiSkillStub(scratch);
 });
 
 after(async () => {
@@ -121,9 +125,14 @@ describe("install.mjs end-to-end", () => {
       `every rule wrapper should carry the agent-staff-engineer_ prefix; got ${rules.join(", ")}`
     );
     const skills = await readdir(join(scratch, ".claude/skills"));
+    // Filter out co-installed kit skills (they use a `<scope>-<name>` naming
+    // convention, not this agent's `agent-staff-engineer_<short>` pattern).
+    // The skill-llm-wiki stub lives at ctxr-skill-llm-wiki/ and should not be
+    // treated as an agent wrapper.
+    const agentSkillWrappers = skills.filter((n) => !n.startsWith("ctxr-"));
     assert.ok(
-      skills.every((n) => n.startsWith("agent-staff-engineer_")),
-      `every skill wrapper should carry the agent-staff-engineer_ prefix; got ${skills.join(", ")}`
+      agentSkillWrappers.every((n) => n.startsWith("agent-staff-engineer_")),
+      `every skill wrapper should carry the agent-staff-engineer_ prefix; got ${agentSkillWrappers.join(", ")}`
     );
     const memory = await readdir(join(scratch, ".claude/memory"));
     const seedFiles = memory.filter((n) => n.startsWith("seed-"));
@@ -219,6 +228,7 @@ describe("install.mjs end-to-end", () => {
     const { symlink } = await import("node:fs/promises");
     await symlink(join(BUNDLE_SRC, "node_modules"), join(installed2, "node_modules"));
     await cp(join(installed2, "examples/ops.config.example.json"), join(scratch2, ".claude/ops.config.json"));
+    await seedWikiSkillStub(scratch2);
 
     const applyRes = spawnSync(
       process.execPath,
@@ -262,6 +272,7 @@ describe("install.mjs end-to-end", () => {
     const { symlink } = await import("node:fs/promises");
     await symlink(join(BUNDLE_SRC, "node_modules"), join(installed3, "node_modules"));
     await cp(join(installed3, "examples/ops.config.example.json"), join(scratch3, ".claude/ops.config.json"));
+    await seedWikiSkillStub(scratch3);
 
     const applyRes = spawnSync(
       process.execPath,

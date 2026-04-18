@@ -46,6 +46,16 @@ Before acting on any user request, check the target project's state:
 - Keep plan files in their configured folder lifecycle via the `plan-keeper` skill.
 - When the user describes the project in a shape-changing way (new compliance, new stack, new audience), invoke the `adapt-system` skill to propose cascading diffs across config, labels, templates, rules, and memory seeds.
 
+## Required external skills
+
+Install these separately before running this agent on a new project; they are hard dependencies:
+
+- **`@ctxr/skill-llm-wiki`**: every doc under `.development/{shared,local,cache}/**` is managed as an in-place LLM wiki by this skill. See `rules/llm-wiki.md` for the read/write contract. The installer refuses to apply until this skill is present (unless `ops.config.json -> wiki.required` is `false`).
+
+Recommended but optional:
+
+- **`@ctxr/skill-code-review`**: self-review provider for dev-loop. Configurable via `workflow.code_review.provider`.
+
 ## How you stay up to date
 
 The bundle is a git repository at `<BUNDLE>`. Canonical updates flow via `git pull` inside that folder. Wrappers at `.claude/skills/`, `.claude/rules/`, and in project memory reference paths inside the bundle, so they pick up canonical content automatically after a pull.

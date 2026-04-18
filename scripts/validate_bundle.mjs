@@ -17,6 +17,14 @@
 //      ops.config.json keys it reads.
 //   8. Every rule under rules/ has frontmatter declaring portable: true.
 //   9. Every memory seed under memory-seeds/ has frontmatter and a `tags` key.
+//  10. No committed markdown embeds a raw absolute home path like
+//      "/Users/<name>/" or "/home/<name>/". Docs must use "~/..." or
+//      project-relative paths so teammates on different machines do not
+//      trip over a hard-coded username.
+//  11. Every skill whose SKILL.md references a doc target under
+//      .development/{shared,local,cache}/ must also reference
+//      rules/llm-wiki.md, so the write-through-wiki contract from
+//      AGENT.md is enforced at the skill level.
 //
 
 import { readFile } from "node:fs/promises";
@@ -242,6 +250,74 @@ async function checkSeedFrontmatter() {
   }
 }
 
+// ---- 10. No raw absolute home paths in committed markdown -------------
+async function checkNoRawHomePaths() {
+  const folders = ["skills", "rules", "memory-seeds", "templates", "design"];
+  const extraFiles = SCAN_TOP_LEVEL_MD.map((f) => join(BUNDLE_ROOT, f));
+  const mdTargets = [];
+  for (const d of folders) {
+    const abs = join(BUNDLE_ROOT, d);
+    try {
+      for await (const fp of walkFiles(abs)) {
+        if (fp.endsWith(".md")) mdTargets.push(fp);
+      }
+    } catch (e) {
+      if (e && e.code !== "ENOENT") throw e;
+    }
+  }
+  for (const fp of extraFiles) {
+    try {
+      const text = await readFile(fp, "utf8");
+      if (text) mdTargets.push(fp);
+    } catch {
+      /* file may not exist; other checks will flag that */
+    }
+  }
+  // /Users/<name>/ or /home/<name>/ with an explicit username segment.
+  // Placeholders like /Users/<you>/ stay clear (< is not in the class).
+  const homePathRe = /\/(?:Users|home)\/[a-zA-Z0-9_.-]+\//g;
+  for (const fp of mdTargets) {
+    const raw = await readFile(fp, "utf8");
+    let m;
+    while ((m = homePathRe.exec(raw)) !== null) {
+      const line = raw.slice(0, m.index).split("\n").length;
+      err(
+        `raw absolute home path '${m[0]}' in ${relative(BUNDLE_ROOT, fp)}:${line} (use '~/...' or a '<you>' placeholder)`,
+      );
+    }
+  }
+}
+
+// ---- 11. Skills that write under .development/** must cite llm-wiki rule
+// Uses the SKILL.md frontmatter's `writes_to_filesystem:` line as the
+// source of truth for whether the skill persists docs. A mention of
+// `paths.reports`, `paths.runbooks`, or a literal `.development/...`
+// path in that line triggers the rule-reference requirement. Body
+// mentions of the same keys for configuration-only purposes (e.g.,
+// adapt-system listing them as keys it reads) do not trip the check.
+async function checkWikiRuleReferences() {
+  const skillsDir = join(BUNDLE_ROOT, "skills");
+  const wikiScopeInWriteDeclRe =
+    /^writes_to_filesystem:.*(?:paths\.reports|paths\.runbooks|\.development\/(?:shared|local|cache))/m;
+  try {
+    for await (const fp of walkFiles(skillsDir)) {
+      if (!fp.endsWith("SKILL.md")) continue;
+      const text = await readFile(fp, "utf8");
+      // Look inside the first frontmatter block only.
+      const fmMatch = text.match(/^---\n([\s\S]*?)\n---/);
+      if (!fmMatch) continue;
+      if (!wikiScopeInWriteDeclRe.test(fmMatch[1])) continue;
+      if (!/rules\/llm-wiki\.md/.test(text)) {
+        err(
+          `skill writes under .development/** (per writes_to_filesystem) but does not reference rules/llm-wiki.md: ${relative(BUNDLE_ROOT, fp)}`,
+        );
+      }
+    }
+  } catch (e) {
+    if (e && e.code !== "ENOENT") throw e;
+  }
+}
+
 await checkLiterals();
 await checkDashes();
 await checkSkillStructure();
@@ -250,6 +326,8 @@ await checkZeroDeps();
 await checkTemplateHeaders();
 await checkRuleFrontmatter();
 await checkSeedFrontmatter();
+await checkNoRawHomePaths();
+await checkWikiRuleReferences();
 
 const summary = `validate_bundle: ${errors.length} error(s), ${warnings.length} warning(s)`;
 if (errors.length === 0 && warnings.length === 0) {

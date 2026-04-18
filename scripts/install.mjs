@@ -27,6 +27,8 @@
 //
 
 import { readFile, readdir, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -47,6 +49,7 @@ import { mergeWrapper } from "./lib/wrapper.mjs";
 import { ensureGitignore } from "./lib/gitignore.mjs";
 import { injectManagedBlock, removeManagedBlock } from "./lib/inject.mjs";
 import { getAgentPrefix, prefixed } from "./lib/agentName.mjs";
+import { portableRef } from "./lib/bundleRef.mjs";
 
 // Managed-block markers used to own a region inside a project-authored
 // CLAUDE.md. Any content outside these two lines belongs to the user and the
@@ -73,9 +76,10 @@ await preflight({ autoInstall: boolFlag(flags, "auto-install-node", false) });
 
 // Location awareness: the bundle lives wherever kit (or the user) placed it.
 // We self-locate from the script's own URL; BUNDLE_ABS is wherever this file
-// sits plus one level up. BUNDLE_REF expresses that path relative to TARGET
-// when possible (nice for wrappers that live inside TARGET) and absolute
-// when the bundle lives outside TARGET (user-global kit install: `~/.claude/`).
+// sits plus one level up. BUNDLE_REF expresses that path in a form that is
+// safe to commit: project-relative when the bundle lives inside TARGET,
+// "~/..." when the bundle lives under $HOME (user-global kit install at
+// ~/.claude/), or absolute as a last resort. See lib/bundleRef.mjs.
 // Resolve both paths through realpath so symlinked parents (common: /tmp vs
 // /private/tmp on macOS) do not foul the inside-TARGET check below.
 const BUNDLE_ABS_NAIVE = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -92,11 +96,7 @@ const MODE =
     : "dry-run";
 const YES = boolFlag(flags, "yes", false);
 
-const BUNDLE_REF = (() => {
-  const rel = relative(TARGET, BUNDLE_ABS);
-  if (!rel.startsWith("..") && !rel.includes(":")) return rel || ".";
-  return BUNDLE_ABS; // bundle is outside the target (user-global or custom location)
-})();
+const BUNDLE_REF = portableRef(BUNDLE_ABS, TARGET);
 // State (manifest + bootstrap answers) lives under the TARGET project, not inside
 // the bundle. Reasons:
 //   (a) user-global kit installs place the bundle under ~/.claude/... which may
@@ -173,6 +173,28 @@ if (!opsConfig) {
     process.stderr.write("bootstrap did not produce an ops.config.json. aborting.\n");
     process.exit(1);
   }
+}
+
+// Dependency check: the LLM-wiki provider skill must be present before the
+// installer can proceed when ops.config declares the wiki as required. This
+// runs after bootstrap so a fresh install has a real opsConfig to read.
+// See rules/llm-wiki.md for the runtime contract this gate protects.
+if (opsConfig.wiki?.required) {
+  const provider = opsConfig.wiki.provider ?? "@ctxr/skill-llm-wiki";
+  const found = locateKitSkill(provider, TARGET);
+  if (!found) {
+    process.stderr.write(
+      `\nERROR: agent-staff-engineer requires the wiki provider skill '${provider}'.\n` +
+      `It was not found at either\n` +
+      `  ${kitSkillCandidatePaths(provider, TARGET).join("\n  ")}\n\n` +
+      `Install it first:\n` +
+      `  npx @ctxr/kit install ${provider}\n\n` +
+      `Then re-run this installer. To opt out (you will manage .development/ manually),\n` +
+      `set 'wiki.required' to false in ops.config.json.\n`
+    );
+    process.exit(1);
+  }
+  process.stdout.write(`wiki provider: ${provider} found at ${portableRef(found, TARGET)}\n`);
 }
 
 const marker = opsConfig.paths.wrappers.marker;
@@ -326,22 +348,36 @@ await ensureDir(devWorkingDir);
 await ensureDir(resolve(devWorkingDir, sharedSub));
 await ensureDir(resolve(devWorkingDir, localSub));
 await ensureDir(resolve(devWorkingDir, cacheSub));
+
+// Pre-seed the standard topic folders under shared/. Each topic folder is
+// its own in-place LLM wiki managed by the provider skill; the agent
+// initialises a topic (`skill-llm-wiki build --layout-mode in-place`) the
+// first time it writes into one. The installer only guarantees the empty
+// folders exist so writers know where to land without guessing.
+const wikiSharedTopics = Array.isArray(opsConfig.wiki?.shared_topics)
+  ? opsConfig.wiki.shared_topics
+  : ["runbooks", "reports", "plans"];
+for (const topic of wikiSharedTopics) {
+  await ensureDir(resolve(devWorkingDir, sharedSub, topic));
+}
+
 // Drop a short README under the shared subtree so first-time readers know
-// which folder commits and which does not.
+// which folder commits, which does not, and how the LLM wiki layer works.
 const sharedReadmePath = resolve(devWorkingDir, sharedSub, "README.md");
 if (!(await readTextOrNull(sharedReadmePath))) {
+  const wikiProvider = opsConfig.wiki?.provider ?? "@ctxr/skill-llm-wiki";
   await atomicWriteText(
     sharedReadmePath,
     [
       `# ${opsConfig.paths.dev_working_dir}/${sharedSub}`,
       "",
-      `This folder is committed with the project. It holds team-visible working material:`,
+      `This folder is committed with the project. Every topical subfolder here is its own in-place LLM wiki managed by \`${wikiProvider}\`:`,
       "",
-      `- \`config/\` shared defaults (hooks, templates)`,
-      `- \`reports/\` self-review and regression reports (provenance)`,
-      `- \`runbooks/\` team runbooks`,
+      ...wikiSharedTopics.map((t) => `- \`${t}/\`: ${topicBlurb(t)}`),
       "",
-      `Anything user-specific goes under \`../${localSub}/\` (gitignored). Regenerable scratch goes under \`../${cacheSub}/\` (gitignored).`,
+      `The agent does not write raw markdown into these folders directly. It goes through the provider skill so each doc is placed, front-mattered, and indexed for retrieval. See \`.claude/rules/${AGENT_PREFIX}_llm-wiki.md\` for the read/write contract and \`${wikiProvider}\`'s own SKILL.md for the canonical wiki format.`,
+      "",
+      `Anything user-specific goes under \`../${localSub}/\` (gitignored); regenerable scratch goes under \`../${cacheSub}/\` (gitignored). Those two scopes also use the wiki layer when the agent writes into them.`,
       "",
     ].join("\n")
   );
@@ -423,6 +459,51 @@ process.stdout.write(
 );
 
 // ---- Helpers ------------------------------------------------------------
+
+/** Short human blurb for the conventional topic wikis seeded under shared/. */
+function topicBlurb(topic) {
+  switch (topic) {
+    case "runbooks": return "team runbooks (incident, release, ops).";
+    case "reports": return "self-review and regression reports (provenance).";
+    case "plans": return "committed implementation plans and design notes.";
+    default: return `agent-authored ${topic}.`;
+  }
+}
+
+/**
+ * Render a scoped npm package name as the directory name `@ctxr/kit` uses
+ * under ~/.claude/skills/. Example: "@ctxr/skill-llm-wiki" -> "ctxr-skill-llm-wiki".
+ */
+function kitSkillDirName(pkg) {
+  return pkg.replace(/^@/, "").replace(/\//g, "-");
+}
+
+/**
+ * Probe order used to find an installed kit skill. Covers every kit-supported
+ * destination for the `skill` artifact type. See @ctxr/kit's
+ * src/lib/types.js `ARTIFACT_TYPES.skill` — project-local skills may live
+ * under `.claude/skills/` (Claude-native) or `.agents/skills/` (open-standard
+ * parallel); user-global skills always live at `~/.claude/skills/`.
+ */
+function kitSkillCandidatePaths(provider, target) {
+  const dirName = kitSkillDirName(provider);
+  return [
+    join(homedir(), ".claude", "skills", dirName),
+    join(target, ".claude", "skills", dirName),
+    join(target, ".agents", "skills", dirName),
+  ];
+}
+
+/**
+ * Locate an installed kit skill. Returns the first candidate path that
+ * contains a SKILL.md, or null when none does.
+ */
+function locateKitSkill(provider, target) {
+  for (const candidate of kitSkillCandidatePaths(provider, target)) {
+    if (existsSync(join(candidate, "SKILL.md"))) return candidate;
+  }
+  return null;
+}
 
 function printHelp() {
   process.stdout.write(

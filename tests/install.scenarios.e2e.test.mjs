@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { seedWikiSkillStub } from "./fixtures/wikiSkillStub.mjs";
 
 const BUNDLE_SRC = dirname(dirname(fileURLToPath(import.meta.url)));
 const MARKER =
@@ -55,6 +56,7 @@ describe("install e2e: user-global bundle (absolute bundle path)", () => {
       join(bundleRoot, "examples/ops.config.example.json"),
       join(targetRoot, ".claude/ops.config.json")
     );
+    await seedWikiSkillStub(targetRoot);
   });
   after(async () => {
     if (scratch) await rm(scratch, { recursive: true, force: true });
@@ -110,6 +112,7 @@ describe("install e2e: CLAUDE.md managed-block injection", () => {
       join(bundleRoot, "examples/ops.config.example.json"),
       join(targetRoot, ".claude/ops.config.json")
     );
+    await seedWikiSkillStub(targetRoot);
     // User-authored CLAUDE.md predating the agent install. Every byte outside
     // the injected managed block MUST be preserved.
     await writeFile(
@@ -181,6 +184,7 @@ describe("install e2e: CLAUDE.md is a directory (refuses cleanly)", () => {
       join(bundleRoot, "examples/ops.config.example.json"),
       join(scratch, ".claude/ops.config.json")
     );
+    await seedWikiSkillStub(scratch);
     // Collide: make CLAUDE.md a directory.
     await mkdir(join(scratch, "CLAUDE.md"));
   });
@@ -207,6 +211,7 @@ describe("install e2e: byte-stable CLAUDE.md across consecutive --update runs", 
       join(bundleRoot, "examples/ops.config.example.json"),
       join(scratch, ".claude/ops.config.json")
     );
+    await seedWikiSkillStub(scratch);
   });
   after(async () => {
     if (scratch) await rm(scratch, { recursive: true, force: true });
@@ -234,6 +239,7 @@ describe("install e2e: manifest records the CLAUDE.md entry (kind='project-claud
       join(bundleRoot, "examples/ops.config.example.json"),
       join(scratch, ".claude/ops.config.json")
     );
+    await seedWikiSkillStub(scratch);
   });
   after(async () => {
     if (scratch) await rm(scratch, { recursive: true, force: true });
@@ -263,6 +269,7 @@ describe("install e2e: legacy project-claude-md-alt manifest entry migrates to .
       join(bundleRoot, "examples/ops.config.example.json"),
       join(scratch, ".claude/ops.config.json")
     );
+    await seedWikiSkillStub(scratch);
     // Fake legacy state: a CLAUDE.agent.md sidecar plus a manifest entry
     // with the old kind pointing at it.
     const legacyPath = join(scratch, "CLAUDE.agent.md");
@@ -316,6 +323,7 @@ describe("install e2e: CLAUDE.md created when missing, removed on clean uninstal
       join(bundleRoot, "examples/ops.config.example.json"),
       join(targetRoot, ".claude/ops.config.json")
     );
+    await seedWikiSkillStub(targetRoot);
   });
   after(async () => {
     if (scratch) await rm(scratch, { recursive: true, force: true });
@@ -351,6 +359,7 @@ describe("install e2e: reinstall after uninstall picks up .userkeep.md", () => {
       join(bundleRoot, "examples/ops.config.example.json"),
       join(targetRoot, ".claude/ops.config.json")
     );
+    await seedWikiSkillStub(targetRoot);
   });
   after(async () => {
     if (scratch) await rm(scratch, { recursive: true, force: true });
@@ -403,6 +412,7 @@ describe("install e2e: prefixed memory-seed wrapper with user overrides is prese
       join(bundleRoot, "examples/ops.config.example.json"),
       join(targetRoot, ".claude/ops.config.json")
     );
+    await seedWikiSkillStub(targetRoot);
   });
   after(async () => {
     if (scratch) await rm(scratch, { recursive: true, force: true });

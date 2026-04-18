@@ -149,6 +149,18 @@
     "runbooks": ".development/shared/runbooks"
   },
 
+  "wiki": {
+    "provider": "@ctxr/skill-llm-wiki",
+    "mode": "in-place",
+    "roots": {
+      "shared": ".development/shared",
+      "local":  ".development/local",
+      "cache":  ".development/cache"
+    },
+    "shared_topics": ["runbooks", "reports", "plans"],
+    "required": true
+  },
+
   "stack": {
     "language": ["typescript", "python"],
     "testing": ["vitest", "pytest", "playwright"],

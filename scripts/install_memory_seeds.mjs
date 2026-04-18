@@ -33,6 +33,7 @@ import {
 } from "./lib/fsx.mjs";
 import { splitAtMarker } from "./lib/wrapper.mjs";
 import { getAgentPrefix, prefixed } from "./lib/agentName.mjs";
+import { portableRef } from "./lib/bundleRef.mjs";
 
 // --- exported helpers ----------------------------------------------------
 
@@ -292,14 +293,25 @@ function printHelp() {
 }
 
 function relBundlePath(target, cfg, absInsideBundle, bundleRoot) {
+  // Filesystem operations always use the actual bundleRoot — that's the
+  // ground truth regardless of what ops.config.json claims for display.
+  const rel = relative(bundleRoot, absInsideBundle).split(/[\\/]+/).join("/");
+  // Display prefix: respect ops.config.json's `paths.agent_bundle_dir`
+  // ONLY when it is a project-relative string AND resolves to the same
+  // filesystem path as bundleRoot (i.e., a valid alias). Otherwise fall
+  // back to portableRef, which renders as project-relative, "~/..." or
+  // absolute — never a raw "/Users/<name>/" path.
   const bundleDir = cfg.paths?.agent_bundle_dir;
-  // If bundleDir is a project-relative path, keep it so; otherwise use the
-  // absolute bundle root.
-  const refRoot = bundleDir && !bundleDir.startsWith("..") && !bundleDir.startsWith("/")
-    ? bundleDir
-    : bundleRoot;
-  const bundleAbs = resolve(target, refRoot);
-  const rel = relative(bundleAbs, absInsideBundle).split(/[\\/]+/).join("/");
+  const bundleDirIsProjectRelative =
+    typeof bundleDir === "string" &&
+    bundleDir.length > 0 &&
+    !bundleDir.startsWith("..") &&
+    !bundleDir.startsWith("/") &&
+    !bundleDir.startsWith("~");
+  const refRoot =
+    bundleDirIsProjectRelative && resolve(target, bundleDir) === bundleRoot
+      ? bundleDir
+      : portableRef(bundleRoot, target);
   return `${refRoot}/${rel}`;
 }
 

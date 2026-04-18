@@ -28,7 +28,7 @@ Makes regression triage reproducible. Every proposed action is logged in the rep
 
 ## Outputs
 
-- A regression report filed at `{{ paths.reports }}/{{ date }}-regression-{{ bug_issue_number }}.md`, rendered from `templates/regression-report.md`.
+- A regression report filed under `{{ paths.reports }}/` (which resolves under `.development/shared/reports/` by default), rendered from `templates/regression-report.md`. Per `rules/llm-wiki.md`, this write goes through `@ctxr/skill-llm-wiki`: consult that skill's SKILL.md for the report's exact target path and frontmatter, and invoke its validate/fix operation after the write so the wiki's index picks up the new leaf.
 - A proposal block with one or more of:
   - Reopen issue `#NNN` (if its close date is within a tunable window and the match is strong).
   - Create new bug issue linked to `#NNN` as the suspected origin.

@@ -14,6 +14,26 @@ The recommended path is via [`@ctxr/kit`](https://github.com/ctxr-dev/kit). Manu
 - **Git** installed and available on PATH.
 - **GitHub CLI** (`gh`) authenticated with scopes `repo`, `project`, `read:org`, `workflow`. Verify with `gh auth status`.
 
+## Required external skills
+
+agent-staff-engineer depends on a separately-installed skill for docs routing:
+
+- **`@ctxr/skill-llm-wiki`**: every doc under `.development/**` is managed as an in-place LLM wiki by this skill (runbooks, reports, plans). The installer will refuse to apply until this skill is present.
+
+Install it via kit before running `install.mjs --apply`:
+
+```bash
+npx @ctxr/kit install @ctxr/skill-llm-wiki
+```
+
+Kit will place the skill under one of the following destinations (all satisfy the dep check):
+
+- `~/.claude/skills/ctxr-skill-llm-wiki/` (user-global, with `--user`)
+- `<project>/.claude/skills/ctxr-skill-llm-wiki/` (project-local, Claude-native)
+- `<project>/.agents/skills/ctxr-skill-llm-wiki/` (project-local, open-standard parallel)
+
+To opt out (you will manage `.development/` manually), set `wiki.required` to `false` in `ops.config.json`.
+
 ## Install via kit (recommended)
 
 ```bash

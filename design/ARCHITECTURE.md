@@ -14,6 +14,7 @@ Key invariants the rest of this document relies on:
 
 - The agent does not read or write any target project's `daily/` or `knowledge/` folders. Those systems are owned by the project's own hooks and are out of scope.
 - Working artefacts live under `<project>/.development/` (dot-prefix) with three subtrees: `shared/` commits with the project (team-visible reports, runbooks, configs), while `local/` and `cache/` are per-user and gitignored by default. Reusable templates stay inside the bundle.
+- **Docs under `.development/**` are routed through `@ctxr/skill-llm-wiki`**. Every topical subfolder (e.g. `shared/runbooks/`, `shared/reports/`, `shared/plans/`) is its own in-place LLM wiki managed by the skill. The agent invokes the skill for every read and write; format, placement, and navigation are the skill's responsibility, not this bundle's. See `rules/llm-wiki.md` and `ops.config.json -> wiki`.
 - Bootstrap is an **interactive interview**, not a silent inspector.
 - GitHub observation spans potentially multiple dev projects, multiple release projects, and extra watched repos, each with its own depth setting.
 - PR merge and dev-issue Done are human gates. The agent never performs either on the human's behalf.

@@ -88,7 +88,7 @@ Before pushing or opening the PR, the self-review step runs per `workflow.code_r
 1. Look up `workflow.code_review.provider`.
 2. If `ctxr-skill-code-review`, check availability in the target's installed skills. If missing, print `workflow.code_review.install_hint` and ask the user whether to fall back to the internal template or to halt. No silent fallback.
 3. Invoke the provider with `workflow.code_review.invocation`, `mode`, `output_format`, scope = diff-since-default-branch.
-4. Write the artefact to `workflow.code_review.report_dir`.
+4. Write the artefact to `workflow.code_review.report_dir` (which resolves under `.development/shared/reports/` by default). Per `rules/llm-wiki.md`, this write goes through `@ctxr/skill-llm-wiki`: consult that skill's SKILL.md for the report's target path and frontmatter, and invoke its validate/fix operation after the write so the wiki's index picks up the new leaf.
 5. Parse the verdict; if in `workflow.code_review.block_on_verdict`, halt with the verdict and reviewer summary.
 
 The ctxr-skill-code-review default is the recommended path. Projects opt out via `workflow.code_review.provider = "internal-template"` (falls back to [../../templates/code-review-report.md](../../templates/code-review-report.md)) or `"none"` when `workflow.pr.self_review_required` is false.

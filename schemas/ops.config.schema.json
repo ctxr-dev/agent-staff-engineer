@@ -4,7 +4,7 @@
   "title": "agent-staff-engineer ops.config",
   "description": "Contract between the portable agent bundle and any target project. Every skill, rule, template, and script reads this file via scripts/lib/schema.mjs. Projects never hand-write this file; bootstrap-ops-config produces it from live project state plus the interview answers.",
   "type": "object",
-  "required": ["project", "github", "labels", "workflow", "paths", "stack"],
+  "required": ["project", "github", "labels", "workflow", "paths", "stack", "wiki"],
   "additionalProperties": false,
 
   "properties": {
@@ -416,6 +416,62 @@
           "type": "string",
           "description": "Where skill-authored runbooks land. Defaults into the shared subtree (team-visible).",
           "default": ".development/shared/runbooks"
+        }
+      }
+    },
+
+    "wiki": {
+      "type": "object",
+      "required": ["provider", "mode", "roots", "required"],
+      "additionalProperties": false,
+      "description": "Routing of docs under .development/** through an LLM wiki skill. Every topical subfolder under shared/, local/, and cache/ is managed as an in-place wiki by the provider skill. The agent invokes the skill (see rules/llm-wiki.md) for all reads and writes so the wiki format stays owned by the skill, not duplicated here.",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "npm package name of the wiki skill. Currently only @ctxr/skill-llm-wiki is supported.",
+          "enum": ["@ctxr/skill-llm-wiki"],
+          "default": "@ctxr/skill-llm-wiki"
+        },
+        "mode": {
+          "type": "string",
+          "description": "Layout mode the skill uses. Only 'in-place' is supported today: each topic folder IS its wiki, no sibling .wiki/ folder.",
+          "enum": ["in-place"],
+          "default": "in-place"
+        },
+        "roots": {
+          "type": "object",
+          "required": ["shared", "local", "cache"],
+          "additionalProperties": false,
+          "description": "Absolute-relative-to-project paths for the three wiki scopes. Skills read these so they never hard-code '.development/shared' literals.",
+          "properties": {
+            "shared": {
+              "type": "string",
+              "description": "Committed wiki root; every subfolder is a team-shared topic wiki.",
+              "default": ".development/shared"
+            },
+            "local": {
+              "type": "string",
+              "description": "Per-user wiki root (gitignored); every subfolder is a per-user topic wiki.",
+              "default": ".development/local"
+            },
+            "cache": {
+              "type": "string",
+              "description": "Regenerable wiki root (gitignored); every subfolder is a regenerable topic wiki.",
+              "default": ".development/cache"
+            }
+          }
+        },
+        "shared_topics": {
+          "type": "array",
+          "description": "Topic wikis the installer pre-seeds under shared/ on first apply. Extra topics appear lazily when the agent first writes into them.",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_.][A-Za-z0-9_.-]*$" },
+          "uniqueItems": true,
+          "default": ["runbooks", "reports", "plans"]
+        },
+        "required": {
+          "type": "boolean",
+          "description": "When true, installer refuses to apply if the provider skill is not installed. Set false only when the project manages .development/ manually.",
+          "default": true
         }
       }
     },
