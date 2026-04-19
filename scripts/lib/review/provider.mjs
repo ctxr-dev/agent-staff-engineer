@@ -58,7 +58,11 @@ export class NotSupportedError extends Error {
  *       { ciState: "SUCCESS"|"FAILURE"|"ERROR"|"PENDING",
  *         unresolvedCount: number, reviewOnHead: boolean }
  *   fetchUnresolvedThreads(ctx)  -> Thread[]; each Thread =
- *       { id, path, line, isOutdated, commitSha, authorLogin, body }
+ *       { id, path, line: number|null, isOutdated, commitSha,
+ *         authorLogin, body }
+ *       `line` may be null for file-level threads or otherwise
+ *       unanchored comments; consumers must handle that case and
+ *       must not assume `${path}:${line}` is always formattable.
  *       `isOutdated` = the anchor line has moved since the comment
  *       was posted (GitHub surfaces this flag; providers should
  *       best-effort map their native equivalent for stale-triage).

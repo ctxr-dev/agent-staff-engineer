@@ -74,12 +74,20 @@ async function githubRequestReview(ctx) {
 
 async function githubPollForReview(ctx) {
   const { owner, repo, prNumber, headSha, botLogins } = ctx;
+  // First page fetches threads + reviews + commits in one round-trip.
+  // Pagination only kicks in when page 1 is all-resolved AND more pages
+  // exist — the common case (small PRs) still does exactly one query.
+  // Review history is pulled with last:50 (up from last:10) so long-
+  // running PRs with many re-review rounds don't fall off the window.
   const query = `
     query($owner: String!, $name: String!, $number: Int!) {
       repository(owner: $owner, name: $name) {
         pullRequest(number: $number) {
-          reviewThreads(first: 100) { nodes { isResolved } }
-          reviews(last: 10) {
+          reviewThreads(first: 100) {
+            nodes { isResolved }
+            pageInfo { hasNextPage endCursor }
+          }
+          reviews(last: 50) {
             nodes {
               commit { oid }
               author { __typename login }
@@ -98,8 +106,19 @@ async function githubPollForReview(ctx) {
     number: prNumber,
   });
   const pr = data.repository.pullRequest;
-  const threads = pr.reviewThreads.nodes;
-  const unresolvedCount = threads.filter((t) => !t.isResolved).length;
+  const firstPage = pr.reviewThreads;
+  let unresolvedCount = firstPage.nodes.filter((t) => !t.isResolved).length;
+  // If page 1 is all-resolved but more pages exist, page through the
+  // tail until we see any unresolved (sufficient signal to exit the
+  // count loop) or confirm none. Without this, a PR with >100 threads
+  // where all unresolved happen to sit past page 1 would report
+  // unresolvedCount=0 and let the iteration loop exit prematurely.
+  if (unresolvedCount === 0 && firstPage.pageInfo?.hasNextPage) {
+    unresolvedCount = await countUnresolvedBeyondFirstPage(
+      { owner, repo, prNumber },
+      firstPage.pageInfo.endCursor,
+    );
+  }
   const rawState = pr.commits.nodes[0]?.commit?.statusCheckRollup?.state;
   // Prefer the PR's server-side current HEAD SHA over `ctx.headSha`:
   // if the caller forgot to refresh `ctx` after a push, the ctx value
@@ -149,31 +168,57 @@ function normalizeCiState(raw) {
   return "PENDING";
 }
 
+// Hard cap on paginated `reviewThreads` fetches. 10 pages * 100 per
+// page = 1000 threads. PRs larger than that are pathological; fail
+// loud rather than silently truncate.
+const MAX_REVIEW_THREAD_PAGES = 10;
+
 async function githubFetchUnresolvedThreads(ctx) {
   const { owner, repo, prNumber } = ctx;
+  // Paginate through every reviewThreads page so the skill sees every
+  // unresolved thread on a large PR. Without this, threads past page 1
+  // would never be triaged or resolved and the loop could never
+  // converge to unresolved=0.
   const query = `
-    query($owner: String!, $name: String!, $number: Int!) {
+    query($owner: String!, $name: String!, $number: Int!, $after: String) {
       repository(owner: $owner, name: $name) {
         pullRequest(number: $number) {
-          reviewThreads(first: 100) {
+          reviewThreads(first: 100, after: $after) {
             nodes {
               id isResolved isOutdated path line
               comments(first: 5) {
                 nodes { author { login } body commit { oid } createdAt }
               }
             }
+            pageInfo { hasNextPage endCursor }
           }
         }
       }
     }
   `;
-  const data = await ghGraphqlQuery(query, {
-    owner,
-    name: repo,
-    number: prNumber,
-  });
-  const threads = data.repository.pullRequest.reviewThreads.nodes;
-  return threads
+  const all = [];
+  let after = null;
+  let hasNext = true;
+  let page = 0;
+  while (hasNext) {
+    page += 1;
+    if (page > MAX_REVIEW_THREAD_PAGES) {
+      throw new Error(
+        `githubFetchUnresolvedThreads: exceeded ${MAX_REVIEW_THREAD_PAGES} pages of review threads for ${owner}/${repo}#${prNumber}; refusing to silently truncate results`,
+      );
+    }
+    const data = await ghGraphqlQuery(query, {
+      owner,
+      name: repo,
+      number: prNumber,
+      after,
+    });
+    const rt = data.repository.pullRequest.reviewThreads;
+    all.push(...rt.nodes);
+    hasNext = Boolean(rt.pageInfo?.hasNextPage);
+    after = rt.pageInfo?.endCursor ?? null;
+  }
+  return all
     .filter((t) => !t.isResolved)
     .map((t) => {
       const firstComment = t.comments.nodes[0] ?? {};
@@ -247,4 +292,56 @@ async function resolvePrNodeId({ owner, repo, prNumber }) {
     number: prNumber,
   });
   return data.repository.pullRequest.id;
+}
+
+/**
+ * Page through reviewThreads starting after `startCursor` and return the
+ * count of unresolved threads, short-circuiting as soon as any unresolved
+ * is seen (>= 1 is enough signal for pollForReview's gate). Throws if
+ * pagination would exceed MAX_REVIEW_THREAD_PAGES. Only used when
+ * pollForReview's first page is all-resolved but hasNextPage is true.
+ *
+ * Returns the count of unresolved threads found on pages 2..N. Page 1's
+ * count was already known to be 0 when this is invoked.
+ */
+async function countUnresolvedBeyondFirstPage({ owner, repo, prNumber }, startCursor) {
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $after) {
+            nodes { isResolved }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }
+  `;
+  let after = startCursor;
+  let page = 1; // page 1 already consumed by the caller
+  let unresolved = 0;
+  while (after) {
+    page += 1;
+    if (page > MAX_REVIEW_THREAD_PAGES) {
+      throw new Error(
+        `countUnresolvedBeyondFirstPage: exceeded ${MAX_REVIEW_THREAD_PAGES} pages for ${owner}/${repo}#${prNumber}; refusing to silently truncate`,
+      );
+    }
+    const data = await ghGraphqlQuery(query, {
+      owner,
+      name: repo,
+      number: prNumber,
+      after,
+    });
+    const rt = data.repository.pullRequest.reviewThreads;
+    const pageUnresolved = rt.nodes.filter((t) => !t.isResolved).length;
+    if (pageUnresolved > 0) {
+      // Any unresolved is enough signal; the exact count doesn't matter
+      // for the gate (unresolvedCount > 0 blocks exit either way).
+      return unresolved + pageUnresolved;
+    }
+    if (!rt.pageInfo?.hasNextPage) return unresolved;
+    after = rt.pageInfo.endCursor ?? null;
+  }
+  return unresolved;
 }

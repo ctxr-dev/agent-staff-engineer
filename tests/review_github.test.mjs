@@ -48,6 +48,15 @@ const FAKE_GH = `#!/bin/sh
   done
   printf '\\n'
 } >> "$FAKE_GH_LOG"
+# Sequence mode: when FAKE_GH_SEQUENCE is set, pick the Nth fixture by
+# counting call-log lines. The counter persists across invocations of
+# the shim because the log file grows monotonically. Provider methods
+# that paginate make multiple gh calls per user-level invocation; this
+# lets a single withFakeGh() session script all of them in order.
+if [ -n "$FAKE_GH_SEQUENCE" ]; then
+  call_no=$(wc -l < "$FAKE_GH_LOG" | tr -d ' ')
+  FAKE_GH_FIXTURE=$(printf '%s' "$FAKE_GH_SEQUENCE" | awk -v n="$call_no" '{ k = split($0, arr, ","); if (n <= k) print arr[n] }')
+fi
 case "$FAKE_GH_FIXTURE" in
   pr_node_id)
     printf '%s' '{"data":{"repository":{"pullRequest":{"id":"PR_abc123"}}}}'
@@ -93,6 +102,16 @@ case "$FAKE_GH_FIXTURE" in
     # Same shape as above but ONLY other-bot reviewed HEAD. With
     # ctx.botLogins targeted at copilot, reviewOnHead must be false.
     printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]},"reviews":{"nodes":[{"commit":{"oid":"HEAD_SHA"},"author":{"__typename":"Bot","login":"other-bot"}}]},"commits":{"nodes":[{"commit":{"oid":"HEAD_SHA","statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}'
+    ;;
+  poll_all_resolved_page1_with_next)
+    # Page 1: all resolved. pageInfo says hasNextPage=true.
+    # pollForReview must call out to page 2 before declaring unresolvedCount=0.
+    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":true},{"isResolved":true}],"pageInfo":{"hasNextPage":true,"endCursor":"CURSOR_PAGE1"}},"reviews":{"nodes":[{"commit":{"oid":"HEAD_SHA"},"author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"}}]},"commits":{"nodes":[{"commit":{"oid":"HEAD_SHA","statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}'
+    ;;
+  poll_page2_has_unresolved)
+    # Page 2 surfaces an unresolved. Paired with poll_all_resolved_page1_with_next
+    # via FAKE_GH_SEQUENCE. pollForReview's count helper short-circuits here.
+    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":true},{"isResolved":false}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}'
     ;;
   fetch_threads_mixed)
     printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"T1","isResolved":false,"isOutdated":false,"path":"src/a.js","line":42,"comments":{"nodes":[{"author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"body":"prefer const","commit":{"oid":"OLD_SHA"},"createdAt":"2026-04-19T00:00:00Z"}]}},{"id":"T2","isResolved":true,"isOutdated":false,"path":"src/b.js","line":10,"comments":{"nodes":[{"author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"body":"resolved already","commit":{"oid":"OLD_SHA"},"createdAt":"2026-04-19T00:00:00Z"}]}},{"id":"T3","isResolved":false,"isOutdated":true,"path":"src/c.js","line":7,"comments":{"nodes":[]}},{"id":"T4","isResolved":false,"isOutdated":false,"path":"src/u.js","line":1,"comments":{"nodes":[{"author":null,"body":"unicode: e accent and CJK chars","commit":{"oid":"SHA_U"},"createdAt":"2026-04-19T00:00:00Z"}]}}]}}}}}'
@@ -151,6 +170,37 @@ async function withFakeGh(fixture, fn) {
     else process.env.PATH = pathBefore;
     if (fixBefore === undefined) delete process.env.FAKE_GH_FIXTURE;
     else process.env.FAKE_GH_FIXTURE = fixBefore;
+    if (logBefore === undefined) delete process.env.FAKE_GH_LOG;
+    else process.env.FAKE_GH_LOG = logBefore;
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
+
+// Variant of withFakeGh that scripts a sequence of fixtures. The shim
+// picks the Nth fixture by counting prior calls in the log file. Use
+// when the method under test paginates (multiple gh calls per one
+// provider-method invocation).
+async function withFakeGhSequence(fixtures, fn) {
+  const { scratch, logPath } = await installFakeGh();
+  const pathBefore = process.env.PATH;
+  const fixBefore = process.env.FAKE_GH_FIXTURE;
+  const seqBefore = process.env.FAKE_GH_SEQUENCE;
+  const logBefore = process.env.FAKE_GH_LOG;
+  try {
+    process.env.PATH = scratch + ":" + (pathBefore ?? "");
+    process.env.FAKE_GH_FIXTURE = ""; // shim falls back to sequence
+    process.env.FAKE_GH_SEQUENCE = fixtures.join(",");
+    process.env.FAKE_GH_LOG = logPath;
+    const result = await fn();
+    const log = await readFile(logPath, "utf8");
+    return { result, log };
+  } finally {
+    if (pathBefore === undefined) delete process.env.PATH;
+    else process.env.PATH = pathBefore;
+    if (fixBefore === undefined) delete process.env.FAKE_GH_FIXTURE;
+    else process.env.FAKE_GH_FIXTURE = fixBefore;
+    if (seqBefore === undefined) delete process.env.FAKE_GH_SEQUENCE;
+    else process.env.FAKE_GH_SEQUENCE = seqBefore;
     if (logBefore === undefined) delete process.env.FAKE_GH_LOG;
     else process.env.FAKE_GH_LOG = logBefore;
     await rm(scratch, { recursive: true, force: true });
@@ -345,6 +395,31 @@ describe("github review provider: pollForReview", skipOpts, () => {
     );
     assert.equal(result.reviewOnHead, true, "should trust the PR's fetched HEAD, not stale ctx");
     assert.equal(result.ciState, "SUCCESS");
+  });
+
+  it("pages reviewThreads when page 1 is all-resolved but hasNextPage=true (unresolved surfaces on page 2)", async () => {
+    // Regression test for review-round-8 T29: without pagination, a
+    // PR with unresolved threads only past page 1 would report
+    // unresolvedCount=0 and trip the exit gate. The paged helper must
+    // detect page 2's unresolved entry.
+    const { result, log } = await withFakeGhSequence(
+      ["poll_all_resolved_page1_with_next", "poll_page2_has_unresolved"],
+      () =>
+        makeGithubReviewProvider().pollForReview({
+          owner: "o",
+          repo: "r",
+          prNumber: 1,
+          headSha: "HEAD_SHA",
+        }),
+    );
+    assert.equal(
+      result.unresolvedCount > 0,
+      true,
+      "unresolved on page 2 must surface; current impl counts >=1",
+    );
+    // Two gh calls: first page + continuation page.
+    const callCount = (log.match(/^ARGV:/gm) || []).length;
+    assert.equal(callCount, 2, `expected 2 gh calls (pagination); got ${callCount}`);
   });
 
   it("transmits owner/repo/number variables and the reviewThreads query", async () => {
