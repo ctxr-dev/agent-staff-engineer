@@ -437,18 +437,14 @@ async function interview(rl, d, _bundleRef) {
     return s.split(",").map((x) => x.trim()).filter(Boolean);
   };
 
-  process.stdout.write("interview (9 topics). Enter accepts the default shown in brackets.\n");
+  process.stdout.write("interview (8 topics). Enter accepts the default shown in brackets.\n");
   process.stdout.write("Note: the agent's full write surface is implemented for GitHub today; Jira / Linear / GitLab backends accept the config but every write op throws NotSupportedError until their real impls land.\n\n");
 
-  const workTracking = await ask(
-    "1. Work tracking style: tracker-issues / tracker-and-local-plans / mixed",
-    "tracker-and-local-plans"
-  );
   const cadence = await ask(
-    "2. Release cadence: continuous / per-wave / per-version / adhoc",
+    "1. Release cadence: continuous / per-wave / per-version / adhoc",
     "per-wave"
   );
-  const teamSize = await ask("3. Team size: solo / small (2-5) / larger", "solo");
+  const teamSize = await ask("2. Team size: solo / small (2-5) / larger", "solo");
   const pushAllowedRaw = await ask(
     "   Who may push to the default branch? Comma-separated logins",
     d.gh.login ?? ""
@@ -458,7 +454,7 @@ async function interview(rl, d, _bundleRef) {
     [d.gh.login, "copilot"].filter(Boolean).join(",")
   );
   const e2eSetup = await ask(
-    "4. e2e setup: none / xcuitest / playwright / cypress / pytest / other",
+    "3. e2e setup: none / xcuitest / playwright / cypress / pytest / other",
     d.stack.testing[0] ?? "none"
   );
   const e2ePath = await ask("   e2e scripts path (empty if N/A)", "");
@@ -466,20 +462,20 @@ async function interview(rl, d, _bundleRef) {
   const inferredKind = inferTrackerKind(d) ?? "github";
   const devKind = await askTrackerKind(
     ask,
-    "5. Tracker hosting dev issues: github / jira / linear / gitlab",
+    "4. Tracker hosting dev issues: github / jira / linear / gitlab",
     inferredKind,
   );
   const devTracker = await askTrackerTarget(ask, devKind, "dev", d);
 
   const releaseKind = await askTrackerKind(
     ask,
-    "6. Tracker hosting release umbrellas: github / jira / linear / gitlab (default: same as dev)",
+    "5. Tracker hosting release umbrellas: github / jira / linear / gitlab (default: same as dev)",
     devKind,
   );
   const releaseTracker = await askTrackerTarget(ask, releaseKind, "release", d, devTracker);
 
   const observedReposStr = await ask(
-    "7. Additional observed GitHub repos (owner/name), comma-separated, blank for none",
+    "6. Additional observed GitHub repos (owner/name), comma-separated, blank for none",
     ""
   );
   const defaultDepth = await ask(
@@ -489,7 +485,7 @@ async function interview(rl, d, _bundleRef) {
   const observed = parseObservedGithubRepos(observedReposStr, defaultDepth);
 
   const regimes = await askCsv(
-    "8. Compliance regimes: gdpr,ccpa,soc2,pci,hipaa,mhmda,appi,pipa,lgpd or 'none'",
+    "7. Compliance regimes: gdpr,ccpa,soc2,pci,hipaa,mhmda,appi,pipa,lgpd or 'none'",
     "none"
   );
   const dataClasses = await askCsv(
@@ -497,12 +493,11 @@ async function interview(rl, d, _bundleRef) {
     "none"
   );
   const seedProductRules = await askYesNo(
-    "9. Seed any project-specific rules now? (you can add later via adapt-system)",
+    "8. Seed any project-specific rules now? (you can add later via adapt-system)",
     "no"
   );
 
   return {
-    workTracking,
     cadence,
     teamSize,
     pushAllowed: pushAllowedRaw.split(",").map((s) => s.trim()).filter(Boolean),
@@ -741,7 +736,6 @@ export function pickDefaults(d) {
   const devTracker = defaultTrackerTarget(kind, "dev", d);
   const releaseTracker = defaultTrackerTarget(kind, "release", d);
   return {
-    workTracking: "tracker-and-local-plans",
     cadence: "per-wave",
     teamSize: "solo",
     pushAllowed,

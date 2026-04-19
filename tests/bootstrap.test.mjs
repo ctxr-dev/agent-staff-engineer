@@ -475,22 +475,75 @@ describe("bootstrap.compose", () => {
     assert.ok(cfg.workflow.pr.body_template.startsWith(".agents/agents/agent-staff-engineer/"));
   });
 
+  // Load the schema once and reuse across every schema-validation test
+  // below. scripts/lib/schema.mjs's ajv instance caches by $id, so
+  // re-loading the schema JSON across tests triggers a duplicate-$id
+  // error on the second compile. Loading once and passing the same
+  // object lets schema.mjs's WeakMap cache the compiled validator
+  // while leaving Ajv's $id set to exactly one entry.
+  let schemaPromise;
+  function loadSchemaOnce() {
+    if (!schemaPromise) {
+      schemaPromise = (async () => {
+        const { readFile } = await import("node:fs/promises");
+        const { fileURLToPath } = await import("node:url");
+        const { dirname, resolve: resolvePath } = await import("node:path");
+        const here = dirname(fileURLToPath(import.meta.url));
+        const schemaPath = resolvePath(here, "..", "schemas", "ops.config.schema.json");
+        return JSON.parse(await readFile(schemaPath, "utf8"));
+      })();
+    }
+    return schemaPromise;
+  }
+
+  // compose() embeds the answers' devTracker / releaseTracker objects
+  // by reference, so mutating cfg.trackers.dev.X in one test would
+  // silently corrupt answers.devTracker.X for every subsequent test.
+  // structuredClone the cfg before any mutation so each test is
+  // independent. Hoisting this helper matters: the three schema tests
+  // below each delete a field and would otherwise cascade failures.
+  const composeFresh = () =>
+    structuredClone(compose(detection, answers, ".claude/agents/agent-staff-engineer"));
+
   it("produces a config that validates against schemas/ops.config.schema.json", async () => {
     // End-to-end: run compose through the real schema. If a compose
     // branch emits a malformed tracker target, schema validation fails
     // here rather than downstream at bootstrap-apply time on a real
     // install. Also guards against silently drifting the compose shape
     // away from the schema when one of the two is edited in isolation.
-    const { readFile } = await import("node:fs/promises");
-    const { fileURLToPath } = await import("node:url");
-    const { dirname, join, resolve } = await import("node:path");
-    const here = dirname(fileURLToPath(import.meta.url));
-    const schemaPath = resolve(here, "..", "schemas", "ops.config.schema.json");
-    const schema = JSON.parse(await readFile(schemaPath, "utf8"));
+    const schema = await loadSchemaOnce();
     const { validate } = await import("../scripts/lib/schema.mjs");
-    void join; // quiet unused warning
-    const cfg = compose(detection, answers, ".claude/agents/agent-staff-engineer");
-    const v = validate(schema, cfg);
+    const v = validate(schema, composeFresh());
     assert.ok(v.ok, `composed config failed schema: ${JSON.stringify(v.errors ?? null)}`);
+  });
+
+  // Round-4 T4: a github dev tracker without `repo` is no longer
+  // schema-valid (was silently accepted before). Lock the new
+  // conditional requirement so a future schema loosening would fail
+  // this test instead of shipping silently.
+  it("schema rejects a github dev tracker that omits `repo`", async () => {
+    const schema = await loadSchemaOnce();
+    const { validate } = await import("../scripts/lib/schema.mjs");
+    const cfg = composeFresh();
+    assert.ok(validate(schema, cfg).ok, "baseline must validate");
+    delete cfg.trackers.dev.repo;
+    const v = validate(schema, cfg);
+    assert.equal(v.ok, false, "github dev tracker without repo must fail schema validation");
+    const msg = JSON.stringify(v.errors ?? []);
+    assert.match(msg, /repo/, `error should mention 'repo'; got: ${msg}`);
+  });
+
+  // Release trackers legitimately span repos, so `repo` stays optional
+  // there. Locking this so a future over-eager tightening that forced
+  // `repo` on every github tracker would be caught by the tests.
+  it("schema allows a github release tracker without `repo`", async () => {
+    const schema = await loadSchemaOnce();
+    const { validate } = await import("../scripts/lib/schema.mjs");
+    const cfg = composeFresh();
+    delete cfg.trackers.release.repo;
+    assert.ok(
+      validate(schema, cfg).ok,
+      "github release tracker without repo must remain schema-valid",
+    );
   });
 });

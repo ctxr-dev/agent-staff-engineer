@@ -229,6 +229,18 @@ if (opsConfig && "github" in opsConfig && !("trackers" in opsConfig)) {
   for (let attempt = 1; existsSync(backupPath) && attempt <= 1000; attempt += 1) {
     backupPath = `${basePrefix}-${attempt}.bak`;
   }
+  // After 1000 candidates the filesystem is either full of stale
+  // backups the user needs to clean up OR has something weird going on
+  // (e.g. a directory with our exact name). Rather than silently
+  // clobbering existing state via atomicWriteJson's rename, exit with
+  // a clear message so the user investigates.
+  if (existsSync(backupPath)) {
+    process.stderr.write(
+      `ops.config.json uses the legacy 'github:' shape, but no unique backup path could be found after 1000 attempts starting from ${basePrefix}.bak.\n` +
+      `Move existing .pre-trackers-*.bak files aside manually and re-run install.\n`,
+    );
+    process.exit(1);
+  }
   try {
     await atomicWriteJson(backupPath, opsConfig);
   } catch (e) {

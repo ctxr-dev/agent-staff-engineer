@@ -1,7 +1,7 @@
 <!--
 agent-staff-engineer template: issue-task.md
 purpose: small, well-scoped task that is not a feature, bug, refactor, or docs item
-rendered by: tracker-sync.create_issue (type=task)
+rendered by: tracker-sync issues.createIssue (type=task)
 ops.config keys read:
   - project.name
   - labels.type          (value "task")

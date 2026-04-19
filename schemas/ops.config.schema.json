@@ -73,7 +73,14 @@
           "items": { "$ref": "#/definitions/trackerTarget" },
           "default": []
         }
-      }
+      },
+      "allOf": [
+        {
+          "description": "When trackers.dev is a github target, `repo` must be set: dev issue / PR / branch operations need a concrete repo context. Release trackers legitimately span multiple repos in the same org so `repo` stays optional there.",
+          "if": { "properties": { "dev": { "properties": { "kind": { "const": "github" } }, "required": ["kind"] } }, "required": ["dev"] },
+          "then": { "properties": { "dev": { "required": ["kind", "owner", "projects", "repo"] } } }
+        }
+      ]
     },
 
     "migration": {
@@ -707,7 +714,7 @@
         },
         "repo": {
           "type": "string",
-          "description": "Repo name (no owner prefix). Required for dev trackers; optional for release trackers that span multiple repos in the same org.",
+          "description": "Repo name (no owner prefix). Optional at this level; when omitted the tracker can span multiple repos in the same org (useful for release trackers bound to Projects v2 boards rather than a single repo). The conditional block at trackers.dev enforces it when the dev tracker is github, because dev issue / PR ops need a concrete repo.",
           "minLength": 1
         },
         "auth_login": {

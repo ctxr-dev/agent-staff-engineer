@@ -1,7 +1,7 @@
 <!--
 agent-staff-engineer template: issue-bug.md
 purpose: bug report, tracked as a dev issue
-rendered by: tracker-sync.create_issue (type=bug) and regression-handler
+rendered by: tracker-sync issues.createIssue (type=bug) and regression-handler
 ops.config keys read:
   - project.name
   - labels.type          (value "bug")
