@@ -1,31 +1,56 @@
 // lib/review/dispatcher.mjs
-// Pick a ReviewProvider from the tracker kind declared in ops.config.json.
+// Pick a ReviewProvider for the pr-iteration loop.
 //
 // Today the only concrete backend is GitHub (github.mjs). Every other
 // kind gets the stub (stub.mjs), which throws NotSupportedError on every
 // operation. PR 3's multi-tracker refactor adds jira/linear/gitlab
 // backends and replaces the stub calls as they land.
 //
-// Legacy shim: ops.config.json files produced before PR 3 carry a
-// top-level `github:` block instead of `trackers.dev.kind`. We infer
-// `github` in that case so existing installs continue to work through
-// PR 2. PR 3 removes this branch at the same time it introduces the
-// hard break on config migration.
+// Precedence (highest to lowest):
+//   1. `workflow.external_review.provider` when it's "github" / "none"
+//      — explicit override from the user, e.g. "code lives on GitHub
+//      but tickets are elsewhere, so force GitHub for review".
+//   2. `workflow.external_review.provider === "auto"` -> fall through.
+//   3. `trackers.dev.kind` (new shape).
+//   4. Top-level legacy `github:` block (pre-PR-3 shim; PR 3 removes).
+//   5. "unknown" -> stub.
 
 import { makeGithubReviewProvider } from "./github.mjs";
 import { makeStubProvider } from "./stub.mjs";
 
 /**
- * @param {object} opsConfig parsed ops.config.json (or a minimal subset
- *   carrying either `trackers.dev.kind` or a top-level `github` block)
+ * @param {object} opsConfig parsed ops.config.json (or a minimal subset)
  * @returns {{ provider: object, kind: string }}
  */
 export function pickReviewProvider(opsConfig) {
-  const kind = resolveTrackerKind(opsConfig);
+  const kind = resolveReviewProviderKind(opsConfig);
   if (kind === "github") {
     return { provider: makeGithubReviewProvider(), kind };
   }
   return { provider: makeStubProvider(kind), kind };
+}
+
+/**
+ * Resolve the review provider kind honoring
+ * `workflow.external_review.provider` before tracker-based inference.
+ *
+ * Supported override values:
+ *   - "github" — force the GitHub provider
+ *   - "none"   — explicitly opt out of the loop (returns "none" so the
+ *                skill can short-circuit cleanly, not attempt to reach
+ *                the stub)
+ *   - "auto"   — use tracker-based inference (same as omitting the key)
+ *
+ * Any other string falls back to inference for forward compat.
+ */
+export function resolveReviewProviderKind(cfg) {
+  const overrideRaw = cfg?.workflow?.external_review?.provider;
+  if (typeof overrideRaw === "string" && overrideRaw.length > 0) {
+    const override = overrideRaw.toLowerCase();
+    if (override === "github" || override === "none") return override;
+    // "auto" (and any unknown value) falls through to inference.
+  }
+  return resolveTrackerKind(cfg);
 }
 
 /** @returns {string} tracker kind, lower-case; "unknown" when nothing declared. */

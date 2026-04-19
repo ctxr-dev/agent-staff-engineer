@@ -9,6 +9,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   pickReviewProvider,
+  resolveReviewProviderKind,
   resolveTrackerKind,
 } from "../scripts/lib/review/dispatcher.mjs";
 import {
@@ -38,6 +39,63 @@ describe("resolveTrackerKind", () => {
   });
   it("lowercases the kind so downstream comparisons are deterministic", () => {
     assert.equal(resolveTrackerKind({ trackers: { dev: { kind: "GITHUB" } } }), "github");
+  });
+});
+
+describe("resolveReviewProviderKind: workflow.external_review.provider override", () => {
+  it("returns 'github' when override is 'github' regardless of tracker kind", () => {
+    // "Code lives on GitHub, tickets on Jira" scenario: tracker says
+    // jira, but the external reviewer runs on GitHub.
+    assert.equal(
+      resolveReviewProviderKind({
+        workflow: { external_review: { provider: "github" } },
+        trackers: { dev: { kind: "jira" } },
+      }),
+      "github",
+    );
+  });
+  it("returns 'none' when override is 'none', short-circuiting the whole loop", () => {
+    assert.equal(
+      resolveReviewProviderKind({
+        workflow: { external_review: { provider: "none" } },
+        trackers: { dev: { kind: "github" } },
+      }),
+      "none",
+    );
+  });
+  it("falls through to tracker inference when override is 'auto'", () => {
+    assert.equal(
+      resolveReviewProviderKind({
+        workflow: { external_review: { provider: "auto" } },
+        trackers: { dev: { kind: "linear" } },
+      }),
+      "linear",
+    );
+  });
+  it("treats unknown override strings as inference (forward-compat)", () => {
+    assert.equal(
+      resolveReviewProviderKind({
+        workflow: { external_review: { provider: "bitbucket" } },
+        trackers: { dev: { kind: "github" } },
+      }),
+      "github",
+    );
+  });
+  it("falls through to tracker inference when no override is set", () => {
+    assert.equal(
+      resolveReviewProviderKind({ trackers: { dev: { kind: "github" } } }),
+      "github",
+    );
+  });
+});
+
+describe("pickReviewProvider: honours the provider override", () => {
+  it("returns the stub (kind='none') when explicitly disabled, regardless of tracker", () => {
+    const { kind } = pickReviewProvider({
+      workflow: { external_review: { provider: "none" } },
+      trackers: { dev: { kind: "github" } },
+    });
+    assert.equal(kind, "none");
   });
 });
 

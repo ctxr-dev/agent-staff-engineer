@@ -95,7 +95,7 @@ This skill writes into `.development/shared/reports/**` and MUST follow `rules/l
 - `trackers.dev.kind` (PR 3+) or legacy top-level `github:` block (pre-PR-3) to pick the ReviewProvider.
 - `workflow.external_review.enabled` (gate the whole loop).
 - `workflow.external_review.provider` (`auto` / `github` / `none`).
-- `workflow.external_review.bots` (per-kind reviewer identifiers; GitHub node IDs).
+- `workflow.external_review.bots` (per-kind reviewer LOGINS; for GitHub, the skill resolves login → GraphQL node ID at runtime and caches the derived IDs in the in-memory iteration state).
 - `workflow.external_review.poll_interval_seconds`.
 - `workflow.external_review.poll_timeout_seconds`.
 - `workflow.external_review.auto_resolve_stale_after_commits`.

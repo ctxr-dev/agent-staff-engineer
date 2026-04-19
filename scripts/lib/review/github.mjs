@@ -70,14 +70,17 @@ async function githubRequestReview(ctx) {
 }
 
 async function githubPollForReview(ctx) {
-  const { owner, repo, prNumber, headSha } = ctx;
+  const { owner, repo, prNumber, headSha, botLogins } = ctx;
   const query = `
     query($owner: String!, $name: String!, $number: Int!) {
       repository(owner: $owner, name: $name) {
         pullRequest(number: $number) {
           reviewThreads(first: 100) { nodes { isResolved } }
           reviews(last: 10) {
-            nodes { commit { oid } author { login } }
+            nodes {
+              commit { oid }
+              author { __typename login }
+            }
           }
           commits(last: 1) {
             nodes { commit { oid statusCheckRollup { state } } }
@@ -101,9 +104,22 @@ async function githubPollForReview(ctx) {
   // `reviewOnHead: false`, keeping the loop polling. Fall back to
   // ctx.headSha only when the query didn't surface a commit (rare).
   const prHeadSha = pr.commits.nodes[0]?.commit?.oid ?? headSha;
-  const reviewOnHead = pr.reviews.nodes.some(
-    (r) => r.commit?.oid === prHeadSha,
-  );
+  // `reviewOnHead` MUST be true only for the configured external
+  // reviewer, not any review. Without this filter a human review on
+  // HEAD (project owner, teammate) trips the gate and the iteration
+  // loop exits before Copilot has caught up to the new SHA.
+  // Filter precedence:
+  //   1. ctx.botLogins non-empty -> author.login must be one of those.
+  //   2. Otherwise accept any `Bot`-typed author (keeps the code
+  //      useful for callers that don't want login-level precision).
+  const reviewOnHead = pr.reviews.nodes.some((r) => {
+    if ((r.commit?.oid ?? null) !== prHeadSha) return false;
+    const author = r.author || {};
+    if (Array.isArray(botLogins) && botLogins.length > 0) {
+      return typeof author.login === "string" && botLogins.includes(author.login);
+    }
+    return author.__typename === "Bot";
+  });
   return { ciState: normalizeCiState(rawState), unresolvedCount, reviewOnHead };
 }
 

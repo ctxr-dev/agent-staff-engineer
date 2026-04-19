@@ -50,7 +50,7 @@ case "$FAKE_GH_FIXTURE" in
     printf '%s' '{"data":{"requestReviews":{"pullRequest":{"reviewRequests":{"nodes":[{"requestedReviewer":{"login":"copilot-pull-request-reviewer"}}]}}}}}'
     ;;
   poll_all_green_review_on_head)
-    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]},"reviews":{"nodes":[{"commit":{"oid":"HEAD_SHA"},"author":{"login":"copilot-pull-request-reviewer"}}]},"commits":{"nodes":[{"commit":{"oid":"HEAD_SHA","statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}'
+    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]},"reviews":{"nodes":[{"commit":{"oid":"HEAD_SHA"},"author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"}}]},"commits":{"nodes":[{"commit":{"oid":"HEAD_SHA","statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}'
     ;;
   poll_pending)
     printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]},"reviews":{"nodes":[]},"commits":{"nodes":[{"commit":{"oid":"HEAD_SHA","statusCheckRollup":null}}]}}}}}'
@@ -66,10 +66,30 @@ case "$FAKE_GH_FIXTURE" in
     # passed a stale ctx.headSha (STALE_SHA). pollForReview should still
     # report reviewOnHead=true because it uses the PR's fetched HEAD,
     # not ctx.headSha, as ground truth.
-    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]},"reviews":{"nodes":[{"commit":{"oid":"FRESH_SHA"},"author":{"login":"copilot-pull-request-reviewer"}}]},"commits":{"nodes":[{"commit":{"oid":"FRESH_SHA","statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}'
+    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]},"reviews":{"nodes":[{"commit":{"oid":"FRESH_SHA"},"author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"}}]},"commits":{"nodes":[{"commit":{"oid":"FRESH_SHA","statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}'
+    ;;
+  poll_human_review_on_head_only)
+    # A teammate (User, not Bot) reviewed HEAD, but the external
+    # reviewer (Copilot) has not. reviewOnHead should be false so the
+    # iteration loop keeps polling for the external reviewer's verdict.
+    # Regression test for review-round-4 T14.
+    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]},"reviews":{"nodes":[{"commit":{"oid":"HEAD_SHA"},"author":{"__typename":"User","login":"meshin-dev"}}]},"commits":{"nodes":[{"commit":{"oid":"HEAD_SHA","statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}'
+    ;;
+  poll_bot_login_filter)
+    # Two bot reviews on HEAD: one is the configured bot
+    # (copilot-pull-request-reviewer), one is a different bot
+    # (other-bot). With ctx.botLogins=["copilot-pull-request-reviewer"],
+    # reviewOnHead must be true ONLY because of the matching login;
+    # an unrelated bot on HEAD must not satisfy the gate.
+    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]},"reviews":{"nodes":[{"commit":{"oid":"HEAD_SHA"},"author":{"__typename":"Bot","login":"other-bot"}},{"commit":{"oid":"HEAD_SHA"},"author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"}}]},"commits":{"nodes":[{"commit":{"oid":"HEAD_SHA","statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}'
+    ;;
+  poll_bot_login_mismatch)
+    # Same shape as above but ONLY other-bot reviewed HEAD. With
+    # ctx.botLogins targeted at copilot, reviewOnHead must be false.
+    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]},"reviews":{"nodes":[{"commit":{"oid":"HEAD_SHA"},"author":{"__typename":"Bot","login":"other-bot"}}]},"commits":{"nodes":[{"commit":{"oid":"HEAD_SHA","statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}'
     ;;
   fetch_threads_mixed)
-    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"T1","isResolved":false,"isOutdated":false,"path":"src/a.js","line":42,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer"},"body":"prefer const","commit":{"oid":"OLD_SHA"},"createdAt":"2026-04-19T00:00:00Z"}]}},{"id":"T2","isResolved":true,"isOutdated":false,"path":"src/b.js","line":10,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer"},"body":"resolved already","commit":{"oid":"OLD_SHA"},"createdAt":"2026-04-19T00:00:00Z"}]}},{"id":"T3","isResolved":false,"isOutdated":true,"path":"src/c.js","line":7,"comments":{"nodes":[]}},{"id":"T4","isResolved":false,"isOutdated":false,"path":"src/u.js","line":1,"comments":{"nodes":[{"author":null,"body":"unicode: e accent and CJK chars","commit":{"oid":"SHA_U"},"createdAt":"2026-04-19T00:00:00Z"}]}}]}}}}}'
+    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"T1","isResolved":false,"isOutdated":false,"path":"src/a.js","line":42,"comments":{"nodes":[{"author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"body":"prefer const","commit":{"oid":"OLD_SHA"},"createdAt":"2026-04-19T00:00:00Z"}]}},{"id":"T2","isResolved":true,"isOutdated":false,"path":"src/b.js","line":10,"comments":{"nodes":[{"author":{"__typename":"Bot","login":"copilot-pull-request-reviewer"},"body":"resolved already","commit":{"oid":"OLD_SHA"},"createdAt":"2026-04-19T00:00:00Z"}]}},{"id":"T3","isResolved":false,"isOutdated":true,"path":"src/c.js","line":7,"comments":{"nodes":[]}},{"id":"T4","isResolved":false,"isOutdated":false,"path":"src/u.js","line":1,"comments":{"nodes":[{"author":null,"body":"unicode: e accent and CJK chars","commit":{"oid":"SHA_U"},"createdAt":"2026-04-19T00:00:00Z"}]}}]}}}}}'
     ;;
   resolve_ok)
     printf '%s' '{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}'
@@ -234,6 +254,50 @@ describe("github review provider: pollForReview", skipOpts, () => {
     assert.equal(result.ciState, "FAILURE");
     assert.equal(result.unresolvedCount, 2);
     assert.equal(result.reviewOnHead, false);
+  });
+
+  it("reviewOnHead=false when only a human reviewed HEAD (external reviewer has not)", async () => {
+    // Regression test for review-round-4 T14: a teammate review on HEAD
+    // must NOT satisfy the external-reviewer gate, because the iteration
+    // loop is designed to wait for Copilot's verdict. A mutant that
+    // accepted any review would set reviewOnHead=true here and exit
+    // early.
+    const { result } = await withFakeGh("poll_human_review_on_head_only", () =>
+      makeGithubReviewProvider().pollForReview({
+        owner: "o",
+        repo: "r",
+        prNumber: 1,
+        headSha: "HEAD_SHA",
+      }),
+    );
+    assert.equal(result.reviewOnHead, false, "human-only review on HEAD must not satisfy the gate");
+    assert.equal(result.ciState, "SUCCESS");
+  });
+
+  it("filters reviewOnHead by ctx.botLogins when provided (matching login wins)", async () => {
+    const { result } = await withFakeGh("poll_bot_login_filter", () =>
+      makeGithubReviewProvider().pollForReview({
+        owner: "o",
+        repo: "r",
+        prNumber: 1,
+        headSha: "HEAD_SHA",
+        botLogins: ["copilot-pull-request-reviewer"],
+      }),
+    );
+    assert.equal(result.reviewOnHead, true, "matching bot login should satisfy the gate");
+  });
+
+  it("filters reviewOnHead by ctx.botLogins when provided (non-matching login rejected)", async () => {
+    const { result } = await withFakeGh("poll_bot_login_mismatch", () =>
+      makeGithubReviewProvider().pollForReview({
+        owner: "o",
+        repo: "r",
+        prNumber: 1,
+        headSha: "HEAD_SHA",
+        botLogins: ["copilot-pull-request-reviewer"],
+      }),
+    );
+    assert.equal(result.reviewOnHead, false, "unrelated bot on HEAD must not satisfy the gate when botLogins are explicit");
   });
 
   it("uses the PR's fetched HEAD, not ctx.headSha, when classifying review-on-head", async () => {
