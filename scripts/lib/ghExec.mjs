@@ -110,3 +110,97 @@ export async function ghCurrentUser() {
   if (res.code !== 0) return null;
   return res.json ?? null;
 }
+
+/**
+ * Thrown by ghGraphqlQuery / ghGraphqlMutation when the API reports one or
+ * more errors, or when the response cannot be parsed. Carries the original
+ * `errors[]` payload (when present) and the query text so callers can log a
+ * useful diagnostic without re-running the mutation.
+ */
+export class GhGraphqlError extends Error {
+  constructor(message, { errors = null, query = null } = {}) {
+    super(message);
+    this.name = "GhGraphqlError";
+    this.errors = errors;
+    this.query = query;
+  }
+}
+
+/**
+ * Run a GitHub GraphQL query. Variables with scalar values (strings,
+ * numbers, booleans) are passed via `gh api graphql -F <name>=<value>` —
+ * the same mechanism the runbook uses. For array/object args, inline the
+ * values into the query string at the caller site (this is how GitHub
+ * GraphQL features like `botIds: [...]` are typically invoked).
+ *
+ * Returns the `data` root on success. Throws {@link GhGraphqlError} on
+ * either a non-zero gh exit, an unparseable response, a response without
+ * `data`, or a response with a non-empty `errors[]`.
+ *
+ * @param {string} query             GraphQL query text
+ * @param {Record<string, string|number|boolean>} [vars]
+ * @param {{ timeoutMs?: number, cwd?: string }} [options]
+ * @returns {Promise<any>} the `data` root
+ */
+export async function ghGraphqlQuery(query, vars = {}, options = {}) {
+  return ghGraphqlExec(query, vars, options);
+}
+
+/**
+ * Same shape as {@link ghGraphqlQuery}; named separately so that callers'
+ * intent is visible at call sites. GitHub Actions / API responses do not
+ * distinguish queries from mutations at the transport layer.
+ */
+export async function ghGraphqlMutation(mutation, vars = {}, options = {}) {
+  return ghGraphqlExec(mutation, vars, options);
+}
+
+async function ghGraphqlExec(queryText, vars, options) {
+  if (typeof queryText !== "string" || queryText.length === 0) {
+    throw new TypeError("ghGraphql*: query must be a non-empty string");
+  }
+  const args = ["api", "graphql", "-f", `query=${queryText}`];
+  for (const [k, v] of Object.entries(vars || {})) {
+    if (v == null) continue;
+    if (typeof v !== "string" && typeof v !== "number" && typeof v !== "boolean") {
+      throw new TypeError(
+        `ghGraphql*: variable '${k}' must be a string, number, or boolean (got ${typeof v}); inline complex types into the query string instead`,
+      );
+    }
+    // `-F` makes gh type booleans and numbers; strings stay strings.
+    args.push("-F", `${k}=${v}`);
+  }
+  const res = await ghExec(args, {
+    format: "json",
+    timeoutMs: options.timeoutMs ?? 30_000,
+    cwd: options.cwd,
+  });
+  if (res.code !== 0) {
+    throw new GhGraphqlError(
+      `gh api graphql exited ${res.code}: ${(res.stderr || res.stdout).trim()}`,
+      { query: queryText },
+    );
+  }
+  if (!res.json) {
+    throw new GhGraphqlError(
+      `gh api graphql returned unparseable JSON${res.jsonError ? ` (${res.jsonError})` : ""}`,
+      { query: queryText },
+    );
+  }
+  if (Array.isArray(res.json.errors) && res.json.errors.length > 0) {
+    const msg = res.json.errors
+      .map((e) => e.message || JSON.stringify(e))
+      .join("; ");
+    throw new GhGraphqlError(msg, {
+      errors: res.json.errors,
+      query: queryText,
+    });
+  }
+  if (res.json.data == null) {
+    throw new GhGraphqlError(
+      "gh api graphql returned no data field",
+      { query: queryText },
+    );
+  }
+  return res.json.data;
+}

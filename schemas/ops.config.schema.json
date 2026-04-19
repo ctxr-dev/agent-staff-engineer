@@ -300,6 +300,50 @@
               "default": "Run: npx @ctxr/kit install @ctxr/skill-code-review  (or clone https://github.com/ctxr-dev/skill-code-review into .claude/skills/)"
             }
           }
+        },
+        "external_review": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Post-push external-reviewer loop (e.g. Copilot on GitHub). Drives the pr-iteration skill: request review, poll for CI and review, fetch unresolved threads, triage, resolve, iterate until all three exit conditions hold (local review GO, zero unresolved, CI SUCCESS on HEAD). Disable by setting enabled:false.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "When false, dev-loop skips the pr-iteration hand-off and halts at 'In review'. Useful for projects that don't use an external reviewer."
+            },
+            "provider": {
+              "type": "string",
+              "enum": ["auto", "github", "none"],
+              "default": "auto",
+              "description": "auto picks the impl from trackers.dev.kind via scripts/lib/review/dispatcher.mjs. github forces the GitHub impl regardless of tracker kind (used when the tracker is elsewhere but code review runs on GitHub). none is equivalent to enabled:false."
+            },
+            "bots": {
+              "type": "object",
+              "additionalProperties": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+              "description": "Per-kind map of reviewer bot identifiers that requestReview registers. For GitHub each value is a GraphQL node ID (e.g. BOT_kgDOCnlnWA); the skill captures the ID once per repo per rules/pr-iteration.md.",
+              "default": { "github": ["copilot-pull-request-reviewer"] }
+            },
+            "poll_interval_seconds": {
+              "type": "integer",
+              "minimum": 15,
+              "maximum": 300,
+              "default": 30,
+              "description": "Seconds between poll-for-review probes. 30 is the runbook default; under 15 burns rate limit, over 300 crosses the harness cache-miss boundary."
+            },
+            "poll_timeout_seconds": {
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 7200,
+              "default": 1200,
+              "description": "Upper bound on the poll loop before surfacing a timeout to the human. 1200 = 20 minutes, enough for a typical Copilot round; longer for CI suites that run >20 min."
+            },
+            "auto_resolve_stale_after_commits": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 1,
+              "description": "When the same path:line thread has been re-emitted by the reviewer on a superseded SHA (commonly 30-50% of Copilot threads after round 1 per the runbook), auto-resolve it after this many commits have landed without changing the underlying code. Set 0 to disable and require manual triage for every thread."
+            }
+          }
         }
       }
     },

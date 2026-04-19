@@ -123,6 +123,14 @@
       "report_dir": ".development/shared/reports",
       "block_on_verdict": ["NO-GO"],
       "install_hint": "npx @ctxr/kit install @ctxr/skill-code-review"
+    },
+    "external_review": {
+      "enabled": true,
+      "provider": "auto",
+      "bots": { "github": ["copilot-pull-request-reviewer"] },
+      "poll_interval_seconds": 30,
+      "poll_timeout_seconds": 1200,
+      "auto_resolve_stale_after_commits": 1
     }
   },
 
