@@ -48,12 +48,30 @@ async function githubRequestReview(ctx) {
       "github review: ctx.botIds is empty; capture the bot node ID (see rules/pr-iteration.md) before calling requestReview",
     );
   }
+  // Validate each element: GitHub's requestReviews mutation rejects
+  // null/undefined/empty-string ids with an opaque "expected String"
+  // error. Catch the offending index here with a clear message so
+  // the caller sees exactly which botId was bad.
+  const validatedBotIds = botIds.map((id, i) => {
+    if (typeof id !== "string") {
+      throw new TypeError(
+        `github review: ctx.botIds[${i}] must be a non-empty string GraphQL node ID; got ${String(id)}`,
+      );
+    }
+    const trimmed = id.trim();
+    if (trimmed.length === 0) {
+      throw new TypeError(
+        `github review: ctx.botIds[${i}] must be a non-empty string GraphQL node ID; got ${JSON.stringify(id)}`,
+      );
+    }
+    return trimmed;
+  });
   const prNodeId = ctx.prNodeId ?? (await resolvePrNodeId(ctx));
   // botIds is inlined into the query text because `gh api graphql -F` does
   // not have clean ergonomics for array values. Each id is JSON-encoded so
   // quoting is correct and prevents any stray shell/GraphQL metacharacter
   // from escaping the string context. The prNodeId goes via a typed var.
-  const botIdsList = botIds.map((id) => JSON.stringify(String(id))).join(", ");
+  const botIdsList = validatedBotIds.map((id) => JSON.stringify(id)).join(", ");
   const mutation = `
     mutation($prId: ID!) {
       requestReviews(input: {

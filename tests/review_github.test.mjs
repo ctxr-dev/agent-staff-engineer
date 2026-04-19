@@ -189,7 +189,10 @@ async function withFakeGhSequence(fixtures, fn) {
   const seqBefore = process.env.FAKE_GH_SEQUENCE;
   const logBefore = process.env.FAKE_GH_LOG;
   try {
-    process.env.PATH = scratch + ":" + (pathBefore ?? "");
+    // Same hermeticity rule as withFakeGh: shim-dir-only when PATH
+    // was unset, to avoid the trailing-`:` empty entry on POSIX.
+    process.env.PATH =
+      pathBefore === undefined ? scratch : scratch + ":" + pathBefore;
     process.env.FAKE_GH_FIXTURE = ""; // shim falls back to sequence
     process.env.FAKE_GH_SEQUENCE = fixtures.join(",");
     process.env.FAKE_GH_LOG = logPath;
@@ -265,6 +268,28 @@ describe("github review provider: requestReview", skipOpts, () => {
         }),
       /ctx\.botIds is empty/,
     );
+  });
+
+  it("rejects non-string or empty-string botId elements with a pointed TypeError", async () => {
+    const provider = makeGithubReviewProvider();
+    for (const bad of [null, undefined, 42, true, "", "   "]) {
+      await assert.rejects(
+        () =>
+          provider.requestReview({
+            owner: "o",
+            repo: "r",
+            prNumber: 1,
+            headSha: "abc",
+            prNodeId: "PR_abc123",
+            botIds: ["BOT_good", bad],
+          }),
+        (err) =>
+          err instanceof TypeError &&
+          /ctx\.botIds\[1\]/.test(err.message) &&
+          /non-empty string GraphQL node ID/.test(err.message),
+        `botIds[${JSON.stringify(bad)}] should throw a pointed TypeError`,
+      );
+    }
   });
 });
 
