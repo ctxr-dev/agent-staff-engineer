@@ -199,6 +199,33 @@ if (!opsConfig) {
   }
 }
 
+// Legacy config shape check: the pre-trackers shape had a top-level
+// `github:` block that is no longer part of the schema. Hard-refuse to
+// continue so the user doesn't end up with a half-migrated config that
+// silently drops GitHub targets. Remediation is explicit: delete the
+// file and re-bootstrap. We write a timestamped backup so a repeat run
+// after the user aborts still preserves every intermediate snapshot
+// rather than clobbering a prior backup.
+if (opsConfig && "github" in opsConfig && !("trackers" in opsConfig)) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = `${opsConfigPath}.pre-trackers-${stamp}.bak`;
+  try {
+    await atomicWriteJson(backupPath, opsConfig);
+  } catch (e) {
+    process.stderr.write(
+      `ops.config.json uses the legacy 'github:' shape; wanted to back it up to ${backupPath} but write failed: ${e?.message ?? e}.\n` +
+      `Move the current file aside manually and re-run install.\n`,
+    );
+    process.exit(1);
+  }
+  process.stderr.write(
+    `ops.config.json uses the legacy 'github:' shape which this release no longer supports.\n` +
+    `A backup of the existing file was written to ${backupPath}.\n` +
+    `Delete ${opsConfigPath} and re-run 'install.mjs --apply' to regenerate it via the new bootstrap interview (which writes a 'trackers:' block instead).\n`,
+  );
+  process.exit(1);
+}
+
 // Dependency check: the LLM-wiki provider skill must be present before the
 // installer can proceed when ops.config declares the wiki as required. This
 // runs after bootstrap so a fresh install has a real opsConfig to read.
