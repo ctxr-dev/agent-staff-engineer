@@ -3,8 +3,14 @@
 // on PATH (same pattern as ghExec.test.mjs) that both returns scripted
 // fixture JSON AND tees every argv + the query body into a log file, so
 // tests assert on the actual request the provider sent (not just that
-// gh was called at all). Skipped on Windows (the shim requires .cmd
-// scaffolding; real-gh path is exercised by the CI matrix).
+// gh was called at all).
+//
+// Skipped on Windows because the fake-gh shim here is a POSIX `#!/bin/sh`
+// script; Windows needs a .cmd/.bat wrapper or a shim install strategy
+// this file doesn't implement. `.github/workflows/ci.yml` currently runs
+// on ubuntu-latest only, so there is no Windows coverage for these tests
+// today. Adding a Windows CI job is a follow-up if the provider ever
+// grows Windows-specific semantics.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -144,7 +150,7 @@ async function withFakeGh(fixture, fn) {
 }
 
 const skipOpts = IS_WIN
-  ? { skip: "windows path shim requires .cmd; covered in CI matrix" }
+  ? { skip: "windows path shim requires .cmd; no Windows CI job exists today" }
   : {};
 
 describe("github review provider: requestReview", skipOpts, () => {
@@ -351,11 +357,14 @@ describe("github review provider: fetchUnresolvedThreads", skipOpts, () => {
     assert.equal(byId.T1.line, 42);
     assert.equal(byId.T1.commitSha, "OLD_SHA");
     assert.equal(byId.T1.authorLogin, "copilot-pull-request-reviewer");
-    // T3 has no comments
+    assert.equal(byId.T1.isOutdated, false);
+    // T3: isOutdated=true in fixture; no comments
+    assert.equal(byId.T3.isOutdated, true);
     assert.equal(byId.T3.commitSha, null);
     assert.equal(byId.T3.authorLogin, null);
     assert.equal(byId.T3.body, "");
     // T4: present comment but null author, unicode body
+    assert.equal(byId.T4.isOutdated, false);
     assert.equal(byId.T4.authorLogin, null);
     assert.equal(byId.T4.commitSha, "SHA_U");
     assert.match(byId.T4.body, /unicode/);

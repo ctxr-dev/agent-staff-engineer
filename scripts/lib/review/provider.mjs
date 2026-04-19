@@ -58,8 +58,13 @@ export class NotSupportedError extends Error {
  *       { ciState: "SUCCESS"|"FAILURE"|"ERROR"|"PENDING",
  *         unresolvedCount: number, reviewOnHead: boolean }
  *   fetchUnresolvedThreads(ctx)  -> Thread[]; each Thread =
- *       { id, path, line, commitSha, authorLogin, body }
- *   resolveThread(ctx, threadId) -> void mutation
+ *       { id, path, line, isOutdated, commitSha, authorLogin, body }
+ *       `isOutdated` = the anchor line has moved since the comment
+ *       was posted (GitHub surfaces this flag; providers should
+ *       best-effort map their native equivalent for stale-triage).
+ *   resolveThread(ctx, threadId) -> mutation data (provider-specific).
+ *       Callers typically ignore the return value; the side effect
+ *       (thread resolved on the tracker) is what matters.
  *   ciStateOnHead(ctx)           -> one of the ciState enum values
  */
 export const REVIEW_PROVIDER_METHODS = Object.freeze([

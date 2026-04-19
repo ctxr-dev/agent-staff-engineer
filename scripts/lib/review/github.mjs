@@ -171,6 +171,12 @@ async function githubFetchUnresolvedThreads(ctx) {
         id: t.id,
         path: t.path,
         line: t.line,
+        // GitHub's `isOutdated` flag: the anchor line has moved since
+        // the comment was posted. A strong signal for the stale-triage
+        // heuristic in rules/pr-iteration.md ("superseded SHA" / "code
+        // changed under the thread"). Surfaced so the skill can auto-
+        // classify outdated threads without re-deriving the fact.
+        isOutdated: Boolean(t.isOutdated),
         commitSha: firstComment.commit?.oid ?? null,
         authorLogin: firstComment.author?.login ?? null,
         body: firstComment.body ?? "",

@@ -119,25 +119,36 @@ The current HEAD SHA is `git rev-parse HEAD`. Run this in the background; it exi
 HEAD_SHA=$(git rev-parse HEAD)
 
 # Save as wait-for-review.sh and run in background (or use run_in_background):
+#
+# The review_on_sha check MUST filter by the configured bot login, not
+# match any review on HEAD: a teammate reviewing before Copilot does
+# would otherwise trip the gate and exit the loop before Copilot's
+# verdict landed. Adjust BOT_LOGIN to match your configured external
+# reviewer if it's not Copilot.
 until result=$(gh api graphql -F owner="$OWNER" -F name="$REPO" -F number="$PR_NUMBER" -f query='
   query($owner:String!,$name:String!,$number:Int!){
     repository(owner:$owner,name:$name){
       pullRequest(number:$number){
         reviewThreads(first:100){nodes{isResolved}}
-        reviews(last:10){nodes{commit{oid}}}
+        reviews(last:10){nodes{commit{oid} author{__typename login}}}
         commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}
       }
     }
   }
-' 2>/dev/null) && echo "$result" | python3 -c "
-import json, sys
+' 2>/dev/null) && echo "$result" | BOT_LOGIN="copilot-pull-request-reviewer" python3 -c "
+import json, os, sys
+bot = os.environ.get('BOT_LOGIN','copilot-pull-request-reviewer')
 d = json.load(sys.stdin)
 pr = d['data']['repository']['pullRequest']
 threads = pr['reviewThreads']['nodes']
 unresolved = sum(1 for t in threads if not t['isResolved'])
 sha = pr['commits']['nodes'][0]['commit']['oid']
 state = (pr['commits']['nodes'][0]['commit'].get('statusCheckRollup') or {}).get('state')
-review_on_sha = any(r.get('commit',{}) and r['commit']['oid']==sha for r in pr['reviews']['nodes'])
+review_on_sha = any(
+    (r.get('commit') or {}).get('oid') == sha
+    and (r.get('author') or {}).get('login') == bot
+    for r in pr['reviews']['nodes']
+)
 ci_done = state in ('SUCCESS','FAILURE','ERROR')
 print(f'ci={state} unresolved={unresolved} review_on_head={review_on_sha}', file=sys.stderr)
 exit(0 if (ci_done and (unresolved>0 or review_on_sha)) else 1)
