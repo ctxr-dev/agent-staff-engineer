@@ -15,7 +15,7 @@ After `dev-loop` opens a PR, the agent enters the **PR iteration loop** until al
 2. **Zero unresolved review threads** on HEAD, AND the most recent external review is on the current HEAD SHA.
 3. **CI is SUCCESS on current HEAD** across every required job.
 
-When all three hold, the agent reports the final state to the human and stops. **PR merge is a human gate. The agent never merges.** The canonical runbook with the full GraphQL recipes and edge-case handling lives at `.development/shared/runbooks/pr-iteration-runbook.md`; this rule is the binding contract, the runbook is the how-to.
+When all three hold, the agent reports the final state to the human and stops. **PR merge is a human gate. The agent never merges.** The canonical runbook with the full GraphQL recipes and edge-case handling lives in the bundle at `skills/pr-iteration/runbook.md`; this rule is the binding contract, the runbook is the how-to. Target projects that want to mirror the runbook into their own wiki do so via `@ctxr/skill-llm-wiki` per `rules/llm-wiki.md`; the canonical source stays in the bundle.
 
 ## State machine inside the loop
 
@@ -26,7 +26,7 @@ Each round is the same six steps. The loop repeats until the exit conditions hol
 3. **Request external review** on current HEAD via `ReviewProvider.requestReview`. Implementation for GitHub is in `scripts/lib/review/github.mjs` and uses the `requestReviews` GraphQL mutation with `botIds`. The REST endpoint silently no-ops for bots; never use it.
 4. **Poll** at `workflow.external_review.poll_interval_seconds` (default 30s). Stop polling when CI reaches a terminal state (`SUCCESS` / `FAILURE` / `ERROR`) AND (any unresolved threads exist OR the reviewer has posted a review on the current HEAD). Cap the wait at `poll_timeout_seconds` (default 1200s) and surface a clear timeout to the human if hit.
 5. **Fetch unresolved threads** via `ReviewProvider.fetchUnresolvedThreads`. Triage into three buckets (the runbook documents the detection heuristics):
-   - **Stale**: the reviewer re-emitted a comment on already-fixed code (same `path:line`, unchanged content since the last push, or posted on a superseded SHA). Mark for resolution without a code change. Auto-resolve after `auto_resolve_stale_after_commits` rounds (default 1) when the same fingerprint keeps reappearing.
+   - **Stale**: the reviewer re-emitted a comment on already-fixed code (same `path:line`, unchanged content since the last push, or posted on a superseded SHA). Mark for resolution without a code change. The agent tracks the recurrence count per thread fingerprint and auto-resolves once the count crosses `auto_resolve_stale_after_commits` (default 1), surfacing the decision in the per-round report. Set the threshold to `0` to require manual triage for every thread.
    - **Net-new actionable**: real issue. Fix. Lock the fix in with a regression test when the issue was behavioural (security, TOCTOU, exit code, parsing).
    - **Suggestion / style**: take or push back with a reply on the thread.
 6. **Commit + push + resolve threads + re-request**. One commit per round, `fix(review-round-N): <short summary>` with a per-thread bullet list in the body naming `path:line` and what changed. After the push, call `ReviewProvider.resolveThread(threadId)` for every addressed thread, then `ReviewProvider.requestReview` again on the new HEAD. Loop back to step 4.
@@ -46,7 +46,7 @@ Every round writes a `pr-iteration-report.md` into `.development/shared/reports/
 
 - `enabled` (default `true`): flip to `false` to skip the loop entirely. `dev-loop` then halts at "In review" like the pre-PR-2 behaviour.
 - `provider` (`auto` / `github` / `none`): `auto` picks from `trackers.dev.kind` via the dispatcher; `github` forces the GitHub impl (for projects where code lives on GitHub but tickets are elsewhere); `none` is equivalent to `enabled: false`.
-- `bots`: per-kind map of reviewer identifiers. For GitHub each value is a GraphQL node ID (e.g. `BOT_kgDOCnlnWA`); the agent captures it once and caches it in the PR iteration state.
+- `bots`: per-kind map of reviewer LOGINS (portable across repos). For GitHub each value is the bot's login string (e.g. `copilot-pull-request-reviewer`). The skill resolves each login to its GraphQL node ID once per PR via the capture recipe below and caches the mapping in the in-memory iteration state. Config never stores node IDs: they vary across installations and are not portable.
 - `poll_interval_seconds`, `poll_timeout_seconds`, `auto_resolve_stale_after_commits`: see the schema for ranges and defaults.
 
 ## Capturing the Copilot bot node ID (GitHub)
@@ -67,4 +67,4 @@ Pick the `id` whose `login` is `copilot-pull-request-reviewer`. If the repo has 
 - `rules/pr-workflow.md`: full PR state machine (branch -> edits -> local review -> push -> In review -> **iteration loop** -> merge human gate -> Done human gate).
 - `rules/review-loop.md`: the pre-push local review.
 - `skills/pr-iteration/SKILL.md`: the orchestration skill this rule governs.
-- `.development/shared/runbooks/pr-iteration-runbook.md`: the canonical how-to with GraphQL snippets and known gotchas.
+- `skills/pr-iteration/runbook.md`: the canonical how-to with GraphQL snippets and known gotchas. Lives in the bundle so the lint + dash validators cover it; target projects mirror into their wiki via `@ctxr/skill-llm-wiki`.

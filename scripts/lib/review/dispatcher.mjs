@@ -35,7 +35,16 @@ export function resolveTrackerKind(cfg) {
     return newKind.toLowerCase();
   }
   // Legacy shim: any pre-PR-3 config had a top-level `github:` block.
-  if (cfg && typeof cfg === "object" && Object.hasOwn(cfg, "github")) {
+  // Tighten so `github: null`, `github: []`, `github: "str"`, or
+  // `github: {}` do NOT count as a valid GitHub config; they would
+  // otherwise surface confusing errors deep in the github provider.
+  const legacy = cfg && typeof cfg === "object" ? cfg.github : null;
+  if (
+    legacy &&
+    typeof legacy === "object" &&
+    !Array.isArray(legacy) &&
+    Object.keys(legacy).length > 0
+  ) {
     return "github";
   }
   return "unknown";

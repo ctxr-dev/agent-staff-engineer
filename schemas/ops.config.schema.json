@@ -87,6 +87,25 @@
       }
     },
 
+    "trackers": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Forward-compat block for the PR 3 multi-tracker refactor. Skills can read `trackers.dev.kind` today and receive a valid string when set; the top-level `github:` block above is still the required source of truth until PR 3 flips this. Minimal shape: `trackers.dev.kind` is one of github, jira, linear, gitlab.",
+      "properties": {
+        "dev": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["github", "jira", "linear", "gitlab"],
+              "description": "Tracker kind for dev issues. The dispatcher at scripts/lib/review/dispatcher.mjs picks the ReviewProvider from this value; unset/missing falls back to the legacy top-level github: block (github)."
+            }
+          }
+        }
+      }
+    },
+
     "labels": {
       "type": "object",
       "required": ["type", "area", "priority", "intent", "size"],
@@ -320,7 +339,7 @@
             "bots": {
               "type": "object",
               "additionalProperties": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-              "description": "Per-kind map of reviewer bot identifiers that requestReview registers. For GitHub each value is a GraphQL node ID (e.g. BOT_kgDOCnlnWA); the skill captures the ID once per repo per rules/pr-iteration.md.",
+              "description": "Per-kind map of reviewer bot LOGINS that requestReview registers. For GitHub each value is the bot's login (e.g. copilot-pull-request-reviewer), portable across repos. The GitHub provider resolves login -> GraphQL node ID at request time by probing the PR's prior reviews; see rules/pr-iteration.md for the resolution recipe. Config stores logins (not node IDs) because node IDs vary across installations and would pin the config to a specific GitHub deployment.",
               "default": { "github": ["copilot-pull-request-reviewer"] }
             },
             "poll_interval_seconds": {

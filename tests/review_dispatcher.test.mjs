@@ -70,11 +70,22 @@ describe("pickReviewProvider", () => {
   it("treats legacy github: config as kind=github (transitional shim)", () => {
     const { provider, kind } = pickReviewProvider({ github: { auth_login: "alice" } });
     assert.equal(kind, "github");
-    // The GitHub impl, not the stub; methods exist and do NOT throw
-    // NotSupportedError on mere presence. (Calling them without gh on
-    // PATH would throw a different error; here we just verify the
-    // dispatcher routed to the right module.)
-    assert.equal(typeof provider.requestReview, "function");
+    // Stronger assertion than `typeof === "function"`: calling
+    // requestReview with a ctx the github impl checks eagerly (empty
+    // botIds) must produce the GitHub provider's own error, NOT a
+    // NotSupportedError. A mutant that silently routed to the stub
+    // would throw NotSupportedError instead.
+    assert.rejects(
+      () => provider.requestReview({ owner: "o", repo: "r", prNumber: 1, headSha: "x", prNodeId: "PR_", botIds: [] }),
+      (err) => err.name !== "NotSupportedError" && /botIds is empty/.test(err.message),
+    );
+  });
+
+  it("rejects shape-invalid legacy github blocks (github: null/array/string/empty) as unknown", () => {
+    for (const bad of [null, [], "hello", {}, 42, true]) {
+      const { kind } = pickReviewProvider({ github: bad });
+      assert.equal(kind, "unknown", `github: ${JSON.stringify(bad)} should not satisfy the legacy shim`);
+    }
   });
 
   it("returns a stub with kind='unknown' when nothing is configured", () => {

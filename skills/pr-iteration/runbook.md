@@ -1,4 +1,4 @@
-# PR lifecycle runbook :  local code-review + Copilot review loop
+# PR lifecycle runbook for the local code-review + Copilot review loop
 
 Reusable methodology for taking a change from first commit through PR, external Copilot review, fix-resolve iterations, and a green terminal state. Commands assume `gh` CLI authed.
 
@@ -105,7 +105,7 @@ gh api graphql -f query="
 "
 ```
 
-Verify the response shows `login: "copilot-pull-request-reviewer"` in the request list. If the response is `{pullRequest: null}` or `requestReviews: null`, the call failed :  check the error message.
+Verify the response shows `login: "copilot-pull-request-reviewer"` in the request list. If the response is `{pullRequest: null}` or `requestReviews: null`, the call failed; check the error message.
 
 **Common mistake:** `POST /repos/.../requested_reviewers` with `{"reviewers":["Copilot"]}` returns 200 OK but does nothing for bots. Always use the GraphQL mutation with `botIds`.
 
@@ -148,7 +148,7 @@ echo "ACTIVITY"
 Rationale for the exit condition:
 
 - **CI must complete first** (SUCCESS/FAILURE/ERROR). Silence on red CI is noise.
-- **Either unresolved threads OR review_on_sha** is the Copilot signal. A review on HEAD with zero comments means Copilot looked and found nothing :  still done.
+- **Either unresolved threads OR review_on_sha** is the Copilot signal. A review on HEAD with zero comments means Copilot looked and found nothing; still done.
 
 ---
 
@@ -188,7 +188,7 @@ Save the thread IDs (`PRRT_...`). You'll resolve them in step 8.
 
 ## 7. Triage + fix
 
-Expect comments to fall into three buckets :  name them in your commit message:
+Expect comments to fall into three buckets. Name them in your commit message:
 
 1. **Stale**: the reviewer re-emitted a comment on already-fixed code. Verify by reading the file; if fixed, mark for resolution in step 8 with no code change.
 2. **Net-new actionable**: real issue. Fix.
@@ -243,10 +243,10 @@ Then go back to step 5.
 Stop the loop when **all three** are true:
 
 1. **Local code-review says GO** on the current HEAD. (Re-run after the final Copilot round to catch regressions from fixes.)
-2. **`unresolved = 0`** on PR review threads, AND the **most recent Copilot review is on the current HEAD SHA**. (If the most recent review is on an older commit, wait :  Copilot may still be processing the latest push.)
+2. **`unresolved = 0`** on PR review threads, AND the **most recent Copilot review is on the current HEAD SHA**. (If the most recent review is on an older commit, wait; Copilot may still be processing the latest push.)
 3. **CI is SUCCESS on the current HEAD** across all required jobs.
 
-When all three hold, report the final state to the human and stop. The merge itself is a human gate :  never auto-merge.
+When all three hold, report the final state to the human and stop. The merge itself is a human gate; never auto-merge.
 
 ---
 

@@ -14,7 +14,7 @@ writes_to_filesystem: yes, code edits per round plus a per-round pr-iteration re
 
 # pr-iteration
 
-Before acting, read `.claude/ops.config.json` and `rules/pr-iteration.md`. Refuse to run if either is missing. This skill is the orchestration entry point; the rule is the contract; the runbook at `.development/shared/runbooks/pr-iteration-runbook.md` is the canonical how-to with GraphQL recipes.
+Before acting, read `.claude/ops.config.json` and `rules/pr-iteration.md`. Refuse to run if either is missing. This skill is the orchestration entry point; the rule is the contract; the runbook at `skills/pr-iteration/runbook.md` (co-located in the bundle) is the canonical how-to with GraphQL recipes.
 
 Hard rule baked in: **pr-iteration never merges a PR.** Merge is a human gate. Every code path ends at one of: (a) all three exit conditions hold and the skill reports + stops; (b) the poll timeout fires and the skill surfaces state + stops; (c) the provider declines with `NotSupportedError` and the skill halts cleanly at "In review".
 
@@ -65,15 +65,15 @@ The two human gates from `rules/pr-workflow.md` are preserved: merge and dev-iss
 
 The ReviewProvider is resolved via `scripts/lib/review/dispatcher.mjs` at the start of each round, so a mid-iteration change to `trackers.dev.kind` (rare, but possible under `adapt-system` migration) picks up the new kind cleanly. Providers:
 
-- **GitHub** (`scripts/lib/review/github.mjs`): full impl. Uses `gh api graphql` via `scripts/lib/ghExec.mjs`' `ghGraphqlQuery` / `ghGraphqlMutation` helpers. Caches the PR's GraphQL node ID and the Copilot bot node ID in the in-memory iteration state so they're captured once per PR rather than per round.
+- **GitHub** (`scripts/lib/review/github.mjs`): full impl. Uses `gh api graphql` via `scripts/lib/ghExec.mjs`' `ghGraphqlQuery` / `ghGraphqlMutation` helpers. The skill resolves reviewer LOGINS (from `workflow.external_review.bots.github`, e.g. `copilot-pull-request-reviewer`) into GraphQL node IDs via the recipe in `rules/pr-iteration.md`, caches both the PR's node ID and the bot node IDs in the in-memory iteration state, and passes the resolved node IDs to the provider as `ctx.botIds` on every call. The provider itself stays login-agnostic.
 - **Stub** (`scripts/lib/review/stub.mjs`): every op throws `NotSupportedError`. Returned for Jira, Linear, GitLab until PR 3's multi-tracker refactor wires real impls.
 
 ## Exit conditions (re-emphasised)
 
-All three must hold on the **current HEAD** (not an earlier one):
+All three must hold on the **current HEAD** (not an earlier one). These mirror `rules/pr-iteration.md` exactly; on drift the rule wins.
 
 1. `rules/review-loop.md` returns **GO** when re-run on HEAD.
-2. **Zero unresolved threads** on HEAD, AND at least one external review is on HEAD's SHA.
+2. **Zero unresolved threads** on HEAD, AND the **most recent** external review is on HEAD's SHA.
 3. CI `statusCheckRollup.state === "SUCCESS"` on HEAD's last commit.
 
 A review "on HEAD" with zero comments (the reviewer looked and found nothing) counts toward condition 2. The runbook's rationale section documents this.
@@ -126,4 +126,4 @@ Per-round artefact structure: see `templates/pr-iteration-report.md`. Minimum fi
 - `rules/pr-workflow.md`: full PR state machine in which this skill plugs after "In review".
 - `skills/dev-loop/SKILL.md`: hands off to this skill after opening the PR.
 - `scripts/lib/review/*.mjs`: the provider implementations.
-- `.development/shared/runbooks/pr-iteration-runbook.md`: canonical how-to with full GraphQL recipes.
+- `skills/pr-iteration/runbook.md`: canonical how-to with full GraphQL recipes.

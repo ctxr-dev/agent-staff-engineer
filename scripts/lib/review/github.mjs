@@ -15,16 +15,27 @@
 // round thereafter. See rules/pr-iteration.md for the capture recipe.
 
 import { ghGraphqlMutation, ghGraphqlQuery } from "../ghExec.mjs";
+import { REVIEW_PROVIDER_METHODS } from "./provider.mjs";
 
 /** @returns {object} a ReviewProvider impl bound to gh CLI */
 export function makeGithubReviewProvider() {
-  return {
+  const impl = {
     requestReview: githubRequestReview,
     pollForReview: githubPollForReview,
     fetchUnresolvedThreads: githubFetchUnresolvedThreads,
     resolveThread: githubResolveThread,
     ciStateOnHead: githubCiStateOnHead,
   };
+  // Construction-time coverage assert: if REVIEW_PROVIDER_METHODS grows a
+  // new entry and this file forgets to wire it, fail loudly here rather
+  // than letting the skill hit a bare `x is not a function` at runtime.
+  const missing = REVIEW_PROVIDER_METHODS.filter((m) => typeof impl[m] !== "function");
+  if (missing.length > 0) {
+    throw new Error(
+      `makeGithubReviewProvider: missing ReviewProvider methods [${missing.join(", ")}]; wire them in or update REVIEW_PROVIDER_METHODS`,
+    );
+  }
+  return impl;
 }
 
 async function githubRequestReview(ctx) {
@@ -145,8 +156,30 @@ async function githubResolveThread(_ctx, threadId) {
 }
 
 async function githubCiStateOnHead(ctx) {
-  const { ciState } = await githubPollForReview(ctx);
-  return ciState;
+  // Narrow query: only the HEAD commit's statusCheckRollup.state. Separate
+  // from pollForReview so callers that need just the CI signal don't drag
+  // along the full review-threads + reviews fetch.
+  const { owner, repo, prNumber } = ctx;
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          commits(last: 1) {
+            nodes { commit { statusCheckRollup { state } } }
+          }
+        }
+      }
+    }
+  `;
+  const data = await ghGraphqlQuery(query, {
+    owner,
+    name: repo,
+    number: prNumber,
+  });
+  return (
+    data.repository.pullRequest.commits.nodes[0]?.commit?.statusCheckRollup?.state ??
+    "PENDING"
+  );
 }
 
 async function resolvePrNodeId({ owner, repo, prNumber }) {
