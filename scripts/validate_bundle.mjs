@@ -377,8 +377,15 @@ async function checkBundleIndex() {
       // Existence probe only; no need to read the bytes. Using stat()
       // over readFile() lets us distinguish ENOENT from EACCES/EISDIR
       // and include the OS error code in the message so a contributor
-      // can act on it without guessing.
-      await stat(abs);
+      // can act on it without guessing. We also assert the target is
+      // a regular file: a link to `templates/` (no trailing filename)
+      // exists but does not satisfy the bundle-index contract of
+      // "points at a file".
+      const s = await stat(abs);
+      if (!s.isFile()) {
+        const type = s.isDirectory() ? "directory" : "not a regular file";
+        err(`dead-link: bundle-index.md -> ${rel} (${type})`);
+      }
     } catch (e) {
       const code = e && e.code ? e.code : "unknown";
       if (code === "ENOENT") {

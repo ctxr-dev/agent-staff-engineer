@@ -68,11 +68,16 @@ function canonicalizeTarget(raw) {
   if (raw.startsWith("/")) return null;                    // POSIX absolute
   if (/^[a-zA-Z]:[\\/]/.test(raw)) return null;            // Windows drive
   let t = raw.replace(/\\/g, "/");                         // unify separators
-  while (t.startsWith("./")) t = t.slice(2);               // strip leading ./
-  if (t.length === 0) return null;
-  const segments = t.split("/");
+  t = t.replace(/\/+/g, "/");                              // collapse "//" → "/"
+  // Drop both leading and INTERNAL "." segments so "skills/./foo.md",
+  // "./skills/foo.md", and "skills/foo.md" all canonicalise to the
+  // same key. Without this, a stat() on the raw form succeeds (the
+  // OS resolves "." segments) but the orphan check's Set.has(rel)
+  // misses because walkFiles() emits the normalised relpath only.
+  const segments = t.split("/").filter((s) => s !== "" && s !== ".");
   if (segments.some((s) => s === "..")) return null;       // traversal
-  return t;
+  if (segments.length === 0) return null;
+  return segments.join("/");
 }
 
 /**

@@ -115,6 +115,21 @@ describe("extractIndexLinks: regex behaviour (pinned fixtures)", () => {
     assert.ok(out.has("sub/dir/file.md"));
     assert.ok(out.has("still-here.md"), "repeated './' prefixes all stripped");
   });
+  it("canonicalises INTERNAL './' segments (so 'skills/./foo.md' and 'skills/foo.md' match)", () => {
+    // Without this, stat() succeeds on the raw form (the OS resolves
+    // '.' internally) but the orphan check's Set.has() misses because
+    // walkFiles() emits only the normalised relpath. Result: a false
+    // orphan error on a perfectly valid link.
+    const out = extractIndexLinks("[x](skills/./dev-loop/SKILL.md) [y](a/./b/./c.md)");
+    assert.ok(out.has("skills/dev-loop/SKILL.md"), "internal '.' segment must be collapsed");
+    assert.ok(out.has("a/b/c.md"), "multiple internal '.' segments all collapsed");
+    assert.ok(!out.has("skills/./dev-loop/SKILL.md"), "non-canonical form must NOT be present");
+  });
+  it("collapses repeated '/' separators", () => {
+    const out = extractIndexLinks("[x](skills//dev-loop///SKILL.md)");
+    assert.ok(out.has("skills/dev-loop/SKILL.md"), "duplicate slashes must collapse to single");
+    assert.ok(!out.has("skills//dev-loop///SKILL.md"));
+  });
   it("unifies backslash separators to forward slashes (canonical POSIX form)", () => {
     const out = extractIndexLinks("[x](sub\\dir\\file.md)");
     assert.ok(out.has("sub/dir/file.md"), "backslashes must canonicalise to POSIX form for Set lookup");
@@ -128,14 +143,24 @@ describe("extractIndexLinks: regex behaviour (pinned fixtures)", () => {
 });
 
 describe("bundle-index.md: link integrity", () => {
-  it("every internal link points at a file that exists on disk", async () => {
+  it("every internal link points at a regular file that exists on disk", async () => {
+    // Match the validator's stat()+isFile() contract so the test and
+    // the validator agree on what counts as a valid link target.
+    // readFile() would mislabel EISDIR / EACCES / etc. as "missing"
+    // and wouldn't catch a link that resolves to a directory.
     const refs = await loadIndexLinks();
     for (const rel of refs) {
       const abs = resolve(BUNDLE_ROOT, rel);
-      await assert.doesNotReject(
-        readFile(abs, "utf8"),
-        `bundle-index.md references missing file: ${rel}`,
-      );
+      try {
+        const s = await stat(abs);
+        assert.ok(
+          s.isFile(),
+          `bundle-index.md references non-file path: ${rel}`,
+        );
+      } catch (e) {
+        const code = e && e.code ? e.code : (e && e.name ? e.name : "unknown");
+        assert.fail(`bundle-index.md references invalid path: ${rel} (${code})`);
+      }
     }
   });
 });
