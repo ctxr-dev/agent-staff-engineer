@@ -841,19 +841,35 @@ export function pickDefaults(d) {
   // Scripted installs (--yes) skip the interview and write this shape
   // directly, then schema-validate. Any kind whose required fields
   // can't be filled from detection will fail that validation with an
-  // unactionable "required property 'site'" error. To make --yes work
-  // out of the box we restrict the default to kinds we can fully
-  // auto-populate:
+  // unactionable "required property 'site'" / "owner is
+  // unknown/unknown" error. To make --yes work out of the box we
+  // restrict the default to kinds we can fully auto-populate:
   //   - github: needs d.git.ownerRepo.
   //   - gitlab: needs a gitlab git remote (host + project_path both
   //     derive from it).
   //   - jira / linear: no way to auto-derive site/project/workspace/team
-  //     from the filesystem alone. Fall back to github; the user runs
-  //     the interactive bootstrap (or edits ops.config.json manually)
-  //     to switch kinds. Adapt-system's tracker:migrate op also moves
-  //     a project between kinds post-install.
+  //     from the filesystem alone. Fall back to github IF we have a
+  //     git remote; otherwise throw and tell the user to re-run
+  //     without --yes so they can answer interactively.
+  // Previously this function silently fell back to kind=github even
+  // when ownerRepo was null; defaultTrackerTarget then produced
+  // {owner: "unknown", repo: "unknown"} which is schema-valid but
+  // unusable. Hard-fail is safer: the user sees one pointed error
+  // instead of shipping a broken config they have to diagnose later.
   const inferred = inferTrackerKind(d);
-  const kind = inferred && canAutoPopulate(inferred, d) ? inferred : "github";
+  let kind;
+  if (inferred && canAutoPopulate(inferred, d)) {
+    kind = inferred;
+  } else if (canAutoPopulate("github", d)) {
+    kind = "github";
+  } else {
+    throw new Error(
+      "bootstrap --yes: no tracker kind can be auto-populated from this environment " +
+      "(no git remote with owner/repo was detected, and no credentialed fallback is " +
+      "auto-populatable). Re-run without --yes so the interview can prompt for tracker " +
+      "coordinates interactively.",
+    );
+  }
   const pushAllowed = [d.gh.login, "claude"].filter(Boolean);
   const reviewers = [d.gh.login, "copilot"].filter(Boolean);
   const devTracker = defaultTrackerTarget(kind, "dev", d);

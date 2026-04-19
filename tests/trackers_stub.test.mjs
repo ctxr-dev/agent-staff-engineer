@@ -98,6 +98,23 @@ describe("stub tracker: kind flows through to the error", () => {
     assert.throws(() => makeStubTracker(undefined), /non-empty string/);
     assert.throws(() => makeStubTracker(42), /non-empty string/);
   });
+
+  // Round-11 T2: whitespace-only kinds must be rejected AND, if the
+  // caller passes a kind with surrounding whitespace that trims to a
+  // real value, the stored .kind and the error-message tag must both
+  // use the trimmed form so logs are stable.
+  it("rejects whitespace-only kinds and trims surrounding whitespace", async () => {
+    assert.throws(() => makeStubTracker("   "), /non-empty string/);
+    assert.throws(() => makeStubTracker("\t\n"), /non-empty string/);
+    // Leading/trailing whitespace trims rather than rejecting; the
+    // stored .kind and the error tag use the clean form.
+    const trimmed = makeStubTracker("  jira  ");
+    assert.equal(trimmed.kind, "jira");
+    await assert.rejects(
+      () => trimmed.review.requestReview({}),
+      (err) => err.kind === "jira" && /'jira'/.test(err.message),
+    );
+  });
 });
 
 describe("stub tracker: passes through `target` verbatim (shape parity with real impls)", () => {

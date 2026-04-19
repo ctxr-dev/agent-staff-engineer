@@ -18,10 +18,20 @@ import { NotSupportedError, TRACKER_NAMESPACES } from "./tracker.mjs";
  *   parity with real impls so stub-vs-real is substitutable.
  */
 export function makeStubTracker(kind, target = {}) {
-  if (typeof kind !== "string" || kind.length === 0) {
+  // Trim before the length check: the old guard accepted whitespace-
+  // only kinds like "   " which then ended up embedded verbatim in
+  // every NotSupportedError message ("tracker '   ' does not
+  // implement..."). Normalising at construction keeps the error-tag
+  // and the stored .kind field consistent for any caller that passes
+  // through an untrusted config value.
+  if (typeof kind !== "string") {
     throw new TypeError("makeStubTracker: kind must be a non-empty string");
   }
-  const tracker = { kind, target };
+  const normalisedKind = kind.trim();
+  if (normalisedKind.length === 0) {
+    throw new TypeError("makeStubTracker: kind must be a non-empty string");
+  }
+  const tracker = { kind: normalisedKind, target };
   for (const [namespace, methods] of Object.entries(TRACKER_NAMESPACES)) {
     tracker[namespace] = {};
     for (const op of methods) {
@@ -30,8 +40,8 @@ export function makeStubTracker(kind, target = {}) {
       // crash synchronously before getting a Promise back.
       tracker[namespace][op] = async () => {
         throw new NotSupportedError(
-          `tracker '${kind}' does not implement '${namespace}.${op}' yet; see skills/tracker-sync/SKILL.md for the current surface`,
-          { kind, op, namespace },
+          `tracker '${normalisedKind}' does not implement '${namespace}.${op}' yet; see skills/tracker-sync/SKILL.md for the current surface`,
+          { kind: normalisedKind, op, namespace },
         );
       };
     }

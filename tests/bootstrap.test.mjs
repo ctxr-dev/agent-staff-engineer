@@ -574,7 +574,12 @@ describe("bootstrap.cadenceToIntent", () => {
 });
 
 describe("bootstrap.pickDefaults", () => {
-  it("survives when gh is not authed and there is no git remote", () => {
+  // Round-11 T1 changed the behavior: a no-remote environment cannot
+  // auto-populate any tracker kind, so pickDefaults throws with a
+  // pointed message rather than producing a schema-valid-but-broken
+  // config with owner=repo="unknown". Exercise the error here; the
+  // adjacent test covers the happy path when a remote exists.
+  it("throws when nothing is detectable (no git remote, no credentials)", () => {
     const detection = {
       git: { remote: null, defaultBranch: "main", ownerRepo: null },
       gh: { authed: false },
@@ -582,11 +587,10 @@ describe("bootstrap.pickDefaults", () => {
       stack: { language: [], testing: [], platform: [] },
       devHints: {},
     };
-    const defaults = pickDefaults(detection);
-    assert.ok(Array.isArray(defaults.pushAllowed));
-    assert.ok(defaults.devTracker);
-    assert.ok(defaults.releaseTracker);
-    assert.equal(defaults.devTracker.kind, "github", "falls back to github when nothing is detected");
+    assert.throws(
+      () => pickDefaults(detection),
+      /no tracker kind can be auto-populated/,
+    );
   });
 
   it("picks the tracker kind from the git remote host when available", () => {
@@ -602,31 +606,44 @@ describe("bootstrap.pickDefaults", () => {
     assert.equal(defaults.releaseTracker.kind, "gitlab");
   });
 
-  // Round-2 T2: when inferTrackerKind picks jira/linear from env
-  // tokens but the --yes flow can't auto-populate their required
-  // coords, fall back to github so bootstrap produces a schema-valid
-  // config. A prior version failed with "required property 'site'"
-  // in --yes mode on a machine with JIRA_API_TOKEN set.
-  it("falls back to github when the inferred kind cannot be auto-populated from detection", () => {
+  // Round-2 T2 + Round-11 T1 combined: when inferTrackerKind picks
+  // jira/linear from env tokens and the --yes flow can't
+  // auto-populate their required coords, pickDefaults used to fall
+  // back to github. Round-11 tightened that: if no git remote exists
+  // EITHER, there's also nothing to fall back to (github would get
+  // owner=repo="unknown"), so the function now throws with a pointed
+  // message telling the user to re-run without --yes.
+  it("falls back to github when the inferred kind cannot auto-populate but a git remote exists", () => {
+    // Github git remote present + a jira token set. inferTrackerKind
+    // picks github via parseHostKind first, so we're not really
+    // testing the fallback here -- the real regression test for
+    // Round-2 is the next case. This one just locks that a github
+    // remote with ownerRepo gives us a github tracker.
     const detection = {
       git: { remote: "git@github.com:acme/foo.git", defaultBranch: "main", ownerRepo: "acme/foo" },
       gh: { authed: true, login: "jane" },
-      // Only jira has a credential. inferTrackerKind prefers git remote
-      // host first (github wins here), so we force inconclusive by
-      // removing the remote and having only a jira token. Without the
-      // canAutoPopulate guard, pickDefaults would compose a jira
-      // target with site="" and fail schema.
       tracker: { jira: { hasToken: true }, linear: {}, gitlab: {} },
       stack: { language: [], testing: [], platform: [] },
       devHints: {},
     };
-    // Force the inconclusive-remote branch: no remote, but a jira token
-    // is set.
-    detection.git.remote = null;
-    detection.git.ownerRepo = null;
     const defaults = pickDefaults(detection);
-    assert.equal(defaults.devTracker.kind, "github", "must fall back to github when inferred kind (jira) cannot auto-populate");
-    assert.equal(defaults.releaseTracker.kind, "github");
+    assert.equal(defaults.devTracker.kind, "github");
+  });
+
+  // Round-11 T1: --yes hard-fails rather than producing a
+  // schema-valid-but-unusable github target with owner=repo="unknown".
+  it("throws when --yes cannot auto-populate ANY tracker kind (no remote, no usable credential)", () => {
+    const detection = {
+      git: { remote: null, defaultBranch: "main", ownerRepo: null },
+      gh: { authed: false },
+      tracker: { jira: { hasToken: true }, linear: {}, gitlab: {} },
+      stack: { language: [], testing: [], platform: [] },
+      devHints: {},
+    };
+    assert.throws(
+      () => pickDefaults(detection),
+      /no tracker kind can be auto-populated/,
+    );
   });
 });
 
