@@ -64,8 +64,8 @@ Hard rule baked in: **the dev-loop never merges a PR and never sets a dev issue 
       |
       v
 [tracker-sync: open_pr using templates/pr.md]
-[tracker-sync: request_review per project.principals.reviewers_default]
-[tracker-sync: update_issue_status -> In review]
+[tracker-sync: review.requestReview per project.principals.reviewers_default]
+[tracker-sync: issues.updateIssueStatus -> In review]
 [plan-keeper: flip plan one-liner to [x]]
 [release-tracker: recompute linked umbrella status]
       |
