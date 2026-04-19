@@ -16,12 +16,20 @@
 //
 // ctx object each method accepts:
 //   {
-//     owner:     string    // tracker-side owner (GitHub owner, Jira site, ...)
-//     repo:      string    // tracker-side repo / project key
-//     prNumber:  number    // pull-request / merge-request / change number
-//     headSha:   string    // current HEAD SHA on the feature branch
-//     prNodeId?: string    // GraphQL node ID (GitHub); cached across rounds
-//     botIds?:   string[]  // reviewer node IDs (GitHub); captured once per repo
+//     owner:      string    // tracker-side owner (GitHub owner, Jira site, ...)
+//     repo:       string    // tracker-side repo / project key
+//     prNumber:   number    // pull-request / merge-request / change number
+//     headSha:    string    // current HEAD SHA on the feature branch
+//     prNodeId?:  string    // GraphQL node ID (GitHub); cached across rounds
+//     botIds?:    string[]  // reviewer node IDs (GitHub); passed to
+//                             requestReviews mutations (captured once per
+//                             repo per rules/pr-iteration.md).
+//     botLogins?: string[]  // reviewer logins (GitHub); used by
+//                             pollForReview to narrow `reviewOnHead` to
+//                             the configured external reviewer. When
+//                             empty the provider falls back to "any
+//                             Bot-typed author on HEAD" which works
+//                             for the common single-bot case.
 //   }
 
 /**

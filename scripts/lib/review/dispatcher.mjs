@@ -36,9 +36,15 @@ export function pickReviewProvider(opsConfig) {
  *
  * Supported override values:
  *   - "github" — force the GitHub provider
- *   - "none"   — explicitly opt out of the loop (returns "none" so the
- *                skill can short-circuit cleanly, not attempt to reach
- *                the stub)
+ *   - "none"   — explicitly opt out by returning the distinct "none"
+ *                kind. pickReviewProvider currently still backs every
+ *                non-"github" kind (including "none") with the stub
+ *                so every op throws NotSupportedError; the skill is
+ *                expected to short-circuit on `kind === "none"`
+ *                before touching provider methods. If a future change
+ *                needs a hard null provider for "none", do it in
+ *                pickReviewProvider + tests together, don't diverge
+ *                the doc-string.
  *   - "auto"   — use tracker-based inference (same as omitting the key)
  *
  * Any other string falls back to inference for forward compat.

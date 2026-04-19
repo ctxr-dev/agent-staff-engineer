@@ -39,13 +39,16 @@ export function makeGithubReviewProvider() {
 }
 
 async function githubRequestReview(ctx) {
-  const prNodeId = ctx.prNodeId ?? (await resolvePrNodeId(ctx));
+  // Validate ctx.botIds BEFORE resolving prNodeId. resolvePrNodeId may
+  // trigger an extra GraphQL call; there's no point paying for it when
+  // the mutation is guaranteed to fail downstream on empty botIds.
   const botIds = ctx.botIds ?? [];
   if (botIds.length === 0) {
     throw new Error(
       "github review: ctx.botIds is empty; capture the bot node ID (see rules/pr-iteration.md) before calling requestReview",
     );
   }
+  const prNodeId = ctx.prNodeId ?? (await resolvePrNodeId(ctx));
   // botIds is inlined into the query text because `gh api graphql -F` does
   // not have clean ergonomics for array values. Each id is JSON-encoded so
   // quoting is correct and prevents any stray shell/GraphQL metacharacter
