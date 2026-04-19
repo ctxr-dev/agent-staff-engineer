@@ -7,7 +7,7 @@ trigger_on:
 do_not_trigger_on:
   - Read-only questions Claude can answer from local context alone.
   - Targets configured as read-only in ops.config.json, for any write path.
-  - The requested mutation would run against an item whose current server-side state differs from the caller's precondition (stale ETag, status-field value no longer in the configured `status_values`, item deleted between fetch and write). Follow `rules/ambiguity-halt.md`: halt, surface the divergence, ask the caller to re-read and re-decide; do not silently retry.
+  - The requested mutation would run against an item whose current server-side state differs from the caller's precondition (stale ETag, status-field value no longer in the configured `status_values`, item deleted between fetch and write). Follow `rules/ambiguity-halt.md` (halt, surface the divergence, ask the caller to re-read and re-decide); do not silently retry.
 writes_to_github: yes, on approval or when called programmatically by another skill under that skill's own approval flow
 writes_to_filesystem: no
 ---
