@@ -152,11 +152,13 @@ async function withFakeGh(fixture, fn) {
   const fixBefore = process.env.FAKE_GH_FIXTURE;
   const logBefore = process.env.FAKE_GH_LOG;
   try {
-    // PATH may be unset on constrained test runners; use "" as the
-    // default so the shim directory is first on the search path and
-    // the restore logic below can distinguish "was unset" (delete)
-    // from "was set" (assign).
-    process.env.PATH = scratch + ":" + (pathBefore ?? "");
+    // PATH may be unset on constrained test runners. Use just the
+    // shim directory in that case so we don't introduce a trailing
+    // empty PATH entry (which on POSIX means "current directory" and
+    // breaks hermeticity). The restore logic below still distinguishes
+    // "was unset" (delete) from "was set" (assign).
+    process.env.PATH =
+      pathBefore === undefined ? scratch : scratch + ":" + pathBefore;
     process.env.FAKE_GH_FIXTURE = fixture;
     process.env.FAKE_GH_LOG = logPath;
     const result = await fn();
