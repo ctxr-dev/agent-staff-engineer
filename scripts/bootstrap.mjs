@@ -720,7 +720,9 @@ export async function askTrackerTarget(ask, kind, role, d, reference = null) {
         kind: "jira",
         site,
         project,
-        depth: "full",
+        // Role-derived default depth mirrors the github branch: dev
+        // operates across the project, release narrows to umbrellas.
+        depth: role === "dev" ? "full" : "umbrella-only",
         status_values: {
           backlog: "Backlog",
           in_progress: "In Progress",
@@ -751,7 +753,7 @@ export async function askTrackerTarget(ask, kind, role, d, reference = null) {
         kind: "linear",
         workspace,
         team,
-        depth: "full",
+        depth: role === "dev" ? "full" : "umbrella-only",
         status_values: {
           backlog: "Backlog",
           in_progress: "In Progress",
@@ -784,7 +786,7 @@ export async function askTrackerTarget(ask, kind, role, d, reference = null) {
         kind: "gitlab",
         host,
         project_path,
-        depth: "full",
+        depth: role === "dev" ? "full" : "umbrella-only",
         status_values: {
           backlog: "backlog",
           in_progress: "in-progress",
@@ -975,12 +977,18 @@ export function defaultTrackerTarget(kind, role, d) {
     if (role === "dev") target.repo = repo;
     return target;
   }
+  // Role-derived default depth: dev covers the full project /
+  // workspace; release narrows to umbrella issues. Matches the
+  // github branch above and askTrackerTarget. Applied uniformly
+  // across jira / linear / gitlab so --yes installs land on the
+  // same least-privilege shape the interactive interview produces.
+  const depth = role === "dev" ? "full" : "umbrella-only";
   if (kind === "jira") {
     return {
       kind: "jira",
       site: "",
       project: "",
-      depth: "full",
+      depth,
       status_values: { backlog: "Backlog", in_progress: "In Progress", in_review: "In Review", done: "Done" },
       labels_field: "labels",
     };
@@ -990,7 +998,7 @@ export function defaultTrackerTarget(kind, role, d) {
       kind: "linear",
       workspace: "",
       team: "",
-      depth: "full",
+      depth,
       status_values: { backlog: "Backlog", in_progress: "In Progress", in_review: "In Review", done: "Done" },
     };
   }
@@ -1011,7 +1019,7 @@ export function defaultTrackerTarget(kind, role, d) {
       kind: "gitlab",
       host,
       project_path,
-      depth: "full",
+      depth,
       status_values: { backlog: "backlog", in_progress: "in-progress", done: "done" },
     };
   }

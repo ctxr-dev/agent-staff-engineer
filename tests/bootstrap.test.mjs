@@ -259,6 +259,18 @@ describe("bootstrap.defaultTrackerTarget", () => {
     assert.ok("status_values" in t);
   });
 
+  // Round-18: jira / linear / gitlab targets must derive depth from
+  // role (least privilege on release trackers), matching the github
+  // branch. A prior version hardcoded depth="full" for every kind.
+  it("picks role-derived depth across every tracker kind (dev=full, release=umbrella-only)", () => {
+    for (const kind of ["github", "jira", "linear", "gitlab"]) {
+      const dev = defaultTrackerTarget(kind, "dev", d);
+      const release = defaultTrackerTarget(kind, "release", d);
+      assert.equal(dev.depth, "full", `${kind} dev must default to depth=full`);
+      assert.equal(release.depth, "umbrella-only", `${kind} release must default to depth=umbrella-only`);
+    }
+  });
+
   it("produces the expected gitlabTracker shape with gitlab.com fallback when remote is non-gitlab", () => {
     const t = defaultTrackerTarget("gitlab", "dev", d);
     assert.equal(t.kind, "gitlab");
@@ -495,6 +507,48 @@ describe("bootstrap.askTrackerTarget (round-7 T2: dev github repo validation)", 
     const t = await askTrackerTarget(ask, "gitlab", "dev", detection);
     assert.equal(t.host, "gitlab.acme.internal");
     assert.equal(t.project_path, "acme/platform/billing/api");
+  });
+
+  // Round-18: jira / linear / gitlab interactive paths must also pick
+  // role-derived depth (dev=full, release=umbrella-only). github
+  // already does; this locks parity across all four kinds so a future
+  // revert to hardcoded "full" would fail here.
+  it("picks role-derived depth in the interview for every tracker kind", async () => {
+    // Jira dev: site + project answers.
+    const jiraDev = await askTrackerTarget(
+      makeQueuedAsk(["acme.atlassian.net", "PLAT"]),
+      "jira", "dev", detection,
+    );
+    assert.equal(jiraDev.depth, "full");
+    const jiraRelease = await askTrackerTarget(
+      makeQueuedAsk(["acme.atlassian.net", "PLAT"]),
+      "jira", "release", detection,
+    );
+    assert.equal(jiraRelease.depth, "umbrella-only");
+
+    // Linear dev: workspace + team answers.
+    const linearDev = await askTrackerTarget(
+      makeQueuedAsk(["acme", "ENG"]),
+      "linear", "dev", detection,
+    );
+    assert.equal(linearDev.depth, "full");
+    const linearRelease = await askTrackerTarget(
+      makeQueuedAsk(["acme", "ENG"]),
+      "linear", "release", detection,
+    );
+    assert.equal(linearRelease.depth, "umbrella-only");
+
+    // GitLab dev: host + project_path answers.
+    const gitlabDev = await askTrackerTarget(
+      makeQueuedAsk(["gitlab.com", "acme/widgets"]),
+      "gitlab", "dev", detection,
+    );
+    assert.equal(gitlabDev.depth, "full");
+    const gitlabRelease = await askTrackerTarget(
+      makeQueuedAsk(["gitlab.com", "acme/widgets"]),
+      "gitlab", "release", detection,
+    );
+    assert.equal(gitlabRelease.depth, "umbrella-only");
   });
 });
 
