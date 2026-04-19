@@ -94,12 +94,24 @@ async function githubPollForReview(ctx) {
   const pr = data.repository.pullRequest;
   const threads = pr.reviewThreads.nodes;
   const unresolvedCount = threads.filter((t) => !t.isResolved).length;
-  const state =
-    pr.commits.nodes[0]?.commit?.statusCheckRollup?.state ?? "PENDING";
+  const rawState = pr.commits.nodes[0]?.commit?.statusCheckRollup?.state;
   const reviewOnHead = pr.reviews.nodes.some(
     (r) => r.commit?.oid === headSha,
   );
-  return { ciState: state, unresolvedCount, reviewOnHead };
+  return { ciState: normalizeCiState(rawState), unresolvedCount, reviewOnHead };
+}
+
+// GitHub's StatusState enum carries several values the ReviewProvider
+// contract does NOT surface (EXPECTED, PENDING_EXPECTED, plus historical
+// casing variants). Fold everything that isn't one of the four
+// documented terminal/transitional states into PENDING so downstream
+// comparisons (exit gates, if/else on ci_done) don't silently mis-bucket
+// an in-flight run.
+function normalizeCiState(raw) {
+  if (raw === "SUCCESS" || raw === "FAILURE" || raw === "ERROR" || raw === "PENDING") {
+    return raw;
+  }
+  return "PENDING";
 }
 
 async function githubFetchUnresolvedThreads(ctx) {
@@ -176,10 +188,8 @@ async function githubCiStateOnHead(ctx) {
     name: repo,
     number: prNumber,
   });
-  return (
-    data.repository.pullRequest.commits.nodes[0]?.commit?.statusCheckRollup?.state ??
-    "PENDING"
-  );
+  const raw = data.repository.pullRequest.commits.nodes[0]?.commit?.statusCheckRollup?.state;
+  return normalizeCiState(raw);
 }
 
 async function resolvePrNodeId({ owner, repo, prNumber }) {

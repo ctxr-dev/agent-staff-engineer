@@ -9,9 +9,11 @@ purpose: Per-round artefact written by skills/pr-iteration every time the
          template is the content shape.
 rendered by: skills/pr-iteration (via rules/llm-wiki.md; writes go through
          @ctxr/skill-llm-wiki, not raw markdown into shared/)
-stored at: resolved under {{ workflow.code_review.report_dir }} (which
-         resolves under wiki.roots.shared/reports/ by default) per the
-         wiki skill's placement rules; DO NOT hard-code a path.
+stored at: resolved under {{ paths.reports }} (which resolves under
+         wiki.roots.shared/reports/ by default) per the wiki skill's
+         placement rules; DO NOT hard-code a path. Note: projects that
+         customise `workflow.code_review.report_dir` should ensure it
+         and `paths.reports` agree; the skill reads `paths.reports`.
 ops.config keys read:
   - project.name
   - project.repo

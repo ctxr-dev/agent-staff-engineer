@@ -67,15 +67,17 @@ describe("pickReviewProvider", () => {
     }
   });
 
-  it("treats legacy github: config as kind=github (transitional shim)", () => {
+  it("treats legacy github: config as kind=github (transitional shim)", async () => {
     const { provider, kind } = pickReviewProvider({ github: { auth_login: "alice" } });
     assert.equal(kind, "github");
     // Stronger assertion than `typeof === "function"`: calling
     // requestReview with a ctx the github impl checks eagerly (empty
     // botIds) must produce the GitHub provider's own error, NOT a
     // NotSupportedError. A mutant that silently routed to the stub
-    // would throw NotSupportedError instead.
-    assert.rejects(
+    // would throw NotSupportedError instead. Must be awaited so the
+    // rejection is actually observed (unawaited assert.rejects can
+    // silently pass).
+    await assert.rejects(
       () => provider.requestReview({ owner: "o", repo: "r", prNumber: 1, headSha: "x", prNodeId: "PR_", botIds: [] }),
       (err) => err.name !== "NotSupportedError" && /botIds is empty/.test(err.message),
     );

@@ -23,7 +23,8 @@ describe("review/stub: every method throws NotSupportedError", () => {
         assert.ok(err instanceof NotSupportedError, `expected NotSupportedError, got ${err.constructor.name}`);
         assert.equal(err.kind, "jira");
         assert.equal(err.op, op);
-        assert.match(err.message, /pr-iteration review loop is not implemented/);
+        assert.match(err.message, /pr-iteration review op/);
+        assert.match(err.message, new RegExp(`'${op}'`), `message should name the op '${op}'`);
         assert.match(err.message, /jira/);
       }
     });

@@ -17,7 +17,7 @@ export function makeStubProvider(kind) {
   for (const op of REVIEW_PROVIDER_METHODS) {
     impl[op] = () => {
       throw new NotSupportedError(
-        `pr-iteration review loop is not implemented for tracker kind '${kind}' yet; see rules/pr-iteration.md fallback`,
+        `pr-iteration review op '${op}' is not implemented for tracker kind '${kind}' yet; see rules/pr-iteration.md fallback`,
         { kind, op },
       );
     };

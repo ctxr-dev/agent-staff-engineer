@@ -60,7 +60,7 @@ gh api graphql -f query='
   }}}'
 ```
 
-Pick the `id` whose `login` is `copilot-pull-request-reviewer`. If the repo has no prior Copilot review yet, request one via the repo's Settings or via a first-round `requestReviews` without `botIds` and the bot seeds itself.
+Pick the `id` whose `login` is `copilot-pull-request-reviewer`. If the repo has no prior Copilot review yet, enable or request Copilot review through the supported GitHub UI flow (repository Settings or the PR's "Reviewers" panel in the web UI), wait for the first real Copilot review to land, and then capture the bot ID from that review. Do NOT attempt a `requestReviews` call without `botIds`: the mutation requires the list, and a bot-less request will not seed the id.
 
 ## Related
 

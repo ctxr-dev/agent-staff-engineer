@@ -29,10 +29,17 @@ const IS_WIN = process.platform === "win32";
 // variables. Without this, a provider mutant that dropped botIds or
 // hard-coded threadId would silently pass.
 const FAKE_GH = `#!/bin/sh
-# Tee the call for assertions. Keep each call on one line for easy grep.
+# Tee the call for assertions. Keep each call on one line for easy
+# grepping: argv values (especially GraphQL query text) carry embedded
+# newlines, so collapse \\r and \\n to spaces before writing. Without
+# this, the "one line per invocation" contract breaks and grep-based
+# assertions may match text from other calls.
 {
   printf 'ARGV:'
-  for a in "$@"; do printf ' %s' "$a"; done
+  for a in "$@"; do
+    sanitized=$(printf '%s' "$a" | tr '\\r\\n' '  ')
+    printf ' %s' "$sanitized"
+  done
   printf '\\n'
 } >> "$FAKE_GH_LOG"
 case "$FAKE_GH_FIXTURE" in
