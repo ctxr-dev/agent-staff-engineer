@@ -86,8 +86,8 @@ Violations cause the call to halt with a clear refusal message, not a silent suc
 
 ## Cross-skill handoffs
 
-- Called by `bootstrap-ops-config` only for read operations during detection.
-- Called by `adapt-system` for label reconciliation and relabelling.
+- NOT called by `bootstrap-ops-config`: this skill refuses to run without a valid `ops.config.json`, and bootstrap-ops-config produces that config in the first place. Bootstrap does its own detection through direct git / gh / env probes (see `scripts/bootstrap.mjs`) and never goes through `tracker-sync`.
+- Called by `adapt-system` for label reconciliation and relabelling once a config exists.
 - Called by `dev-loop` for `issues.createIssue` (rare), `issues.updateIssueStatus`, `review.requestReview`, `open_pr`, `issues.comment`.
 - Called by `release-tracker` for `issues.updateIssueStatus` on Release umbrellas and `projects.listProjectItems`.
 - Called by `regression-handler` for lookups and `issues.comment`.
