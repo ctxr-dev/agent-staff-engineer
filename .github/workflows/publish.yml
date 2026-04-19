@@ -14,6 +14,20 @@ jobs:
       id-token: write
 
     steps:
+      - name: Refuse non-tag refs
+        # `workflow_dispatch` is kept (so an operator can re-run a
+        # publish for an existing tag after a transient npm outage),
+        # but it can also be fired against a branch, in which case
+        # the tag/version check below is skipped (its `if` gates on
+        # refs/tags/v*) and `npm publish` would still run. That is
+        # an untagged-publish hole. Refuse any ref that isn't a
+        # `refs/tags/v*` tag up-front, regardless of event type.
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          echo "::error::publish.yml only runs for refs/tags/v*; got ${{ github.ref }}."
+          echo "::error::Re-dispatch against an existing v<version> tag, or push a new one via the release flow."
+          exit 1
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -24,11 +38,28 @@ jobs:
 
       - run: npm ci
 
+      - name: Preflight
+        run: npm run preflight
+
       - name: Validate
         run: npm run validate
 
-      - name: Test
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
         run: npm test
+
+      - name: Verify version matches tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)."
+            echo "::error::Investigate the merge commit; this should not happen under the PR-based flow."
+            exit 1
+          fi
 
       - name: Publish
         run: npm publish --access public --provenance

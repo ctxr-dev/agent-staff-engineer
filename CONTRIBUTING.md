@@ -79,13 +79,19 @@ node --test tests/*.test.mjs
 - Unit tests cover `scripts/lib/` helpers and the marker-merge logic.
 - E2E tests run the installer against a throwaway scratch directory under `/tmp`, never touching any real project.
 
-## Publishing
+## Releasing
 
-Tagged releases publish to npm automatically via GitHub Actions:
+Releases are PR-gated; the bot does not push to `main` directly. One dispatch + one PR merge + one dispatch ships the package.
 
-1. `npm run validate && npm test` green on main.
-2. Run the Release workflow manually; pick the version bump type.
-3. The Publish workflow fires on the new tag and pushes to npm.
+1. **Actions → Release → Run workflow**. Branch selector: `main` (any other ref is rejected). Version bump: `patch` / `minor` / `major`.
+2. The workflow bumps `package.json` (and `npm-shrinkwrap.json` when present) on a `release/v<version>` branch and opens a release PR.
+3. Review + merge the PR.
+4. `tag-on-main.yml` detects the version change on the merge commit, creates the annotated `v<version>` tag, and pushes it.
+5. **Actions → Publish to npm → Run workflow** on the new `v<version>` tag. The workflow runs `npm ci + preflight + validate + lint + test`, verifies tag/version agreement, and runs `npm publish --access public --provenance`.
+
+The tag push does NOT auto-chain into publish: `GITHUB_TOKEN` cannot trigger further workflows. Step 5 is a manual dispatch until a GitHub App token or fine-grained PAT is wired into `tag-on-main.yml`'s tag-push step.
+
+Full operator walkthrough (including troubleshooting for stale or orphan tags, non-main dispatches, and the "Allow GitHub Actions to create and approve pull requests" org-level policy) lives in the [Releasing section of the README](README.md#releasing).
 
 ## Questions
 
