@@ -257,10 +257,19 @@ if (opsConfig && "github" in opsConfig) {
     );
     process.exit(1);
   }
+  // Build the exact re-run command including `node`, the full bundle
+  // script path, and --target so the remediation is copy-paste-able.
+  // A naked `install.mjs --apply` is what we said before, but it
+  // relies on the user remembering the bundle location AND that
+  // install.mjs is a Node script, not an executable on PATH.
+  const installScriptPath = join(BUNDLE_ABS, "scripts", "install.mjs");
+  const rerunCommand = `node ${installScriptPath} --target ${TARGET} --apply`;
   process.stderr.write(
     `ops.config.json uses the legacy 'github:' shape which this release no longer supports.\n` +
     `A backup of the existing file was written to ${backupPath}.\n` +
-    `Delete ${opsConfigPath} and re-run 'install.mjs --apply' to regenerate it via the new bootstrap interview (which writes a 'trackers:' block instead).\n`,
+    `Delete ${opsConfigPath} and re-run install to regenerate it via the new bootstrap interview (writes a 'trackers:' block).\n` +
+    `  rm ${opsConfigPath}\n` +
+    `  ${rerunCommand}\n`,
   );
   process.exit(1);
 }

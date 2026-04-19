@@ -401,7 +401,12 @@ function printDetectionReport(d) {
   process.stdout.write(`  git remote:     ${d.git.remote ?? "(not a git remote)"}\n`);
   process.stdout.write(`  default branch: ${d.git.defaultBranch}\n`);
   process.stdout.write(`  owner/repo:     ${d.git.ownerRepo ?? "(unknown)"}\n`);
-  process.stdout.write(`  remote host:    ${parseHostKind(d.git.remote) ?? "(unknown / unsupported)"}\n`);
+  // Show both the actual host (useful when the user needs to tell
+  // the difference between gitlab.com and a self-hosted gitlab) AND
+  // the tracker kind the host maps to. Previously the "remote host"
+  // line printed the kind, which was misleading.
+  process.stdout.write(`  remote host:    ${extractHost(d.git.remote) ?? "(unknown)"}\n`);
+  process.stdout.write(`  remote kind:    ${parseHostKind(d.git.remote) ?? "(unknown / unsupported)"}\n`);
   process.stdout.write(`  gh authed:      ${d.gh.authed ? `yes (${d.gh.login ?? "?"})` : "no"}\n`);
   const t = d.tracker ?? {};
   process.stdout.write(`  jira hints:     token=${t.jira?.hasToken ? "yes" : "no"}, cli-config=${t.jira?.cliConfig ? "yes" : "no"}\n`);

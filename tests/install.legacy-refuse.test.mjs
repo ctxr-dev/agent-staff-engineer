@@ -70,12 +70,22 @@ describe("install: legacy `github:` config shape is hard-refused", () => {
     await rm(scratch, { recursive: true, force: true });
   });
 
-  it("exits non-zero with a clear remediation message", () => {
+  it("exits non-zero with a clear remediation message naming the exact re-run invocation", () => {
     const { code, stderr } = runInstall(bundleRoot, targetRoot, ["--apply"]);
     assert.notEqual(code, 0, "install must refuse to proceed on legacy shape");
     assert.match(stderr, /legacy 'github:' shape/);
     assert.match(stderr, /trackers:/);
-    assert.match(stderr, /re-run 'install\.mjs --apply'/);
+    // Round-14 T2: remediation must include the full invocation so a
+    // copy-paste re-run actually works. Specifically: `node`, the
+    // absolute path to install.mjs, `--target` with the target's
+    // absolute path, and `--apply`. Previously said "install.mjs
+    // --apply" alone, which assumed the user knew the bundle location
+    // and that install.mjs was a Node script.
+    assert.match(stderr, /node .*install\.mjs --target .* --apply/);
+    // Also: the message explicitly tells the user to rm the config
+    // before re-running, so the command they paste actually regenerates
+    // instead of hitting the same refuse gate a second time.
+    assert.match(stderr, /rm .*ops\.config\.json/);
   });
 
   it("writes a .pre-trackers-<ts>-pid<pid>[-<counter>].bak backup alongside the original", async () => {
