@@ -115,7 +115,7 @@ Verify the response shows `login: "copilot-pull-request-reviewer"` in the reques
 
 The current HEAD SHA is `git rev-parse HEAD`. Run this in the background; it exits when CI is done AND Copilot has either posted a review on HEAD or left unresolved threads.
 
-> **Scope note.** This inline poll recipe is a one-off for operators and assumes the PR has <= 100 review threads (the `first: 100` window is not paged). On PRs larger than that the `unresolved` count can undercount and exit early. For production use, drive the loop through `skills/pr-iteration` which uses the paginated `pollForReview` impl in `scripts/lib/review/github.mjs`.
+> **Scope note.** This inline poll recipe is a one-off for operators and assumes the PR has <= 100 review threads (the `first: 100` window is not paged). On PRs larger than that the `unresolved` count can undercount and exit early. For production use, drive the loop through `skills/pr-iteration` which uses the paginated `pollForReview` impl in `scripts/lib/trackers/github.mjs`.
 
 ```bash
 HEAD_SHA=$(git rev-parse HEAD)

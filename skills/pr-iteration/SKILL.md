@@ -65,10 +65,10 @@ The two human gates from `rules/pr-workflow.md` are preserved: merge and dev-iss
 
 ## Provider dispatch
 
-The ReviewProvider is resolved via `scripts/lib/review/dispatcher.mjs` at the start of each round, so a mid-iteration change to `trackers.dev.kind` (rare, but possible under `adapt-system` migration) picks up the new kind cleanly. Providers:
+The review provider is the `.review` namespace of the Tracker resolved via `scripts/lib/trackers/dispatcher.mjs` (`pickReviewProvider(cfg)`) at the start of each round, so a mid-iteration change to `trackers.dev.kind` (rare, but possible under `adapt-system` migration) picks up the new kind cleanly. Providers:
 
-- **GitHub** (`scripts/lib/review/github.mjs`): full impl. Uses `gh api graphql` via `scripts/lib/ghExec.mjs`' `ghGraphqlQuery` / `ghGraphqlMutation` helpers. The skill resolves reviewer LOGINS (from `workflow.external_review.bots.github`, e.g. `copilot-pull-request-reviewer`) into GraphQL node IDs via the recipe in `rules/pr-iteration.md`, caches both the PR's node ID and the bot node IDs in the in-memory iteration state, and passes the resolved node IDs to the provider as `ctx.botIds` on every call. The provider itself stays login-agnostic.
-- **Stub** (`scripts/lib/review/stub.mjs`): every op throws `NotSupportedError`. Returned for Jira, Linear, GitLab until PR 3's multi-tracker refactor wires real impls.
+- **GitHub** (`scripts/lib/trackers/github.mjs`): full impl. Uses `gh api graphql` via `scripts/lib/ghExec.mjs`' `ghGraphqlQuery` / `ghGraphqlMutation` helpers. The skill resolves reviewer LOGINS (from `workflow.external_review.bots.github`, e.g. `copilot-pull-request-reviewer`) into GraphQL node IDs via the recipe in `rules/pr-iteration.md`, caches both the PR's node ID and the bot node IDs in the in-memory iteration state, and passes the resolved node IDs to the provider as `ctx.botIds` on every call. The provider itself stays login-agnostic.
+- **Stub** (`scripts/lib/trackers/stub.mjs`): every op throws `NotSupportedError`. Returned for Jira, Linear, GitLab until their real tracker impls land in follow-up PRs.
 
 ## Exit conditions (re-emphasised)
 
@@ -94,7 +94,7 @@ This skill writes into `.development/shared/reports/**` and MUST follow `rules/l
 
 `ops.config.json` keys read:
 
-- `trackers.dev.kind` (PR 3+) or legacy top-level `github:` block (pre-PR-3) to pick the ReviewProvider.
+- `trackers.dev.kind` to pick the review provider (github / jira / linear / gitlab).
 - `workflow.external_review.enabled` (gate the whole loop).
 - `workflow.external_review.provider` (`auto` / `github` / `none`).
 - `workflow.external_review.bots` (per-kind reviewer LOGINS; for GitHub, the skill resolves login → GraphQL node ID at runtime and caches the derived IDs in the in-memory iteration state).
@@ -127,5 +127,5 @@ Per-round artefact structure: see `templates/pr-iteration-report.md`. Minimum fi
 - `rules/pr-iteration.md`: binding contract.
 - `rules/pr-workflow.md`: full PR state machine in which this skill plugs after "In review".
 - `skills/dev-loop/SKILL.md`: hands off to this skill after opening the PR.
-- `scripts/lib/review/*.mjs`: the provider implementations.
+- `scripts/lib/trackers/*.mjs`: the Tracker implementations (GitHub real; Jira/Linear/GitLab stubbed).
 - `skills/pr-iteration/runbook.md`: canonical how-to with full GraphQL recipes.

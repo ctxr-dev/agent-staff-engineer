@@ -23,13 +23,13 @@ Each round is the same six steps. The loop repeats until the exit conditions hol
 
 1. **Assert local review GO on HEAD.** Delegate to `rules/review-loop.md`. If the local review is not GO, fix and re-run before pushing. Never push with outstanding Critical or Important findings.
 2. **Push** the feature branch to `origin`. Re-use the existing branch; do not rename between rounds.
-3. **Request external review** on current HEAD via `ReviewProvider.requestReview`. Implementation for GitHub is in `scripts/lib/review/github.mjs` and uses the `requestReviews` GraphQL mutation with `botIds`. The REST endpoint silently no-ops for bots; never use it.
+3. **Request external review** on current HEAD via `tracker.review.requestReview`. Implementation for GitHub is in `scripts/lib/trackers/github.mjs` and uses the `requestReviews` GraphQL mutation with `botIds`. The REST endpoint silently no-ops for bots; never use it.
 4. **Poll** at `workflow.external_review.poll_interval_seconds` (default 30s). Stop polling when CI reaches a terminal state (`SUCCESS` / `FAILURE` / `ERROR`) AND (any unresolved threads exist OR the reviewer has posted a review on the current HEAD). Cap the wait at `poll_timeout_seconds` (default 1200s) and surface a clear timeout to the human if hit.
-5. **Fetch unresolved threads** via `ReviewProvider.fetchUnresolvedThreads`. Triage into three buckets (the runbook documents the detection heuristics):
+5. **Fetch unresolved threads** via `tracker.review.fetchUnresolvedThreads`. Triage into three buckets (the runbook documents the detection heuristics):
    - **Stale**: the reviewer re-emitted a comment on already-fixed code (same `path:line`, unchanged content since the last push, or posted on a superseded SHA). Mark for resolution without a code change. The agent tracks the recurrence count per thread fingerprint and auto-resolves once the count crosses `auto_resolve_stale_after_commits` (default 1), surfacing the decision in the per-round report. Set the threshold to `0` to require manual triage for every thread.
    - **Net-new actionable**: real issue. Fix. Lock the fix in with a regression test when the issue was behavioural (security, TOCTOU, exit code, parsing).
    - **Suggestion / style**: take or push back with a reply on the thread.
-6. **Commit + push + resolve threads + re-request**. One commit per round, `fix(review-round-N): <short summary>` with a per-thread bullet list in the body naming `path:line` and what changed. After the push, call `ReviewProvider.resolveThread(threadId)` for every addressed thread, then `ReviewProvider.requestReview` again on the new HEAD. Loop back to step 4.
+6. **Commit + push + resolve threads + re-request**. One commit per round, `fix(review-round-N): <short summary>` with a per-thread bullet list in the body naming `path:line` and what changed. After the push, call `tracker.review.resolveThread(threadId)` for every addressed thread, then `tracker.review.requestReview` again on the new HEAD. Loop back to step 4.
 
 ## Stop conditions
 

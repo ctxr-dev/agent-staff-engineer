@@ -4,7 +4,7 @@
   "title": "agent-staff-engineer ops.config",
   "description": "Contract between the portable agent bundle and any target project. Every skill, rule, template, and script reads this file via scripts/lib/schema.mjs. Projects never hand-write this file; bootstrap-ops-config produces it from live project state plus the interview answers.",
   "type": "object",
-  "required": ["project", "github", "labels", "workflow", "paths", "stack", "wiki"],
+  "required": ["project", "trackers", "labels", "workflow", "paths", "stack", "wiki"],
   "additionalProperties": false,
 
   "properties": {
@@ -59,47 +59,56 @@
       }
     },
 
-    "github": {
+    "trackers": {
       "type": "object",
-      "required": ["dev_projects", "release_projects"],
+      "required": ["dev", "release"],
       "additionalProperties": false,
+      "description": "Issue / PR / project trackers the agent operates against. `dev` hosts day-to-day issues and code review; `release` hosts release umbrellas; `observed` is a read-only array for cross-tracker lookups (e.g. during a migration or for shared libs on a different tracker). Each entry is a tracker target discriminated by the required `kind` field (github, jira, linear, gitlab).",
       "properties": {
-        "auth_login": {
-          "type": "string",
-          "description": "The gh login under which the agent operates. Informational; skills read live gh state for auth."
-        },
-        "dev_projects": {
+        "dev": { "$ref": "#/definitions/trackerTarget" },
+        "release": { "$ref": "#/definitions/trackerTarget" },
+        "observed": {
           "type": "array",
-          "description": "GitHub Projects v2 tracking dev work. Zero entries means no dev project; skills that require one will halt and ask.",
-          "items": { "$ref": "#/definitions/projectTarget" }
-        },
-        "release_projects": {
-          "type": "array",
-          "description": "GitHub Projects v2 tracking release umbrellas. Zero entries disables release-tracker.",
-          "items": { "$ref": "#/definitions/projectTarget" }
-        },
-        "observed_repos": {
-          "type": "array",
-          "description": "Additional repos the agent reads from and optionally writes to. Useful for cross-repo regression lookups or shared libs.",
-          "items": { "$ref": "#/definitions/repoTarget" },
+          "description": "Read-only tracker targets the agent may query but never mutates. Typical uses: cross-repo regression lookups, dual-reading during a tracker migration.",
+          "items": { "$ref": "#/definitions/trackerTarget" },
           "default": []
         }
       }
     },
 
-    "trackers": {
+    "workspace": {
       "type": "object",
-      "additionalProperties": true,
-      "description": "Forward-compat block for the PR 3 multi-tracker refactor. Skills can read `trackers.dev.kind` today and receive a valid string when set; the top-level `github:` block above is still the required source of truth until PR 3 flips this. Minimal shape: `trackers.dev.kind` is one of github, jira, linear, gitlab.",
+      "description": "Optional multi-repo workspace binding. When present, each member declares its own tracker(s); a branch created under that member's path routes through its tracker instead of the project-level one. Absent for single-repo projects.",
+      "required": ["members"],
+      "additionalProperties": false,
       "properties": {
-        "dev": {
-          "type": "object",
-          "additionalProperties": true,
-          "properties": {
-            "kind": {
-              "type": "string",
-              "enum": ["github", "jira", "linear", "gitlab"],
-              "description": "Tracker kind for dev issues. The dispatcher at scripts/lib/review/dispatcher.mjs picks the ReviewProvider from this value; unset/missing falls back to the legacy top-level github: block (github)."
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["path", "name", "trackers"],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Project-relative path of this workspace member. Use '.' for the primary repo.",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "description": "Short identifier for the member, used in logs and status updates.",
+                "minLength": 1
+              },
+              "trackers": {
+                "type": "object",
+                "required": ["dev"],
+                "additionalProperties": false,
+                "properties": {
+                  "dev": { "$ref": "#/definitions/trackerTarget" },
+                  "release": { "$ref": "#/definitions/trackerTarget" }
+                }
+              }
             }
           }
         }
@@ -334,7 +343,7 @@
               "type": "string",
               "enum": ["auto", "github", "none"],
               "default": "auto",
-              "description": "auto picks the impl from trackers.dev.kind via scripts/lib/review/dispatcher.mjs. github forces the GitHub impl regardless of tracker kind (used when the tracker is elsewhere but code review runs on GitHub). none is equivalent to enabled:false."
+              "description": "auto picks the impl from trackers.dev.kind via scripts/lib/trackers/dispatcher.mjs (pickReviewProvider). github forces the GitHub impl regardless of tracker kind (used when the tracker is elsewhere but code review runs on GitHub). none is equivalent to enabled:false."
             },
             "bots": {
               "type": "object",
@@ -614,7 +623,7 @@
 
   "definitions": {
     "depthValue": {
-      "description": "Observation depth for a GitHub target. `labeled:<label>` is the only parameterized form.",
+      "description": "Observation depth for a tracker target. `labeled:<label>` is the only parameterized form; it narrows operation to items carrying the named label.",
       "oneOf": [
         {
           "type": "string",
@@ -631,7 +640,7 @@
       "type": "object",
       "required": ["backlog", "in_progress", "done"],
       "additionalProperties": false,
-      "description": "Mapping of the agent's status vocabulary to the project's GitHub Project status option names.",
+      "description": "Mapping of the agent's status vocabulary to the tracker's native status names (e.g. Project v2 option names on GitHub, workflow state names on Jira/Linear, scoped label values on GitLab).",
       "properties": {
         "backlog":     { "type": "string", "minLength": 1 },
         "ready":       { "type": "string", "minLength": 1 },
@@ -641,30 +650,60 @@
       }
     },
 
-    "projectTarget": {
+    "trackerTarget": {
+      "description": "Discriminated union over the four supported tracker kinds. The required `kind` field picks the per-kind shape.",
+      "oneOf": [
+        { "$ref": "#/definitions/githubTracker" },
+        { "$ref": "#/definitions/jiraTracker" },
+        { "$ref": "#/definitions/linearTracker" },
+        { "$ref": "#/definitions/gitlabTracker" }
+      ]
+    },
+
+    "githubTracker": {
+      "type": "object",
+      "required": ["kind", "owner", "projects"],
+      "additionalProperties": false,
+      "description": "GitHub tracker target. One or more Projects v2 boards backing issues/PRs in a repo.",
+      "properties": {
+        "kind": { "const": "github" },
+        "owner": {
+          "type": "string",
+          "description": "Org or user that owns the repo and the Projects v2 boards.",
+          "minLength": 1
+        },
+        "repo": {
+          "type": "string",
+          "description": "Repo name (no owner prefix). Required for dev trackers; optional for release trackers that span multiple repos in the same org.",
+          "minLength": 1
+        },
+        "auth_login": {
+          "type": "string",
+          "description": "The gh login under which the agent operates. Informational; skills read live gh state for auth."
+        },
+        "depth": { "$ref": "#/definitions/depthValue" },
+        "projects": {
+          "type": "array",
+          "description": "GitHub Projects v2 boards this tracker owns. Zero entries disables project-field operations on this tracker.",
+          "items": { "$ref": "#/definitions/githubProjectV2" }
+        }
+      }
+    },
+
+    "githubProjectV2": {
       "type": "object",
       "required": ["owner", "number", "depth", "status_field", "status_values"],
       "additionalProperties": false,
+      "description": "One GitHub Projects v2 board bound to a githubTracker.",
       "properties": {
         "owner": {
           "type": "string",
-          "description": "Org or user that owns the project.",
+          "description": "Org or user that owns the Project v2 board (usually the same as the parent tracker's owner, but Projects v2 can span orgs).",
           "minLength": 1
         },
-        "number": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "role": {
-          "type": "string",
-          "enum": ["dev", "release"],
-          "description": "Whether this project tracks dev work or release umbrellas."
-        },
+        "number": { "type": "integer", "minimum": 1 },
         "depth": { "$ref": "#/definitions/depthValue" },
-        "status_field": {
-          "type": "string",
-          "default": "Status"
-        },
+        "status_field": { "type": "string", "default": "Status" },
         "status_values": { "$ref": "#/definitions/statusValues" },
         "fields": {
           "type": "array",
@@ -680,19 +719,74 @@
       }
     },
 
-    "repoTarget": {
+    "jiraTracker": {
       "type": "object",
-      "required": ["owner", "name", "depth"],
+      "required": ["kind", "site", "project", "status_values"],
       "additionalProperties": false,
+      "description": "Atlassian Jira Cloud tracker target. Skills authenticate via the JIRA_API_TOKEN env var (or delegate to jira-cli if present).",
       "properties": {
-        "owner": { "type": "string", "minLength": 1 },
-        "name":  { "type": "string", "minLength": 1 },
-        "scope": {
+        "kind": { "const": "jira" },
+        "site": {
           "type": "string",
-          "description": "Optional narrowing pattern. Examples: issues-only, issues-with-label:cross-repo, prs-only.",
-          "default": ""
+          "description": "Jira Cloud site hostname, e.g. acme.atlassian.net.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*\\.atlassian\\.net$"
         },
-        "depth": { "$ref": "#/definitions/depthValue" }
+        "project": {
+          "type": "string",
+          "description": "Jira project key, e.g. PLAT.",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "depth": { "$ref": "#/definitions/depthValue" },
+        "status_values": { "$ref": "#/definitions/statusValues" },
+        "labels_field": {
+          "type": "string",
+          "description": "Jira custom field holding the agent's label taxonomy. Default is the built-in 'labels' field.",
+          "default": "labels"
+        }
+      }
+    },
+
+    "linearTracker": {
+      "type": "object",
+      "required": ["kind", "workspace", "team", "status_values"],
+      "additionalProperties": false,
+      "description": "Linear tracker target. Skills authenticate via the LINEAR_API_KEY env var.",
+      "properties": {
+        "kind": { "const": "linear" },
+        "workspace": {
+          "type": "string",
+          "description": "Linear workspace URL key (the part of linear.app/<workspace>).",
+          "minLength": 1
+        },
+        "team": {
+          "type": "string",
+          "description": "Linear team key (usually 2-5 uppercase letters shown in issue IDs like ENG-123).",
+          "pattern": "^[A-Z][A-Z0-9]{1,9}$"
+        },
+        "depth": { "$ref": "#/definitions/depthValue" },
+        "status_values": { "$ref": "#/definitions/statusValues" }
+      }
+    },
+
+    "gitlabTracker": {
+      "type": "object",
+      "required": ["kind", "host", "project_path", "status_values"],
+      "additionalProperties": false,
+      "description": "GitLab tracker target (gitlab.com or self-hosted). Skills authenticate via the GITLAB_TOKEN env var (or delegate to glab if present).",
+      "properties": {
+        "kind": { "const": "gitlab" },
+        "host": {
+          "type": "string",
+          "description": "GitLab host, e.g. gitlab.com or gitlab.acme.internal.",
+          "minLength": 1
+        },
+        "project_path": {
+          "type": "string",
+          "description": "Full GitLab project path including groups and subgroups, e.g. acme/platform/billing.",
+          "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$"
+        },
+        "depth": { "$ref": "#/definitions/depthValue" },
+        "status_values": { "$ref": "#/definitions/statusValues" }
       }
     }
   }
