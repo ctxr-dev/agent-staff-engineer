@@ -339,7 +339,7 @@
             "bots": {
               "type": "object",
               "additionalProperties": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-              "description": "Per-kind map of reviewer bot LOGINS that requestReview registers. For GitHub each value is the bot's login (e.g. copilot-pull-request-reviewer), portable across repos. The GitHub provider resolves login -> GraphQL node ID at request time by probing the PR's prior reviews; see rules/pr-iteration.md for the resolution recipe. Config stores logins (not node IDs) because node IDs vary across installations and would pin the config to a specific GitHub deployment.",
+              "description": "Per-kind map of reviewer bot LOGINS that requestReview registers. For GitHub each value is the bot's login (e.g. copilot-pull-request-reviewer), portable across repos. The pr-iteration orchestration layer resolves login -> GraphQL node ID before invoking the GitHub provider (which itself requires ctx.botIds as node IDs); see rules/pr-iteration.md for the resolution recipe. Config stores logins (not node IDs) because node IDs vary across installations and would pin the config to a specific GitHub deployment.",
               "default": { "github": ["copilot-pull-request-reviewer"] }
             },
             "poll_interval_seconds": {

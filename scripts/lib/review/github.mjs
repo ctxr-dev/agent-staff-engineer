@@ -95,8 +95,14 @@ async function githubPollForReview(ctx) {
   const threads = pr.reviewThreads.nodes;
   const unresolvedCount = threads.filter((t) => !t.isResolved).length;
   const rawState = pr.commits.nodes[0]?.commit?.statusCheckRollup?.state;
+  // Prefer the PR's server-side current HEAD SHA over `ctx.headSha`:
+  // if the caller forgot to refresh `ctx` after a push, the ctx value
+  // is stale and this comparison would wrongly report
+  // `reviewOnHead: false`, keeping the loop polling. Fall back to
+  // ctx.headSha only when the query didn't surface a commit (rare).
+  const prHeadSha = pr.commits.nodes[0]?.commit?.oid ?? headSha;
   const reviewOnHead = pr.reviews.nodes.some(
-    (r) => r.commit?.oid === headSha,
+    (r) => r.commit?.oid === prHeadSha,
   );
   return { ciState: normalizeCiState(rawState), unresolvedCount, reviewOnHead };
 }

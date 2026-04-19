@@ -174,9 +174,19 @@ d = json.load(sys.stdin)
 threads = d['data']['repository']['pullRequest']['reviewThreads']['nodes']
 for t in threads:
     if t['isResolved']: continue
-    c = t['comments']['nodes'][0]
-    print(f\"--- {t['id']}  {t['path']}:{t['line']}  on {c.get('commit',{}).get('oid','?')[:12] if c.get('commit') else '?'} ---\")
-    for line in c['body'].split('\n'):
+    # A thread's comments.nodes can be empty when the first comment has
+    # been deleted or hidden. Guard so the whole summary doesn't crash
+    # on one borderline thread; emit a placeholder instead.
+    comments = t['comments']['nodes']
+    if comments:
+        c = comments[0]
+        commit_oid = c.get('commit', {}).get('oid', '?')[:12] if c.get('commit') else '?'
+        body = c.get('body') or ''
+    else:
+        commit_oid = '?'
+        body = '[comment body unavailable]'
+    print(f\"--- {t['id']}  {t['path']}:{t['line']}  on {commit_oid} ---\")
+    for line in body.split('\n'):
         print(f'  {line}')
     print()
 "

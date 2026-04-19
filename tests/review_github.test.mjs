@@ -61,6 +61,13 @@ case "$FAKE_GH_FIXTURE" in
   poll_error)
     printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]},"reviews":{"nodes":[]},"commits":{"nodes":[{"commit":{"oid":"HEAD_SHA","statusCheckRollup":{"state":"ERROR"}}}]}}}}}'
     ;;
+  poll_stale_ctx_head)
+    # Review posted on the PR's CURRENT HEAD (FRESH_SHA), but the caller
+    # passed a stale ctx.headSha (STALE_SHA). pollForReview should still
+    # report reviewOnHead=true because it uses the PR's fetched HEAD,
+    # not ctx.headSha, as ground truth.
+    printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]},"reviews":{"nodes":[{"commit":{"oid":"FRESH_SHA"},"author":{"login":"copilot-pull-request-reviewer"}}]},"commits":{"nodes":[{"commit":{"oid":"FRESH_SHA","statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}'
+    ;;
   fetch_threads_mixed)
     printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"T1","isResolved":false,"isOutdated":false,"path":"src/a.js","line":42,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer"},"body":"prefer const","commit":{"oid":"OLD_SHA"},"createdAt":"2026-04-19T00:00:00Z"}]}},{"id":"T2","isResolved":true,"isOutdated":false,"path":"src/b.js","line":10,"comments":{"nodes":[{"author":{"login":"copilot-pull-request-reviewer"},"body":"resolved already","commit":{"oid":"OLD_SHA"},"createdAt":"2026-04-19T00:00:00Z"}]}},{"id":"T3","isResolved":false,"isOutdated":true,"path":"src/c.js","line":7,"comments":{"nodes":[]}},{"id":"T4","isResolved":false,"isOutdated":false,"path":"src/u.js","line":1,"comments":{"nodes":[{"author":null,"body":"unicode: e accent and CJK chars","commit":{"oid":"SHA_U"},"createdAt":"2026-04-19T00:00:00Z"}]}}]}}}}}'
     ;;
@@ -227,6 +234,23 @@ describe("github review provider: pollForReview", skipOpts, () => {
     assert.equal(result.ciState, "FAILURE");
     assert.equal(result.unresolvedCount, 2);
     assert.equal(result.reviewOnHead, false);
+  });
+
+  it("uses the PR's fetched HEAD, not ctx.headSha, when classifying review-on-head", async () => {
+    // Regression test for review-round-3 T10: caller passed a stale
+    // ctx.headSha. The review is on the PR's current HEAD. Without the
+    // fix, reviewOnHead would wrongly be false because comparison used
+    // the stale ctx value.
+    const { result } = await withFakeGh("poll_stale_ctx_head", () =>
+      makeGithubReviewProvider().pollForReview({
+        owner: "o",
+        repo: "r",
+        prNumber: 1,
+        headSha: "STALE_SHA",
+      }),
+    );
+    assert.equal(result.reviewOnHead, true, "should trust the PR's fetched HEAD, not stale ctx");
+    assert.equal(result.ciState, "SUCCESS");
   });
 
   it("transmits owner/repo/number variables and the reviewThreads query", async () => {
