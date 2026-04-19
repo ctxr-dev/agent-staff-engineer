@@ -508,12 +508,15 @@ describe("github review provider: resolveThread", skipOpts, () => {
     assert.match(log, /tid=PRRT_abc/, "threadId must be passed through to the mutation");
   });
 
-  it("rejects an empty threadId without hitting gh", async () => {
+  it("rejects an empty or whitespace-only threadId without hitting gh", async () => {
     const provider = makeGithubReviewProvider();
-    await assert.rejects(
-      () => provider.resolveThread({}, ""),
-      /threadId must be a non-empty string/,
-    );
+    for (const bad of ["", "   ", "\t\n", null, undefined, 42]) {
+      await assert.rejects(
+        () => provider.resolveThread({}, bad),
+        /threadId must be a non-empty string/,
+        `${JSON.stringify(bad)} should be rejected`,
+      );
+    }
   });
 });
 

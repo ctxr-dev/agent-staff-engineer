@@ -258,7 +258,11 @@ async function githubFetchUnresolvedThreads(ctx) {
 }
 
 async function githubResolveThread(_ctx, threadId) {
-  if (typeof threadId !== "string" || threadId.length === 0) {
+  // Reject whitespace-only threadIds in addition to empty strings,
+  // matching the stricter pattern botIds validation uses. Without
+  // this, "   " would be sent to GitHub and bounce as an opaque
+  // GraphQL "expected String" error.
+  if (typeof threadId !== "string" || threadId.trim().length === 0) {
     throw new TypeError("resolveThread: threadId must be a non-empty string");
   }
   const mutation = `
