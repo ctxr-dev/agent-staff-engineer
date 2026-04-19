@@ -263,19 +263,25 @@ if (opsConfig && "github" in opsConfig) {
   // relies on the user remembering the bundle location AND that
   // install.mjs is a Node script, not an executable on PATH.
   //
-  // Each path is POSIX-shell-quoted via shellQuote() so paths with
-  // spaces, tabs, or shell metacharacters (common on macOS where
-  // users work under "~/Library/Application Support/...") survive the
-  // copy-paste round-trip. Without this, an unquoted path-with-space
-  // would word-split and break the re-run.
+  // Platform-aware quoting: POSIX shells (bash/zsh/sh on mac/linux)
+  // use single-quote escaping with the `'"'"'` dance; PowerShell
+  // uses single-quote escaping by doubling the quote, and uses
+  // Remove-Item instead of rm. cmd.exe doesn't support single quotes
+  // at all, so the Windows branch targets PowerShell (the default
+  // modern Windows shell).
   const installScriptPath = join(BUNDLE_ABS, "scripts", "install.mjs");
+  const onWindows = process.platform === "win32";
+  const quote = onWindows ? psQuote : shellQuote;
+  const deleteCmd = onWindows
+    ? `Remove-Item -LiteralPath ${quote(opsConfigPath)}`
+    : `rm ${quote(opsConfigPath)}`;
   const rerunCommand =
-    `node ${shellQuote(installScriptPath)} --target ${shellQuote(TARGET)} --apply`;
+    `node ${quote(installScriptPath)} --target ${quote(TARGET)} --apply`;
   process.stderr.write(
     `ops.config.json uses the legacy 'github:' shape which this release no longer supports.\n` +
     `A backup of the existing file was written to ${backupPath}.\n` +
     `Delete ${opsConfigPath} and re-run install to regenerate it via the new bootstrap interview (writes a 'trackers:' block).\n` +
-    `  rm ${shellQuote(opsConfigPath)}\n` +
+    `  ${deleteCmd}\n` +
     `  ${rerunCommand}\n`,
   );
   process.exit(1);
@@ -285,9 +291,7 @@ if (opsConfig && "github" in opsConfig) {
  * Quote a string for POSIX shell consumption. Wraps in single quotes
  * and escapes any embedded `'` via the classic `'"'"'` dance. Safe
  * against spaces, tabs, `$`, backticks, and every other metacharacter;
- * single-quoted strings in POSIX shells are literal. Used by the
- * legacy-refuse remediation so its copy-paste re-run survives paths
- * that contain whitespace (macOS "Application Support" etc.).
+ * single-quoted strings in POSIX shells are literal.
  */
 function shellQuote(s) {
   const str = String(s);
@@ -296,6 +300,22 @@ function shellQuote(s) {
   // on common cases. Otherwise single-quote with the escape dance.
   if (/^[A-Za-z0-9_./+\-@:=]+$/.test(str)) return str;
   return `'${str.replace(/'/g, "'\"'\"'")}'`;
+}
+
+/**
+ * Quote a string for PowerShell (the default modern Windows shell).
+ * Single-quoted strings in PowerShell are literal; an embedded single
+ * quote is escaped by doubling it. This is NOT compatible with
+ * cmd.exe (which treats ' as a literal character, not a quote), but
+ * PowerShell is the Windows default on every currently-supported
+ * Windows release and is what `node` + `gh` users will invoke.
+ */
+function psQuote(s) {
+  const str = String(s);
+  // Same readable-fast-path as POSIX, plus backslash which is common
+  // in Windows paths and safe inside a single-quoted PowerShell string.
+  if (/^[A-Za-z0-9_./\\+\-@:=]+$/.test(str)) return str;
+  return `'${str.replace(/'/g, "''")}'`;
 }
 
 // Dependency check: the LLM-wiki provider skill must be present before the
