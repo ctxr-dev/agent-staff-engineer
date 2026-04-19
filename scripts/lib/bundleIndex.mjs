@@ -34,22 +34,45 @@ export function extractIndexLinks(text) {
   const out = new Set();
   let m;
   while ((m = LINK_RE.exec(text)) !== null) {
-    const target = m[1];
-    if (/^https?:\/\//.test(target)) continue;
-    if (target.startsWith("mailto:")) continue;
-    // Reject anything that escapes the bundle root. The validator
-    // later calls readFile(resolve(BUNDLE_ROOT, target)), and without
-    // this filter an absolute path ("/etc/passwd") or a parent-traversal
-    // ("../../host-file") would be read off the filesystem, making CI
-    // state depend on host layout. Accept only paths that stay inside
-    // the bundle: no leading "/", no ".." segment. This is a defense-in-
-    // depth filter; the validator still re-checks via readFile exist.
-    if (target.startsWith("/")) continue;
-    const segments = target.split("/");
-    if (segments.some((s) => s === "..")) continue;
-    out.add(target);
+    const raw = m[1];
+    if (/^https?:\/\//.test(raw)) continue;
+    if (raw.startsWith("mailto:")) continue;
+    const canonical = canonicalizeTarget(raw);
+    if (canonical === null) continue;
+    out.add(canonical);
   }
   return out;
+}
+
+/**
+ * Normalise a raw link target to the canonical bundle-relative form
+ * the orphan check compares against (`skills/foo/SKILL.md`), OR return
+ * `null` if the target cannot safely live inside the bundle.
+ *
+ * Rejections (returns null):
+ *   - leading "/" (POSIX absolute)
+ *   - Windows drive prefix ("C:\..." or "C:/...")
+ *   - any ".." segment after separator unification
+ *   - any path that, after normalisation, is empty
+ *
+ * Transformations:
+ *   - "\" separators (Windows-style) unified to "/"
+ *   - leading "./" stripped (so `./foo.md` and `foo.md` both canonicalise
+ *     to `foo.md`, matching the orphan check's canonical form)
+ *
+ * The canonicalisation is cheap and happens at parse time, not at
+ * validate-match time, so downstream callers can use simple
+ * `Set.has(rel)` lookups without per-call normalisation.
+ */
+function canonicalizeTarget(raw) {
+  if (raw.startsWith("/")) return null;                    // POSIX absolute
+  if (/^[a-zA-Z]:[\\/]/.test(raw)) return null;            // Windows drive
+  let t = raw.replace(/\\/g, "/");                         // unify separators
+  while (t.startsWith("./")) t = t.slice(2);               // strip leading ./
+  if (t.length === 0) return null;
+  const segments = t.split("/");
+  if (segments.some((s) => s === "..")) return null;       // traversal
+  return t;
 }
 
 /**

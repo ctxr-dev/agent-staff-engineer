@@ -76,25 +76,49 @@ describe("extractIndexLinks: regex behaviour (pinned fixtures)", () => {
     const out = extractIndexLinks("[x](#only-anchor)");
     assert.equal(out.size, 0);
   });
-  it("rejects absolute paths (would escape bundle root)", () => {
+  it("rejects POSIX-absolute paths (would escape bundle root)", () => {
     const out = extractIndexLinks("[x](/etc/passwd) [y](/absolute/in/repo.md)");
     assert.equal(out.size, 0, "leading '/' must not produce a reference; avoids host-dependent reads in CI");
   });
-  it("rejects parent-traversal paths (would escape bundle root)", () => {
+  it("rejects Windows drive-letter paths", () => {
+    const out = extractIndexLinks("[x](C:\\Windows\\win.ini) [y](D:/foo/bar.md)");
+    assert.equal(out.size, 0, "drive-letter prefixes must not produce references");
+  });
+  it("rejects parent-traversal regardless of separator style", () => {
+    // Includes POSIX '/', Windows '\\', and mixed forms. On the
+    // target's eventual filesystem (CI is Linux), backslashes may not
+    // literally escape the root, but normalising here makes the
+    // invariant hold cross-platform and defends against copy-pasted
+    // Windows paths in a contributor's editor.
     const cases = [
       "[x](../outside.md)",
       "[y](a/../../escape.md)",
       "[z](a/..)",
+      "[w](..\\outside.md)",
+      "[v](a\\..\\..\\escape.md)",
+      "[u](a\\..)",
+      "[s](sub/..\\outside.md)",
     ];
     for (const text of cases) {
       const out = extractIndexLinks(text);
-      assert.equal(out.size, 0, `'..' segment in ${text} must not produce a reference`);
+      assert.equal(
+        out.size,
+        0,
+        `parent traversal in ${text} must not produce a reference`,
+      );
     }
   });
-  it("accepts legitimate relative paths with `.` or subdirs (no '..')", () => {
-    const out = extractIndexLinks("[x](./same-dir.md) [y](sub/dir/file.md)");
-    assert.ok(out.has("./same-dir.md"));
+  it("canonicalises leading './' (so './foo' and 'foo' are interchangeable)", () => {
+    const out = extractIndexLinks("[x](./same-dir.md) [y](sub/dir/file.md) [z](././still-here.md)");
+    assert.ok(out.has("same-dir.md"), "leading './' must be stripped");
+    assert.ok(!out.has("./same-dir.md"), "non-canonical form must NOT be present");
     assert.ok(out.has("sub/dir/file.md"));
+    assert.ok(out.has("still-here.md"), "repeated './' prefixes all stripped");
+  });
+  it("unifies backslash separators to forward slashes (canonical POSIX form)", () => {
+    const out = extractIndexLinks("[x](sub\\dir\\file.md)");
+    assert.ok(out.has("sub/dir/file.md"), "backslashes must canonicalise to POSIX form for Set lookup");
+    assert.ok(!out.has("sub\\dir\\file.md"), "non-canonical form must NOT be present");
   });
   it("extracts multiple links from mixed prose", () => {
     const text = "See [a](one.md) and [b](two.md#x); not [this](https://y) and not ![img](p.png).";
