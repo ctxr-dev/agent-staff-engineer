@@ -262,16 +262,40 @@ if (opsConfig && "github" in opsConfig) {
   // A naked `install.mjs --apply` is what we said before, but it
   // relies on the user remembering the bundle location AND that
   // install.mjs is a Node script, not an executable on PATH.
+  //
+  // Each path is POSIX-shell-quoted via shellQuote() so paths with
+  // spaces, tabs, or shell metacharacters (common on macOS where
+  // users work under "~/Library/Application Support/...") survive the
+  // copy-paste round-trip. Without this, an unquoted path-with-space
+  // would word-split and break the re-run.
   const installScriptPath = join(BUNDLE_ABS, "scripts", "install.mjs");
-  const rerunCommand = `node ${installScriptPath} --target ${TARGET} --apply`;
+  const rerunCommand =
+    `node ${shellQuote(installScriptPath)} --target ${shellQuote(TARGET)} --apply`;
   process.stderr.write(
     `ops.config.json uses the legacy 'github:' shape which this release no longer supports.\n` +
     `A backup of the existing file was written to ${backupPath}.\n` +
     `Delete ${opsConfigPath} and re-run install to regenerate it via the new bootstrap interview (writes a 'trackers:' block).\n` +
-    `  rm ${opsConfigPath}\n` +
+    `  rm ${shellQuote(opsConfigPath)}\n` +
     `  ${rerunCommand}\n`,
   );
   process.exit(1);
+}
+
+/**
+ * Quote a string for POSIX shell consumption. Wraps in single quotes
+ * and escapes any embedded `'` via the classic `'"'"'` dance. Safe
+ * against spaces, tabs, `$`, backticks, and every other metacharacter;
+ * single-quoted strings in POSIX shells are literal. Used by the
+ * legacy-refuse remediation so its copy-paste re-run survives paths
+ * that contain whitespace (macOS "Application Support" etc.).
+ */
+function shellQuote(s) {
+  const str = String(s);
+  // If the string is already safe (alphanumerics, slashes, dots,
+  // dashes, underscores), return it as-is to keep the output readable
+  // on common cases. Otherwise single-quote with the escape dance.
+  if (/^[A-Za-z0-9_./+\-@:=]+$/.test(str)) return str;
+  return `'${str.replace(/'/g, "'\"'\"'")}'`;
 }
 
 // Dependency check: the LLM-wiki provider skill must be present before the

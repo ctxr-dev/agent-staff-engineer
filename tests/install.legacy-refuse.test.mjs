@@ -112,6 +112,38 @@ describe("install: legacy `github:` config shape is hard-refused", () => {
     assert.equal(current, originalContent);
   });
 
+  it("shell-quotes paths in the remediation so a target with spaces survives copy-paste", async () => {
+    // Round-15 T1: previously the `rm <path>` / `node <...> --target
+    // <path>` remediation was printed unquoted, so a target under
+    // e.g. "~/Library/Application Support/..." would word-split and
+    // break the copy-paste re-run. Spin up a dedicated scratch
+    // target whose directory name contains spaces and assert the
+    // stderr single-quotes both the rm path and the --target path.
+    const spaceScratch = await mkdtemp(join(tmpdir(), "install legacy spaces "));
+    const spaceBundle = join(spaceScratch, "bundle with space");
+    const spaceTarget = join(spaceScratch, "target with space");
+    try {
+      await mkdir(spaceBundle, { recursive: true });
+      await mkdir(join(spaceTarget, ".claude"), { recursive: true });
+      await makeBundle(spaceBundle);
+      await writeFile(
+        join(spaceTarget, ".claude", "ops.config.json"),
+        JSON.stringify({ project: {}, github: {} }, null, 2),
+        "utf8",
+      );
+      const { code, stderr } = runInstall(spaceBundle, spaceTarget, ["--apply"]);
+      assert.notEqual(code, 0);
+      // Both paths show up single-quoted. The quoted segments contain
+      // "target with space" / "bundle with space" literally; word
+      // splitting would otherwise break the copy-paste.
+      assert.match(stderr, /rm '[^']*target with space[^']*'/);
+      assert.match(stderr, /--target '[^']*target with space[^']*' --apply/);
+      assert.match(stderr, /node '[^']*bundle with space[^']*install\.mjs'/);
+    } finally {
+      await rm(spaceScratch, { recursive: true, force: true });
+    }
+  });
+
   it("survives a second invocation by writing a distinct backup (not clobbering the first)", async () => {
     const beforeFiles = new Set(await readdir(join(targetRoot, ".claude")));
     const beforeBackups = [...beforeFiles].filter((n) =>
