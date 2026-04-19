@@ -28,9 +28,10 @@ on:
           - minor
           - major
 
-permissions:
-  contents: write
-  pull-requests: write
+# Tighten default permissions at workflow scope to nothing; grant
+# only what each job needs explicitly below. Jobs added later don't
+# silently inherit write.
+permissions: {}
 
 # Serialize release dispatches so two operators can't race on the
 # same `release/v<version>` branch. A queued run picks up after
@@ -43,6 +44,9 @@ jobs:
   open-release-pr:
     name: Open release PR
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push release/v<version> branch
+      pull-requests: write   # open/edit the release PR
 
     steps:
       - name: Refuse dispatch from non-main refs
@@ -82,7 +86,17 @@ jobs:
 
       - name: Bump version on a release branch
         id: bump
+        env:
+          # Pass `inputs.bump` via env rather than direct `${{ }}`
+          # interpolation into the shell body. The `choice` input is
+          # fixed to patch/minor/major today, but a later refactor to
+          # `type: string` would silently open a script-injection
+          # sink. The env + explicit allowlist below closes the class.
+          BUMP: ${{ inputs.bump }}
         run: |
+          case "$BUMP" in patch|minor|major) ;; *)
+            echo "::error::unexpected bump value: $BUMP"; exit 1 ;;
+          esac
           # Read current to detect no-op bumps (shouldn't happen with
           # npm version <bump>, but bail loudly if it does).
           BEFORE=$(node -p "require('./package.json').version")
@@ -94,7 +108,7 @@ jobs:
           # Note: this repo also has a `prepare: husky` script; npm
           # version does not invoke `prepare`, but --ignore-scripts
           # makes the guarantee explicit.
-          npm version ${{ inputs.bump }} --no-git-tag-version --ignore-scripts
+          npm version "$BUMP" --no-git-tag-version --ignore-scripts
           AFTER=$(node -p "require('./package.json').version")
           if [ "$BEFORE" = "$AFTER" ]; then
             echo "::error::npm version produced no change ($BEFORE == $AFTER)"
@@ -131,9 +145,24 @@ jobs:
           # ref:sha form so the lease is actually enforced against
           # a known SHA. If the branch doesn't exist on the remote
           # yet, a plain push is sufficient and safe.
+          #
+          # Additional guard: if a reviewer has pushed fix commits
+          # to the existing release PR, force-pushing here would
+          # silently drop them. Detect the "more than one commit
+          # ahead of main" state and refuse loudly so the operator
+          # merges the existing PR (or deletes the branch) before
+          # re-dispatching. 0 or 1 commit ahead = safe overwrite
+          # (no human edits, just a prior bump); >1 = unsafe.
           if git ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then
-            git fetch origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+            git fetch origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" "+refs/heads/main:refs/remotes/origin/main"
             REMOTE_SHA=$(git rev-parse "refs/remotes/origin/${BRANCH}")
+            MAIN_SHA=$(git rev-parse "refs/remotes/origin/main")
+            AHEAD=$(git rev-list --count "${MAIN_SHA}..${REMOTE_SHA}" 2>/dev/null || echo "many")
+            if [ "$AHEAD" != "0" ] && [ "$AHEAD" != "1" ]; then
+              echo "::error::Remote branch ${BRANCH} is ${AHEAD} commits ahead of main; force-pushing would clobber human edits on the existing release PR."
+              echo "::error::Merge or close the existing release PR first, then re-dispatch. If the branch is stale, 'git push origin --delete ${BRANCH}' and re-run."
+              exit 1
+            fi
             git push --force-with-lease="refs/heads/${BRANCH}:${REMOTE_SHA}" origin "${BRANCH}"
           else
             git push origin "${BRANCH}"

@@ -32,8 +32,10 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
+# Tighten default permissions at workflow scope to nothing; the
+# one job that needs to push a tag grants itself `contents: write`
+# explicitly below. Future jobs don't silently inherit write.
+permissions: {}
 
 # Serialize pushes to main so two concurrent release merges can't
 # both observe the tag as absent and then race on `git push`.
@@ -47,6 +49,8 @@ jobs:
   maybe-tag:
     name: Tag current main if package.json version is new
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push refs/tags/v<version>
 
     steps:
       - uses: actions/checkout@v4
@@ -106,14 +110,14 @@ jobs:
             echo "Previous package.json not readable at ${GITHUB_EVENT_BEFORE}; treating as change."
             exit 0
           fi
-          PREV_VERSION=$(printf '%s' "$PREV_JSON" | node -e "
-            let buf = ''
-            process.stdin.on('data', c => buf += c)
-            process.stdin.on('end', () => {
-              try { process.stdout.write(JSON.parse(buf).version || '') }
-              catch { process.stdout.write('') }
-            })
-          ")
+          # Parse the prior package.json version via a direct
+          # `node -e` with the JSON passed as argv, not via stdin.
+          # The stdin-streaming form buys nothing when the content
+          # is already a shell variable and obscures intent. A
+          # parse error falls back to the empty string, which the
+          # change check below treats as "version unknown, assume
+          # changed".
+          PREV_VERSION=$(PREV_JSON="$PREV_JSON" node -e 'try { process.stdout.write(JSON.parse(process.env.PREV_JSON).version || "") } catch { process.stdout.write("") }')
           if [ -z "$PREV_VERSION" ] || [ "$PREV_VERSION" != "$CURRENT_VERSION" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "Version changed: ${PREV_VERSION:-<unknown>} -> ${CURRENT_VERSION}; this is a release commit."
@@ -125,35 +129,26 @@ jobs:
       - name: Check whether the tag already exists on the remote
         id: check
         if: steps.version.outputs.changed == 'true'
+        shell: bash
         run: |
+          set -euo pipefail
           TAG="${{ steps.version.outputs.tag }}"
           HEAD_SHA=$(git rev-parse HEAD)
 
-          # `git ls-remote --tags` distinguishes tag shapes:
-          #   - annotated tag: two lines, tag OBJECT sha
-          #     (refs/tags/<tag>) and dereferenced commit sha
-          #     (refs/tags/<tag>^{})
-          #   - lightweight tag: one line, commit sha under
-          #     refs/tags/<tag>
-          # Filtering on the exact refname (refs/tags/<tag>)
-          # suppresses the ^{} line, so we MUST ask for both
-          # refspecs explicitly. Otherwise the comparison below
-          # would pick the tag-object sha on annotated tags and
-          # always fail the legitimate-rerun equality check.
-          REMOTE_OUT=$(git ls-remote --tags origin \
-            "refs/tags/${TAG}" \
-            "refs/tags/${TAG}^{}" \
-            2>/dev/null || true)
-          if [ -z "$REMOTE_OUT" ]; then
+          # Query for the dereferenced commit sha first (annotated
+          # tag shape). If the tag is annotated, this returns its
+          # commit; if absent OR lightweight, this returns nothing,
+          # and we fall back to the bare refspec (commit sha for
+          # lightweight tags). Two narrow calls beat parsing a
+          # fragile `^{}`-suffix regex on a combined ls-remote.
+          REMOTE_SHA=$(git ls-remote --tags origin "refs/tags/${TAG}^{}" 2>/dev/null | awk '{print $1; exit}')
+          if [ -z "$REMOTE_SHA" ]; then
+            REMOTE_SHA=$(git ls-remote --tags origin "refs/tags/${TAG}" 2>/dev/null | awk '{print $1; exit}')
+          fi
+
+          if [ -z "$REMOTE_SHA" ]; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
             exit 0
-          fi
-          # Prefer the dereferenced sha (commit) when the remote
-          # returns both. Fall back to the single-line form for
-          # lightweight tags.
-          REMOTE_SHA=$(echo "$REMOTE_OUT" | awk '/\^\{\}$/ {print $1}')
-          if [ -z "$REMOTE_SHA" ]; then
-            REMOTE_SHA=$(echo "$REMOTE_OUT" | awk '{print $1; exit}')
           fi
 
           if [ "$REMOTE_SHA" = "$HEAD_SHA" ]; then
@@ -188,8 +183,14 @@ jobs:
           # ls-remote check above and this push. We only swallow the
           # specific "already exists" failure; any other push error
           # still surfaces.
+          #
+          # LC_ALL=C pins git's error text to the C locale so the
+          # grep below is not dependent on the runner's locale.
+          # Without this, a localised runner would turn the race
+          # path into a hard failure because the English substring
+          # "already exists" would be absent.
           set +e
-          PUSH_OUT=$(git push origin "refs/tags/${TAG}" 2>&1)
+          PUSH_OUT=$(LC_ALL=C git push origin "refs/tags/${TAG}" 2>&1)
           PUSH_STATUS=$?
           set -e
           echo "$PUSH_OUT"
@@ -204,13 +205,12 @@ jobs:
             # their commit, not ours). Re-read the remote tag and
             # compare to HEAD before declaring success.
             HEAD_SHA=$(git rev-parse HEAD)
-            VERIFY_OUT=$(git ls-remote --tags origin \
-              "refs/tags/${TAG}" \
-              "refs/tags/${TAG}^{}" \
-              2>/dev/null || true)
-            VERIFY_SHA=$(echo "$VERIFY_OUT" | awk '/\^\{\}$/ {print $1}')
+            # Same two-call pattern as the `check` step: prefer the
+            # dereferenced commit sha (annotated tag); fall back to
+            # the bare refspec (lightweight tag).
+            VERIFY_SHA=$(git ls-remote --tags origin "refs/tags/${TAG}^{}" 2>/dev/null | awk '{print $1; exit}')
             if [ -z "$VERIFY_SHA" ]; then
-              VERIFY_SHA=$(echo "$VERIFY_OUT" | awk '{print $1; exit}')
+              VERIFY_SHA=$(git ls-remote --tags origin "refs/tags/${TAG}" 2>/dev/null | awk '{print $1; exit}')
             fi
             if [ "$VERIFY_SHA" = "$HEAD_SHA" ]; then
               echo "Tag ${TAG} was created concurrently at HEAD ($HEAD_SHA); treating as success."

@@ -106,8 +106,8 @@ See [GitHub Releases](https://github.com/ctxr-dev/agent-staff-engineer/releases)
 
 ### Troubleshooting
 
-- **Release workflow fails with "dispatched from non-main ref"**: you selected a feature branch in the Actions UI. Re-dispatch with `main`.
-- **`tag-on-main` fails with "Tag vX.Y.Z exists but points at …"**: a stale or orphan tag from a prior failed release. Delete and re-run:
+- **Release workflow fails with "Release workflow must be dispatched from main"**: you selected a feature branch in the Actions UI. Re-dispatch with `main`.
+- **`tag-on-main` fails with "Tag vX.Y.Z exists on the remote but points at …"**: a stale or orphan tag from a prior failed release. Delete and re-run:
 
   ```bash
   git push origin --delete vX.Y.Z

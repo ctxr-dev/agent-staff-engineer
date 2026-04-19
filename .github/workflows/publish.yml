@@ -5,13 +5,17 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Tighten workflow-default permissions to nothing; the publish job
+# grants itself only what it needs. Jobs added later don't inherit.
+permissions: {}
+
 jobs:
   publish:
     name: Publish
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write       # npm --provenance OIDC
 
     steps:
       - name: Refuse non-tag refs
