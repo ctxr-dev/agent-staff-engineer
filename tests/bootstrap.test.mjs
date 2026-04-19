@@ -6,6 +6,7 @@ import {
   parseObservedGithubRepos,
   inferTrackerKind,
   defaultTrackerTarget,
+  isOnPath,
   pickDefaults,
   compose,
   cadenceToIntent,
@@ -119,6 +120,7 @@ describe("bootstrap.defaultTrackerTarget", () => {
     assert.equal(t.owner, "acme");
     assert.equal(t.repo, "foo");
     assert.equal(t.auth_login, "jane");
+    assert.equal(t.depth, "full", "dev tracker-level depth must be full");
     assert.equal(t.projects.length, 1);
     assert.equal(t.projects[0].number, 1);
     assert.equal(t.projects[0].depth, "full");
@@ -128,6 +130,11 @@ describe("bootstrap.defaultTrackerTarget", () => {
     const t = defaultTrackerTarget("github", "release", d);
     assert.equal(t.kind, "github");
     assert.equal("repo" in t, false);
+    // Round-1 T6: release tracker-level depth mirrors the bound
+    // Project v2's umbrella-only depth. Previously the tracker was
+    // hardcoded to "full", which let an accepting-defaults user write
+    // to every item in the release repo. Least-privilege default.
+    assert.equal(t.depth, "umbrella-only", "release tracker-level depth must be umbrella-only");
     assert.equal(t.projects[0].depth, "umbrella-only");
   });
 
@@ -153,6 +160,33 @@ describe("bootstrap.defaultTrackerTarget", () => {
 
   it("throws on unsupported kinds", () => {
     assert.throws(() => defaultTrackerTarget("bitbucket", "dev", d), /unsupported kind/);
+  });
+});
+
+describe("bootstrap.isOnPath (Node-native PATH search)", () => {
+  // Regression test for round-1 T4: previously shelled out to
+  // `command -v` which is a POSIX builtin, unavailable on Windows
+  // shells. The Node-native version iterates PATH and stats each
+  // candidate, honouring PATHEXT on win32.
+  it("returns true for 'node' (guaranteed on this test runner's PATH)", () => {
+    assert.equal(isOnPath("node"), true);
+  });
+
+  it("returns false for a sentinel command that cannot exist on PATH", () => {
+    // Long random-ish suffix makes accidental collisions astronomically
+    // unlikely even on a developer machine with many tools installed.
+    assert.equal(isOnPath("this-binary-cannot-possibly-exist-x7a3z9k2q4"), false);
+  });
+
+  it("returns false when PATH is empty (short-circuit, no filesystem stats)", () => {
+    const savedPath = process.env.PATH;
+    process.env.PATH = "";
+    try {
+      assert.equal(isOnPath("node"), false);
+    } finally {
+      if (savedPath === undefined) delete process.env.PATH;
+      else process.env.PATH = savedPath;
+    }
   });
 });
 

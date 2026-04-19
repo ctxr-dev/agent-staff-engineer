@@ -15,7 +15,8 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { spawnSync } from "node:child_process";
 import { readdir } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { statSync } from "node:fs";
+import { delimiter, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { homedir } from "node:os";
 import { preflight } from "./preflight.mjs";
@@ -251,17 +252,48 @@ export function detectTrackerHints() {
 }
 
 function fileExistsSync(path) {
+  // Node-native. Previously shelled out to POSIX `test -f`, which
+  // breaks on Windows and on any environment without a PATH-resolved
+  // `test`. fs.statSync is available everywhere Node runs; the
+  // isFile() guard distinguishes a file from a directory with the
+  // same name (e.g. a user who created ~/.config/jira/ as a dir but
+  // no config.yml).
   try {
-    const r = spawnSync("test", ["-f", path], { stdio: "ignore" });
-    return r.status === 0;
+    return statSync(path).isFile();
   } catch {
     return false;
   }
 }
 
-function isOnPath(cmd) {
-  const r = spawnSync("command", ["-v", cmd], { stdio: "ignore", shell: true });
-  return r.status === 0;
+/**
+ * Node-native `which`: returns true if `cmd` resolves to an executable
+ * file anywhere on the user's PATH. Previously shelled out to the
+ * POSIX `command -v` builtin, which is not available on Windows
+ * shells and would always report "not found" there.
+ *
+ * Iterates PATH once, testing each candidate. On Windows honours
+ * PATHEXT so `glab` resolves to `glab.exe` / `glab.cmd` / etc.
+ * without requiring the user to type the extension. Exported so tests
+ * can exercise it without spawning a child process.
+ */
+export function isOnPath(cmd) {
+  const pathEnv = process.env.PATH || "";
+  if (!pathEnv) return false;
+  const dirs = pathEnv.split(delimiter).filter(Boolean);
+  const exts = process.platform === "win32"
+    ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";")
+    : [""];
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const candidate = `${dir}${sep}${cmd}${ext}`;
+      try {
+        if (statSync(candidate).isFile()) return true;
+      } catch {
+        // ENOENT or EACCES; skip and keep scanning.
+      }
+    }
+  }
+  return false;
 }
 
 export async function detectGh() {
@@ -500,7 +532,14 @@ export async function askTrackerTarget(ask, kind, role, d, reference = null) {
         kind: "github",
         owner,
         auth_login: d.gh.login || "",
-        depth: "full",
+        // Tracker-level depth mirrors the project's default-restrictive
+        // semantics: dev trackers operate across every item in the repo
+        // (full), but release trackers only ever touch umbrella issues
+        // (umbrella-only). This matches the projectDepth chosen for the
+        // bound Project v2 above, so a user who accepts defaults ends
+        // up with consistent least-privilege settings across both the
+        // tracker and its Project v2.
+        depth: projectDepth,
         projects,
       };
       if (repo) target.repo = repo;
@@ -642,7 +681,12 @@ export function defaultTrackerTarget(kind, role, d) {
       kind: "github",
       owner,
       auth_login: d.gh.login || "",
-      depth: "full",
+      // Tracker depth mirrors the bound Project v2's depth. dev =>
+      // full (operate across the repo), release => umbrella-only
+      // (touch only umbrella issues). Matches askTrackerTarget so
+      // --yes installs and interactive installs produce identical
+      // least-privilege shapes.
+      depth: projectDepth,
       projects: [{
         owner,
         number: role === "dev" ? 1 : 2,

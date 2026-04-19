@@ -500,9 +500,14 @@ async function checkFrontmatterParses() {
 // so a path-prefix exemption is precise enough.
 async function checkNoLegacyNames() {
   const legacyNeedles = [
-    // Retired skill name. Use word-boundary to avoid matching things
-    // like "async" or random substrings. The pattern matches both the
-    // bare `github-sync` and the scripts/lib/ path `lib/github-sync`.
+    // Plain substring check is intentional. Any occurrence of
+    // `github-sync`, including path fragments like `lib/github-sync`
+    // or `skills/github-sync/`, should be treated as a legacy
+    // reference. A regex with word-boundary semantics would MISS
+    // those forms because `-` is a word boundary on its own and
+    // `\bgithub-sync\b` would not match "lib/github-sync" in a way
+    // that catches the actual bug class (accidental path-based
+    // references) that the gate exists to catch.
     { needle: "github-sync", class: "legacy-skill-name" },
     { needle: "github-source-of-truth", class: "legacy-rule-name" },
   ];
@@ -514,6 +519,13 @@ async function checkNoLegacyNames() {
     "design",
     "examples",
     "schemas",
+    // scripts/ added after round-1 T1: re-introducing `github-sync`
+    // in scripts/install.mjs or scripts/adapt.mjs would otherwise
+    // escape the gate. Exemptions below cover the files that MUST
+    // legitimately mention the legacy name (validate_bundle.mjs itself
+    // declares the needle; scripts/lib/trackers/ keeps historical
+    // "formerly github-sync" comments for code-spelunkers).
+    "scripts",
   ];
   const topLevelDocs = [
     "AGENT.md",
@@ -524,6 +536,11 @@ async function checkNoLegacyNames() {
   ];
   const exemptPrefixes = [
     "scripts/lib/trackers/",
+    // validate_bundle.mjs is the one file that MUST contain the literal
+    // strings (both in the check's legend and as the search needles);
+    // exempt by exact relative path so a future `scripts/validate-foo.mjs`
+    // is still scanned.
+    "scripts/validate_bundle.mjs",
   ];
 
   const fpsToScan = [];
