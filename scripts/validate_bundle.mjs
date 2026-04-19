@@ -37,11 +37,21 @@
 //        in bundle-index.md (no orphans);
 //      - when a new bundle doc is added, bundle-index must learn
 //        about it in the same PR.
+//  13. Every SKILL.md / rule / memory-seed frontmatter parses as
+//      real YAML (via gray-matter) AND, for SKILL.md, the
+//      `trigger_on` / `do_not_trigger_on` keys are arrays of
+//      plain strings. The previous regex-only checks missed a
+//      whole class of bug where an unquoted `: ` inside a bullet
+//      silently turned the list entry into a {key: value} mapping,
+//      which downstream consumers (Claude Code runtime) parse as
+//      garbage. Failure classes: `frontmatter-parse:` (hard YAML
+//      error), `frontmatter-type:` (list entry is not a string).
 //
 
 import { readFile, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import matter from "gray-matter";
 import { preflight } from "./preflight.mjs";
 import { walkFiles, readTextOrNull } from "./lib/fsx.mjs";
 import { validate } from "./lib/schema.mjs";
@@ -409,6 +419,59 @@ async function checkBundleIndex() {
   }
 }
 
+// ---- 13. Frontmatter parses as YAML + lists are string-arrays ----------
+// The earlier checks are regex-based and miss a whole class of bug: an
+// unquoted `: ` inside a list bullet (e.g. "Follow foo: bar") parses as
+// a YAML mapping `{Follow foo: bar}` rather than a plain string, and
+// some descriptions with stray colons make the whole frontmatter
+// unparseable. Both classes pass the regex gates but bite downstream
+// consumers (Claude Code runtime, which parses this as real YAML).
+// This check runs real gray-matter over every SKILL.md, rule, and seed.
+async function checkFrontmatterParses() {
+  const targets = [];
+  for await (const fp of walkFiles(join(BUNDLE_ROOT, "skills"))) {
+    if (fp.endsWith("/SKILL.md")) targets.push({ fp, kind: "skill" });
+  }
+  for await (const fp of walkFiles(join(BUNDLE_ROOT, "rules"))) {
+    if (fp.endsWith(".md")) targets.push({ fp, kind: "rule" });
+  }
+  for await (const fp of walkFiles(join(BUNDLE_ROOT, "memory-seeds"))) {
+    if (fp.endsWith(".md")) targets.push({ fp, kind: "seed" });
+  }
+  for (const { fp, kind } of targets) {
+    const rel = relative(BUNDLE_ROOT, fp);
+    const text = await readTextOrNull(fp);
+    if (text == null) continue;
+    let data;
+    try {
+      data = matter(text).data;
+    } catch (e) {
+      const msg = String(e && e.reason ? e.reason : (e && e.message ? e.message : e))
+        .split("\n")[0];
+      err(`frontmatter-parse: ${rel} (${msg})`);
+      continue;
+    }
+    // For SKILL.md, trigger_on / do_not_trigger_on are list fields that
+    // downstream tooling expects to be string[]. A mapping in there is
+    // the silent-mis-parse bug the round-4 threads flagged.
+    if (kind === "skill") {
+      for (const key of ["trigger_on", "do_not_trigger_on"]) {
+        const val = data[key];
+        if (val === undefined) continue;
+        if (!Array.isArray(val)) {
+          err(`frontmatter-type: ${rel}:${key} must be a list, got ${typeof val}`);
+          continue;
+        }
+        val.forEach((entry, i) => {
+          if (typeof entry !== "string") {
+            err(`frontmatter-type: ${rel}:${key}[${i}] must be a string (got ${typeof entry}; likely an unquoted ': ' turned the bullet into a mapping)`);
+          }
+        });
+      }
+    }
+  }
+}
+
 await checkLiterals();
 await checkDashes();
 await checkSkillStructure();
@@ -420,6 +483,7 @@ await checkSeedFrontmatter();
 await checkNoRawHomePaths();
 await checkWikiRuleReferences();
 await checkBundleIndex();
+await checkFrontmatterParses();
 
 const summary = `validate_bundle: ${errors.length} error(s), ${warnings.length} warning(s)`;
 if (errors.length === 0 && warnings.length === 0) {
