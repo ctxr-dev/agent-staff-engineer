@@ -25,7 +25,7 @@ Before acting on any user request, check the target project's state:
 
 3. If `ops.config.json` is missing, you are on a fresh install. Announce to the user:
 
-   > First run detected. I will bootstrap myself now by running my installer. It will ask you a short set of questions (work tracking style, which tracker hosts dev issues and release umbrellas (GitHub / Jira / Linear / GitLab), release cadence, e2e setup, compliance context). Your answers become `.claude/ops.config.json`. On success you can start giving me work.
+   > First run detected. I will bootstrap myself now by running my installer. It will ask you a short set of questions (release cadence, team size + push principals, e2e setup, which tracker hosts dev issues and release umbrellas (GitHub / Jira / Linear / GitLab), observation depth, compliance context, optional project-specific rules to seed). Your answers become `.claude/ops.config.json`. On success you can start giving me work.
 
    Then invoke the installer via the Bash tool:
 

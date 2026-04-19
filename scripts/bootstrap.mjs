@@ -15,7 +15,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { spawnSync } from "node:child_process";
 import { readdir } from "node:fs/promises";
-import { statSync } from "node:fs";
+import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import { delimiter, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { homedir } from "node:os";
@@ -295,25 +295,39 @@ function fileExistsSync(path) {
  * POSIX `command -v` builtin, which is not available on Windows
  * shells and would always report "not found" there.
  *
- * Iterates PATH once, testing each candidate. On Windows honours
- * PATHEXT so `glab` resolves to `glab.exe` / `glab.cmd` / etc.
- * without requiring the user to type the extension. Exported so tests
- * can exercise it without spawning a child process.
+ * Iterates PATH once, testing each candidate. On POSIX the candidate
+ * must be a regular file AND have the execute bit set for the current
+ * user, which rules out false positives like a text file sitting on
+ * PATH with a name that happens to collide with a tool. On Windows
+ * PATHEXT already provides the executability signal via the extension,
+ * so the isFile() check plus PATHEXT suffices; `accessSync(.., X_OK)`
+ * behaves inconsistently on Windows (cmd / ACL files can surface
+ * EACCES even when they're runnable).
+ *
+ * Exported so tests can exercise it without spawning a child process.
  */
 export function isOnPath(cmd) {
   const pathEnv = process.env.PATH || "";
   if (!pathEnv) return false;
   const dirs = pathEnv.split(delimiter).filter(Boolean);
-  const exts = process.platform === "win32"
+  const isWin = process.platform === "win32";
+  const exts = isWin
     ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";")
     : [""];
   for (const dir of dirs) {
     for (const ext of exts) {
       const candidate = `${dir}${sep}${cmd}${ext}`;
       try {
-        if (statSync(candidate).isFile()) return true;
+        if (!statSync(candidate).isFile()) continue;
+        if (!isWin) {
+          // accessSync throws on EACCES when the execute bit is not
+          // set for the current uid/gid, ruling out non-executable
+          // files with a tool-like name.
+          accessSync(candidate, fsConstants.X_OK);
+        }
+        return true;
       } catch {
-        // ENOENT or EACCES; skip and keep scanning.
+        // ENOENT / EACCES / not-a-file: skip and keep scanning.
       }
     }
   }

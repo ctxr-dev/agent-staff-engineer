@@ -19,7 +19,7 @@ Then in Claude Code, ask Claude to run the agent, for example:
 Run the agent-staff-engineer and help me set it up for this project.
 ```
 
-On first run, the agent detects that `.claude/ops.config.json` is missing and self-bootstraps: it runs its own installer, launches an interactive interview (work tracking style, which tracker hosts dev issues and release umbrellas (GitHub / Jira / Linear / GitLab), release cadence, e2e setup, observation depth, compliance context), writes `ops.config.json`, generates thin wrapper files at the canonical Claude Code locations, and hands control back.
+On first run, the agent detects that `.claude/ops.config.json` is missing and self-bootstraps: it runs its own installer, launches an interactive interview (release cadence, team size + push principals, e2e setup, which tracker hosts dev issues and release umbrellas (GitHub / Jira / Linear / GitLab), observation depth, compliance context, project-specific rules to seed), writes `ops.config.json`, generates thin wrapper files at the canonical Claude Code locations, and hands control back.
 
 On every later invocation the agent acts on your request directly, guided by the configured rules.
 

@@ -375,6 +375,42 @@ describe("bootstrap.isOnPath (Node-native PATH search)", () => {
       else process.env.PATH = savedPath;
     }
   });
+
+  // Round-6 T4: a non-executable file with a tool-like name that
+  // happens to land on PATH should NOT be reported as on-path. Plant
+  // one in a scratch PATH entry, confirm isOnPath ignores it, then
+  // chmod +x it and confirm isOnPath flips to true. POSIX-only
+  // (Windows uses PATHEXT for the executability signal).
+  it("rejects a non-executable file on PATH (POSIX-only)", async () => {
+    if (process.platform === "win32") return;
+    const { mkdtemp, writeFile, chmod, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const scratch = await mkdtemp(join(tmpdir(), "isonpath-"));
+    const toolName = "sentinel-isonpath-probe";
+    const binPath = join(scratch, toolName);
+    const savedPath = process.env.PATH;
+    try {
+      await writeFile(binPath, "#!/bin/sh\necho hi\n", "utf8");
+      await chmod(binPath, 0o644); // NOT executable
+      process.env.PATH = scratch;
+      assert.equal(
+        isOnPath(toolName),
+        false,
+        "a non-executable file with the tool's name must not satisfy isOnPath on POSIX",
+      );
+      await chmod(binPath, 0o755); // executable
+      assert.equal(
+        isOnPath(toolName),
+        true,
+        "the same file with the exec bit set should now satisfy isOnPath",
+      );
+    } finally {
+      if (savedPath === undefined) delete process.env.PATH;
+      else process.env.PATH = savedPath;
+      await rm(scratch, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("bootstrap.cadenceToIntent", () => {
