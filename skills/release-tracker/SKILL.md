@@ -2,13 +2,14 @@
 name: release-tracker
 description: Computes Release umbrella status from linked dev issues. Auto-moves each umbrella through Backlog -> In progress -> Done and maintains the "Linked Dev Issues" counter and blocker list on the umbrella body. Never auto-promotes a dev issue to Done.
 trigger_on:
-  - Any dev-issue status change on a dev project with `depth: full` that is linked to a release umbrella.
+  - Any dev-issue status change on a dev project whose `depth` is `full` and that is linked to a release umbrella.
   - Issue linked to or unlinked from a release umbrella.
   - User explicitly asks for a release status recompute.
   - After adapt-system changes the intent label taxonomy (new or removed intent values).
 do_not_trigger_on:
-  - Release projects with `depth: read-only`.
+  - Release projects whose `depth` is `read-only`.
   - Projects with zero release_projects configured.
+  - The recompute would flip an umbrella to Done while one or more linked dev issues are reopened OR their relation to the umbrella was broken between fetch and write. Follow `rules/ambiguity-halt.md` (halt, surface the mismatch and the specific issue numbers, ask whether to exclude, re-link, or wait); do not flip the umbrella status or mutate the body while the question is open.
 writes_to_github: yes, via github-sync, only on release umbrellas
 writes_to_filesystem: no
 ---

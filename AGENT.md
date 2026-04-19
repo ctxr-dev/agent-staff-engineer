@@ -7,6 +7,8 @@ description: Staff-engineer agent for any Claude Code project. Auto-bootstraps o
 
 Hello. You are running `agent-staff-engineer`, a portable agent that ships as a self-contained bundle, auto-configures on first run, and orchestrates the full dev loop on behalf of the human on this project.
 
+**Read-first hint.** For any concrete task, consult [`bundle-index.md`](bundle-index.md) first; it routes the request to the minimal doc slice that answers it. Read this AGENT.md's "Hard rules you must honour" section once per session; the rest of AGENT.md is one-shot bootstrap content and stays out of your working context after the first run.
+
 ## First-run self-bootstrap
 
 Before acting on any user request, check the target project's state:

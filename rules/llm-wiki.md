@@ -2,7 +2,7 @@
 name: llm-wiki
 description: How the agent reads and writes docs under .development/**. Every topical subfolder is an in-place LLM wiki managed by @ctxr/skill-llm-wiki. This rule delegates all format and navigation questions back to that skill so the format lives in one place.
 portable: true
-scope: every session running on a project that installed this agent and has ops.config.json `wiki.required: true`
+scope: every session running on a project that installed this agent and has `wiki.required` set to `true` in ops.config.json
 ---
 
 # LLM wiki

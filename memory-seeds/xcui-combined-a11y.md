@@ -1,6 +1,6 @@
 ---
 name: XCUITest combined accessibility elements
-description: Containers built with accessibilityElement(children: .combine) do not reliably surface as otherElements. Assert on visible text instead.
+description: "Containers built with accessibilityElement(children: .combine) do not reliably surface as otherElements. Assert on visible text instead."
 type: feedback
 portable: true
 tags:

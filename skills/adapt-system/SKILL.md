@@ -9,6 +9,8 @@ do_not_trigger_on:
   - First install; use bootstrap-ops-config.
   - User is asking a question; intent has to be a project-shape change.
   - Intent is ambiguous; ask a clarifying question first.
+  - The proposed cascading diff would touch a path the adapt-system skill never owns (`bundle-index.md`, `.gitignore`, any file in `.github/`, or any region of `CLAUDE.md` outside the managed block delimited by the `<!-- agent:block -->` markers). Follow `rules/ambiguity-halt.md` (halt, surface the observation, ask); do not apply the diff while the question is open.
+  - Two different user intents in the same session cascade to contradictory labels or contradictory `ops.config.json` values. Follow `rules/ambiguity-halt.md` (halt, name the collision, ask which intent wins).
 writes_to_github: yes, but only via github-sync (label taxonomy changes, relabelling existing issues on user approval)
 writes_to_filesystem: yes, with diff preview and explicit user approval
 ---

@@ -93,6 +93,15 @@ The tag push does NOT auto-chain into publish: `GITHUB_TOKEN` cannot trigger fur
 
 Full operator walkthrough (including troubleshooting for stale or orphan tags, non-main dispatches, and the "Allow GitHub Actions to create and approve pull requests" org-level policy) lives in the [Releasing section of the README](README.md#releasing).
 
+## Editing bundle docs
+
+When you add or rename a skill / rule / template / memory seed, update [bundle-index.md](bundle-index.md) in the same PR. The validator (check #12) enforces two invariants:
+
+- Every markdown link inside `bundle-index.md` points at a file that exists.
+- Every `skills/*/SKILL.md`, `rules/*.md`, `templates/*.md`, `memory-seeds/*.md` appears at least once in `bundle-index.md`.
+
+Orphans and dead links fail `npm run validate`. Edit the appropriate "By intent" and "By surface" sections; add a one-line description; add to the "Don't-read list" if the doc is one-shot or heavy.
+
 ## Questions
 
 Open an issue or a PR. Keep PRs focused; one change per PR keeps review fast.

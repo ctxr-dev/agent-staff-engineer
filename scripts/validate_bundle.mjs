@@ -25,14 +25,37 @@
 //      .development/{shared,local,cache}/ must also reference
 //      rules/llm-wiki.md, so the write-through-wiki contract from
 //      AGENT.md is enforced at the skill level.
+//  12. bundle-index.md is complete and link-valid:
+//      - every markdown link inside bundle-index.md points at a
+//        file that exists on disk (dead-link failures include the
+//        OS error code when it is not a plain "file not found");
+//      - every required surface directory (skills/, rules/,
+//        templates/, memory-seeds/) exists as a directory, not
+//        just "empty or missing" (missing-surface);
+//      - every file under skills/*/SKILL.md, rules/*.md,
+//        templates/*.md, memory-seeds/*.md appears at least once
+//        in bundle-index.md (no orphans);
+//      - when a new bundle doc is added, bundle-index must learn
+//        about it in the same PR.
+//  13. Every SKILL.md / rule / memory-seed frontmatter parses as
+//      real YAML (via gray-matter) AND, for SKILL.md, the
+//      `trigger_on` / `do_not_trigger_on` keys are arrays of
+//      plain strings. The previous regex-only checks missed a
+//      whole class of bug where an unquoted `: ` inside a bullet
+//      silently turned the list entry into a {key: value} mapping,
+//      which downstream consumers (Claude Code runtime) parse as
+//      garbage. Failure classes: `frontmatter-parse:` (hard YAML
+//      error), `frontmatter-type:` (list entry is not a string).
 //
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import matter from "gray-matter";
 import { preflight } from "./preflight.mjs";
 import { walkFiles, readTextOrNull } from "./lib/fsx.mjs";
 import { validate } from "./lib/schema.mjs";
+import { extractIndexLinks, REQUIRED_INDEX_SURFACES } from "./lib/bundleIndex.mjs";
 
 await preflight();
 
@@ -318,6 +341,144 @@ async function checkWikiRuleReferences() {
   }
 }
 
+// ---- 12. bundle-index.md completeness + link integrity ----------------
+// The agent reads bundle-index.md first to route a task to the minimal
+// doc slice. That's only useful if the index is complete (every skill /
+// rule / template / memory seed is routable from it) and link-valid
+// (every path it names exists). Orphans silently reduce token economy;
+// dead links silently mislead the agent.
+//
+// Link-extraction logic is shared with tests/bundle-index.test.mjs via
+// scripts/lib/bundleIndex.mjs so prod and test can't drift.
+//
+// Failure messages use class prefixes (`missing-index:`, `dead-link:`,
+// `orphan:`) so a contributor scanning a validate run can tell cause
+// from effect at a glance (e.g. a renamed file produces one `dead-link`
+// plus one `orphan` unless both sides are updated).
+async function checkBundleIndex() {
+  const indexPath = join(BUNDLE_ROOT, "bundle-index.md");
+  let indexText;
+  try {
+    indexText = await readFile(indexPath, "utf8");
+  } catch (e) {
+    if (e && e.code === "ENOENT") {
+      err("missing-index: bundle-index.md is missing at the bundle root");
+      return;
+    }
+    // Surface EACCES / EISDIR / etc. with their real class instead of
+    // masking them as "missing" — a permission or IO fault is a bug the
+    // contributor needs to see clearly, not a false "just add the file".
+    throw e;
+  }
+  const referenced = extractIndexLinks(indexText);
+  for (const rel of referenced) {
+    const abs = resolve(BUNDLE_ROOT, rel);
+    try {
+      // Existence probe only; no need to read the bytes. Using stat()
+      // over readFile() lets us distinguish ENOENT from EACCES/EISDIR
+      // and include the OS error code in the message so a contributor
+      // can act on it without guessing. We also assert the target is
+      // a regular file: a link to `templates/` (no trailing filename)
+      // exists but does not satisfy the bundle-index contract of
+      // "points at a file".
+      const s = await stat(abs);
+      if (!s.isFile()) {
+        const type = s.isDirectory() ? "directory" : "not a regular file";
+        err(`dead-link: bundle-index.md -> ${rel} (${type})`);
+      }
+    } catch (e) {
+      const code = e && e.code ? e.code : "unknown";
+      if (code === "ENOENT") {
+        err(`dead-link: bundle-index.md -> ${rel} (file not found)`);
+      } else {
+        err(`dead-link: bundle-index.md -> ${rel} (${code})`);
+      }
+    }
+  }
+  for (const { dir, nameFilter } of REQUIRED_INDEX_SURFACES) {
+    const abs = join(BUNDLE_ROOT, dir);
+    // Surface-dir precondition: the directory MUST exist and be a
+    // directory. walkFiles() swallows ENOENT silently (yields nothing),
+    // which would let a missing required surface slip through as "no
+    // orphans found" — exactly the structural regression the tests
+    // already treat as fatal. Mirror the test's stat() check here so
+    // validate + test agree on what counts as a broken bundle.
+    try {
+      const s = await stat(abs);
+      if (!s.isDirectory()) {
+        err(`missing-surface: required bundle surface ${dir}/ is not a directory`);
+        continue;
+      }
+    } catch (e) {
+      if (e && e.code === "ENOENT") {
+        err(`missing-surface: required bundle surface ${dir}/ does not exist`);
+        continue;
+      }
+      throw e;
+    }
+    for await (const fp of walkFiles(abs)) {
+      const rel = relative(BUNDLE_ROOT, fp).split(/[\\/]+/).join("/");
+      if (!nameFilter(rel)) continue;
+      if (!referenced.has(rel)) {
+        err(`orphan: ${rel} is not linked from bundle-index.md`);
+      }
+    }
+  }
+}
+
+// ---- 13. Frontmatter parses as YAML + lists are string-arrays ----------
+// The earlier checks are regex-based and miss a whole class of bug: an
+// unquoted `: ` inside a list bullet (e.g. "Follow foo: bar") parses as
+// a YAML mapping `{Follow foo: bar}` rather than a plain string, and
+// some descriptions with stray colons make the whole frontmatter
+// unparseable. Both classes pass the regex gates but bite downstream
+// consumers (Claude Code runtime, which parses this as real YAML).
+// This check runs real gray-matter over every SKILL.md, rule, and seed.
+async function checkFrontmatterParses() {
+  const targets = [];
+  for await (const fp of walkFiles(join(BUNDLE_ROOT, "skills"))) {
+    if (fp.endsWith("/SKILL.md")) targets.push({ fp, kind: "skill" });
+  }
+  for await (const fp of walkFiles(join(BUNDLE_ROOT, "rules"))) {
+    if (fp.endsWith(".md")) targets.push({ fp, kind: "rule" });
+  }
+  for await (const fp of walkFiles(join(BUNDLE_ROOT, "memory-seeds"))) {
+    if (fp.endsWith(".md")) targets.push({ fp, kind: "seed" });
+  }
+  for (const { fp, kind } of targets) {
+    const rel = relative(BUNDLE_ROOT, fp);
+    const text = await readTextOrNull(fp);
+    if (text == null) continue;
+    let data;
+    try {
+      data = matter(text).data;
+    } catch (e) {
+      const msg = String(e && e.reason ? e.reason : (e && e.message ? e.message : e))
+        .split("\n")[0];
+      err(`frontmatter-parse: ${rel} (${msg})`);
+      continue;
+    }
+    // For SKILL.md, trigger_on / do_not_trigger_on are list fields that
+    // downstream tooling expects to be string[]. A mapping in there is
+    // the silent-mis-parse bug the round-4 threads flagged.
+    if (kind === "skill") {
+      for (const key of ["trigger_on", "do_not_trigger_on"]) {
+        const val = data[key];
+        if (val === undefined) continue;
+        if (!Array.isArray(val)) {
+          err(`frontmatter-type: ${rel}:${key} must be a list, got ${typeof val}`);
+          continue;
+        }
+        val.forEach((entry, i) => {
+          if (typeof entry !== "string") {
+            err(`frontmatter-type: ${rel}:${key}[${i}] must be a string (got ${typeof entry}; likely an unquoted ': ' turned the bullet into a mapping)`);
+          }
+        });
+      }
+    }
+  }
+}
+
 await checkLiterals();
 await checkDashes();
 await checkSkillStructure();
@@ -328,6 +489,8 @@ await checkRuleFrontmatter();
 await checkSeedFrontmatter();
 await checkNoRawHomePaths();
 await checkWikiRuleReferences();
+await checkBundleIndex();
+await checkFrontmatterParses();
 
 const summary = `validate_bundle: ${errors.length} error(s), ${warnings.length} warning(s)`;
 if (errors.length === 0 && warnings.length === 0) {

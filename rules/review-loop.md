@@ -1,6 +1,6 @@
 ---
 name: review-loop
-description: The local review loop every change runs through before push: format, lint, type, unit, integration, e2e where applicable, then the code-review provider. No skipping, no early exit on green stages.
+description: "The local review loop every change runs through before push: format, lint, type, unit, integration, e2e where applicable, then the code-review provider. No skipping, no early exit on green stages."
 portable: true
 scope: dev-loop, any automation that pushes a branch
 ---
