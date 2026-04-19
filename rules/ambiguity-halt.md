@@ -84,7 +84,7 @@ No silent resumption. The skill always confirms in one sentence what it understo
 
 ## Related
 
-- [rules/tracker-source-of-truth.md](tracker-source-of-truth.md): GitHub is authoritative; local files are projections. Ambiguity is usually a local-vs-remote divergence.
+- [rules/tracker-source-of-truth.md](tracker-source-of-truth.md): the configured tracker is authoritative; local files are projections. Ambiguity is usually a local-vs-remote divergence.
 - [rules/pr-workflow.md](pr-workflow.md): the two human gates (merge, Done) are absolute. This rule adds a third class of halt: anything weird.
 - [rules/pr-iteration.md](pr-iteration.md): iteration loop invokes this contract when the three exit conditions cannot be determined.
 - [bundle-index.md](../bundle-index.md): routing doc; this rule is referenced from the "Iterating on review comments", "Triaging a regression", "Writing / keeping plans in sync", and "Bootstrap + config changes" intents.

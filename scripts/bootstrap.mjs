@@ -211,14 +211,38 @@ export function parseOwnerRepo(url) {
  * and gitlab.com have obvious mappings; self-hosted GitLab is detected
  * via the 'gitlab' substring. Bitbucket and others are not supported
  * today and return null so the interview surfaces the limitation.
+ *
+ * Handles all standard git remote URL forms:
+ *   - git@host:owner/repo.git          (SCP-style)
+ *   - https://host/owner/repo(.git)    (HTTPS)
+ *   - ssh://git@host[:port]/owner/repo (SSH)
+ *   - ssh://host/owner/repo            (SSH, no user)
+ *   - git+ssh://... / git://...        (less common, still supported)
  */
 export function parseHostKind(url) {
   if (!url) return null;
-  const hostMatch = url.match(/^(?:git@|https?:\/\/)([^:/]+)/);
-  if (!hostMatch) return null;
-  const host = hostMatch[1].toLowerCase();
-  if (host === "github.com" || host.endsWith(".github.com")) return "github";
-  if (host === "gitlab.com" || host.includes("gitlab")) return "gitlab";
+  const host = extractHost(url);
+  if (!host) return null;
+  const lower = host.toLowerCase();
+  if (lower === "github.com" || lower.endsWith(".github.com")) return "github";
+  if (lower === "gitlab.com" || lower.includes("gitlab")) return "gitlab";
+  return null;
+}
+
+/**
+ * Extract the hostname from a git remote URL. Exported for reuse by
+ * gitlab coordinate derivation (same parsing logic). Returns null if
+ * the URL doesn't match a known form. Strips a trailing `:port`
+ * segment so `ssh://git@host:2222/...` yields "host", not "host:2222".
+ */
+export function extractHost(url) {
+  if (!url) return null;
+  // SCP-style: git@host:path
+  let m = url.match(/^[^@\s:/]+@([^:/\s]+):/);
+  if (m) return m[1];
+  // URL-style: (http|https|ssh|git|git+ssh)://[user@]host[:port]/...
+  m = url.match(/^(?:https?|ssh|git(?:\+ssh)?):\/\/(?:[^@/\s]+@)?([^:/\s]+)(?::\d+)?/);
+  if (m) return m[1];
   return null;
 }
 
@@ -624,27 +648,60 @@ export async function askTrackerTarget(ask, kind, role, d, reference = null) {
  * one GitHub repo with no Projects v2 boards attached; cross-repo
  * lookups on Jira / Linear / GitLab targets use a different shape and
  * aren't covered by this helper yet.
+ *
+ * Malformed entries (missing `/`, empty segments, three-segment
+ * `a/b/c` inputs, or non-ASCII identifiers that the schema rejects
+ * downstream) are skipped with a single-line stderr warning naming
+ * the offending pair. Failing loudly at parse time beats a generic
+ * "schema validation error: trackers.observed[3].repo" later.
  */
 export function parseObservedGithubRepos(s, depth) {
   if (!s) return [];
-  return s
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .map((pair) => {
-      const [owner, name] = pair.split("/");
-      return {
-        kind: "github",
-        owner,
-        repo: name,
-        depth,
-        projects: [],
-      };
+  const ident = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
+  const out = [];
+  for (const pair of s.split(",").map((x) => x.trim()).filter(Boolean)) {
+    const parts = pair.split("/");
+    if (parts.length !== 2) {
+      process.stderr.write(
+        `bootstrap: observed repo '${pair}' skipped (expected owner/name, got ${parts.length} segment${parts.length === 1 ? "" : "s"})\n`,
+      );
+      continue;
+    }
+    const [owner, name] = parts;
+    if (!ident.test(owner) || !ident.test(name)) {
+      process.stderr.write(
+        `bootstrap: observed repo '${pair}' skipped (owner/name must match /^[A-Za-z0-9_.][A-Za-z0-9_.-]*$/)\n`,
+      );
+      continue;
+    }
+    out.push({
+      kind: "github",
+      owner,
+      repo: name,
+      depth,
+      projects: [],
     });
+  }
+  return out;
 }
 
 export function pickDefaults(d) {
-  const kind = inferTrackerKind(d) ?? "github";
+  // Scripted installs (--yes) skip the interview and write this shape
+  // directly, then schema-validate. Any kind whose required fields
+  // can't be filled from detection will fail that validation with an
+  // unactionable "required property 'site'" error. To make --yes work
+  // out of the box we restrict the default to kinds we can fully
+  // auto-populate:
+  //   - github: needs d.git.ownerRepo.
+  //   - gitlab: needs a gitlab git remote (host + project_path both
+  //     derive from it).
+  //   - jira / linear: no way to auto-derive site/project/workspace/team
+  //     from the filesystem alone. Fall back to github; the user runs
+  //     the interactive bootstrap (or edits ops.config.json manually)
+  //     to switch kinds. Adapt-system's tracker:migrate op also moves
+  //     a project between kinds post-install.
+  const inferred = inferTrackerKind(d);
+  const kind = inferred && canAutoPopulate(inferred, d) ? inferred : "github";
   const pushAllowed = [d.gh.login, "claude"].filter(Boolean);
   const reviewers = [d.gh.login, "copilot"].filter(Boolean);
   const devTracker = defaultTrackerTarget(kind, "dev", d);
@@ -665,6 +722,49 @@ export function pickDefaults(d) {
     dataClasses: ["none"],
     seedProductRules: false,
   };
+}
+
+/**
+ * Can we produce a schema-valid tracker target for `kind` using only
+ * `detection`? Used by pickDefaults to keep --yes installs working
+ * even when inferTrackerKind picks a kind whose required coordinates
+ * aren't in the filesystem. Exported for tests.
+ */
+export function canAutoPopulate(kind, d) {
+  switch (kind) {
+    case "github":
+      return Boolean(d?.git?.ownerRepo);
+    case "gitlab":
+      // Both host (from remote) and project_path (from remote path
+      // segment) must be derivable. parseHostKind already confirms
+      // the host looks like a gitlab. ownerRepo being present means
+      // the remote parsed cleanly too.
+      return Boolean(d?.git?.ownerRepo) && parseHostKind(d?.git?.remote) === "gitlab";
+    case "jira":
+    case "linear":
+      // No filesystem-derivable source for site/project/workspace/team.
+      // Interactive bootstrap or manual ops.config.json edit is required.
+      return false;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Extract the path portion of a git remote URL for use as a GitLab
+ * project_path. Strips a trailing `.git` and any leading `/`. Returns
+ * null for URLs that don't match a known form. Kept internal to this
+ * module (tests exercise it through defaultTrackerTarget).
+ */
+function extractRemotePath(url) {
+  if (!url) return null;
+  // SCP-style: git@host:path(.git)
+  let m = url.match(/^[^@\s:/]+@[^:/\s]+:([^\s]+?)(?:\.git)?$/);
+  if (m) return m[1].replace(/^\/+/, "");
+  // URL-style: scheme://[user@]host[:port]/path(.git)
+  m = url.match(/^(?:https?|ssh|git(?:\+ssh)?):\/\/(?:[^@/\s]+@)?[^:/\s]+(?::\d+)?\/([^\s]+?)(?:\.git)?$/);
+  if (m) return m[1].replace(/^\/+/, "");
+  return null;
 }
 
 /**
@@ -724,10 +824,22 @@ export function defaultTrackerTarget(kind, role, d) {
     };
   }
   if (kind === "gitlab") {
+    // Derive host + project_path from the git remote ONLY when the
+    // remote actually looks like a GitLab URL. If the user asks for a
+    // gitlab tracker on a repo whose code lives on GitHub (valid
+    // scenario: code on one host, tickets on another), inheriting the
+    // github.com host would be wrong. Fall back to the canonical
+    // public host + empty project_path so the user's interactive
+    // bootstrap or manual edit fills the gap. Empty project_path
+    // still fails the schema's pattern on --yes, surfacing a pointed
+    // "required property" error rather than a silent mis-config.
+    const remoteIsGitlab = parseHostKind(d?.git?.remote) === "gitlab";
+    const host = remoteIsGitlab ? extractHost(d.git.remote) : "gitlab.com";
+    const project_path = remoteIsGitlab ? (extractRemotePath(d.git.remote) ?? "") : "";
     return {
       kind: "gitlab",
-      host: "gitlab.com",
-      project_path: "",
+      host,
+      project_path,
       depth: "full",
       status_values: { backlog: "backlog", in_progress: "in-progress", done: "done" },
     };

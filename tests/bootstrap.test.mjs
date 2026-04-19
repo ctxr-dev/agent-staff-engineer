@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import {
   parseOwnerRepo,
   parseHostKind,
+  extractHost,
   parseObservedGithubRepos,
   inferTrackerKind,
   defaultTrackerTarget,
+  canAutoPopulate,
   isOnPath,
   pickDefaults,
   compose,
@@ -53,6 +55,41 @@ describe("bootstrap.parseHostKind", () => {
   it("returns null for a null / empty url", () => {
     assert.equal(parseHostKind(null), null);
     assert.equal(parseHostKind(""), null);
+  });
+
+  // Round-2 T3: extend host parsing beyond SCP-style + https:// so
+  // standard ssh://git@host/... forms are recognised instead of being
+  // silently misclassified as unsupported.
+  it("handles ssh://git@host/path remote URLs", () => {
+    assert.equal(parseHostKind("ssh://git@gitlab.com/acme/widgets.git"), "gitlab");
+    assert.equal(parseHostKind("ssh://git@github.com/acme/widgets.git"), "github");
+  });
+
+  it("handles ssh://host/path URLs without a user segment", () => {
+    assert.equal(parseHostKind("ssh://gitlab.com/acme/widgets.git"), "gitlab");
+  });
+
+  it("strips a :port segment from ssh URLs before matching the host", () => {
+    assert.equal(parseHostKind("ssh://git@gitlab.acme.internal:2222/team/widgets.git"), "gitlab");
+  });
+
+  it("handles git+ssh:// and git:// (less common but valid) URL forms", () => {
+    assert.equal(parseHostKind("git+ssh://git@gitlab.com/acme/widgets.git"), "gitlab");
+    assert.equal(parseHostKind("git://github.com/acme/widgets"), "github");
+  });
+});
+
+describe("bootstrap.extractHost", () => {
+  it("extracts the hostname from every supported remote form", () => {
+    assert.equal(extractHost("git@github.com:acme/widgets.git"), "github.com");
+    assert.equal(extractHost("https://gitlab.com/acme/widgets"), "gitlab.com");
+    assert.equal(extractHost("ssh://git@gitlab.acme.internal:2222/team/repo.git"), "gitlab.acme.internal");
+    assert.equal(extractHost("git+ssh://git@gitlab.com/acme/widgets.git"), "gitlab.com");
+  });
+  it("returns null for null / empty / unparseable", () => {
+    assert.equal(extractHost(null), null);
+    assert.equal(extractHost(""), null);
+    assert.equal(extractHost("not a url"), null);
   });
 });
 
@@ -106,6 +143,64 @@ describe("bootstrap.parseObservedGithubRepos", () => {
   it("returns an empty array for blank input", () => {
     assert.deepEqual(parseObservedGithubRepos("", "read-only"), []);
   });
+
+  // Round-2 T4: malformed entries previously produced undefined repo
+  // fields that passed parse but broke schema validation later with
+  // an unhelpful "required property 'repo'" error. Skip + warn instead.
+  it("skips entries missing a / separator (with stderr warning)", () => {
+    const out = parseObservedGithubRepos("lonely, foo/bar", "read-only");
+    assert.equal(out.length, 1);
+    assert.equal(out[0].owner, "foo");
+  });
+
+  it("skips three-segment a/b/c entries", () => {
+    const out = parseObservedGithubRepos("a/b/c, d/e", "read-only");
+    assert.equal(out.length, 1);
+    assert.equal(out[0].owner, "d");
+  });
+
+  it("skips entries whose owner or name has invalid chars (non-ASCII, shell metacharacters)", () => {
+    const out = parseObservedGithubRepos("ow;ner/ok, ok/rep$o, clean/entry", "read-only");
+    assert.equal(out.length, 1);
+    assert.equal(out[0].owner, "clean");
+    assert.equal(out[0].repo, "entry");
+  });
+
+  it("skips entries with empty segments like a/ or /b", () => {
+    const out = parseObservedGithubRepos("a/, /b, keep/me", "read-only");
+    assert.equal(out.length, 1);
+    assert.equal(out[0].owner, "keep");
+  });
+});
+
+describe("bootstrap.canAutoPopulate (--yes guardrail)", () => {
+  // Round-2 T2: pickDefaults used to blindly honor inferTrackerKind's
+  // jira/linear inference and then schema-validate an empty-site or
+  // empty-workspace config, failing with an unactionable error. The
+  // canAutoPopulate helper constrains --yes to kinds we can fill
+  // from detection alone.
+  const githubRemote = { git: { remote: "git@github.com:acme/foo.git", ownerRepo: "acme/foo" } };
+  const gitlabRemote = { git: { remote: "git@gitlab.com:acme/foo.git", ownerRepo: "acme/foo" } };
+  const noRemote = { git: { remote: null, ownerRepo: null } };
+
+  it("returns true for github when the git remote yielded an owner/repo", () => {
+    assert.equal(canAutoPopulate("github", githubRemote), true);
+  });
+  it("returns false for github when there's no git remote", () => {
+    assert.equal(canAutoPopulate("github", noRemote), false);
+  });
+  it("returns true for gitlab ONLY when the remote parses as a gitlab host", () => {
+    assert.equal(canAutoPopulate("gitlab", gitlabRemote), true);
+    assert.equal(canAutoPopulate("gitlab", githubRemote), false, "github remote must not satisfy the gitlab check");
+    assert.equal(canAutoPopulate("gitlab", noRemote), false);
+  });
+  it("always returns false for jira and linear (no filesystem-derivable coords)", () => {
+    assert.equal(canAutoPopulate("jira", gitlabRemote), false);
+    assert.equal(canAutoPopulate("linear", githubRemote), false);
+  });
+  it("returns false for unknown kinds", () => {
+    assert.equal(canAutoPopulate("bitbucket", githubRemote), false);
+  });
 });
 
 describe("bootstrap.defaultTrackerTarget", () => {
@@ -151,11 +246,49 @@ describe("bootstrap.defaultTrackerTarget", () => {
     assert.ok("status_values" in t);
   });
 
-  it("produces a schema-valid gitlabTracker shell", () => {
+  it("produces a schema-valid gitlabTracker shell with gitlab.com fallback when remote is non-gitlab", () => {
     const t = defaultTrackerTarget("gitlab", "dev", d);
     assert.equal(t.kind, "gitlab");
+    // Test fixture's remote is github; asking for a gitlab target
+    // should NOT inherit github.com as the host (different trackers
+    // for different concerns is a valid setup). Fall back to the
+    // canonical public host. project_path stays empty for the user
+    // to fill in.
     assert.equal(t.host, "gitlab.com");
+    assert.equal(t.project_path, "");
     assert.ok("status_values" in t);
+  });
+
+  // Round-2 T2: when the remote IS a gitlab URL, host + project_path
+  // should both derive from it so --yes produces a schema-valid config.
+  it("derives host + project_path from a gitlab git remote", () => {
+    const gitlabD = {
+      git: {
+        remote: "git@gitlab.com:acme/platform/widgets.git",
+        defaultBranch: "main",
+        ownerRepo: "acme/widgets",
+      },
+      gh: { authed: false, login: null },
+    };
+    const t = defaultTrackerTarget("gitlab", "dev", gitlabD);
+    assert.equal(t.kind, "gitlab");
+    assert.equal(t.host, "gitlab.com");
+    // The remote path is `acme/platform/widgets`, with `.git` stripped.
+    assert.equal(t.project_path, "acme/platform/widgets");
+  });
+
+  it("derives host from a self-hosted gitlab remote with an ssh:// port", () => {
+    const selfHosted = {
+      git: {
+        remote: "ssh://git@gitlab.acme.internal:2222/team/widgets.git",
+        defaultBranch: "main",
+        ownerRepo: "team/widgets",
+      },
+      gh: { authed: false, login: null },
+    };
+    const t = defaultTrackerTarget("gitlab", "dev", selfHosted);
+    assert.equal(t.host, "gitlab.acme.internal");
+    assert.equal(t.project_path, "team/widgets");
   });
 
   it("throws on unsupported kinds", () => {
@@ -229,6 +362,33 @@ describe("bootstrap.pickDefaults", () => {
     const defaults = pickDefaults(detection);
     assert.equal(defaults.devTracker.kind, "gitlab");
     assert.equal(defaults.releaseTracker.kind, "gitlab");
+  });
+
+  // Round-2 T2: when inferTrackerKind picks jira/linear from env
+  // tokens but the --yes flow can't auto-populate their required
+  // coords, fall back to github so bootstrap produces a schema-valid
+  // config. A prior version failed with "required property 'site'"
+  // in --yes mode on a machine with JIRA_API_TOKEN set.
+  it("falls back to github when the inferred kind cannot be auto-populated from detection", () => {
+    const detection = {
+      git: { remote: "git@github.com:acme/foo.git", defaultBranch: "main", ownerRepo: "acme/foo" },
+      gh: { authed: true, login: "jane" },
+      // Only jira has a credential. inferTrackerKind prefers git remote
+      // host first (github wins here), so we force inconclusive by
+      // removing the remote and having only a jira token. Without the
+      // canAutoPopulate guard, pickDefaults would compose a jira
+      // target with site="" and fail schema.
+      tracker: { jira: { hasToken: true }, linear: {}, gitlab: {} },
+      stack: { language: [], testing: [], platform: [] },
+      devHints: {},
+    };
+    // Force the inconclusive-remote branch: no remote, but a jira token
+    // is set.
+    detection.git.remote = null;
+    detection.git.ownerRepo = null;
+    const defaults = pickDefaults(detection);
+    assert.equal(defaults.devTracker.kind, "github", "must fall back to github when inferred kind (jira) cannot auto-populate");
+    assert.equal(defaults.releaseTracker.kind, "github");
   });
 });
 
