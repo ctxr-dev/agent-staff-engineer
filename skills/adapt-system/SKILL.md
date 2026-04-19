@@ -38,7 +38,7 @@ Reshapes a live installation when the project's context changes. Every change is
 ## Flow
 
 1. **Parse intent**: classify into one or more signals (`domain:*`, `compliance:*`, `stack:add:*`, `stack:drop:*`, `audience:*`, `dependency:add:*`, `dependency:drop:*`, `platform:*`, `cadence:*`). If ambiguous, ask a clarifying question before proceeding.
-2. **Load state**: read `ops.config.json`, the bundle's current templates/rules/seeds, the current GitHub label set via `tracker-sync`.
+2. **Load state**: read `ops.config.json`, the bundle's current templates/rules/seeds, the current tracker label / tag set via `tracker-sync`.
 3. **Propose cascade**: for each signal, determine which files and keys need to change. Record decisions, not edits yet.
 4. **Dry-run diff**: materialise the full set of edits as a unified diff. Include:
    - `ops.config.json` key additions, updates, removals.
@@ -63,6 +63,23 @@ Reshapes a live installation when the project's context changes. Every change is
 | `dependency:add:*` / `dependency:drop:*` | `area_keywords`, regression-handler lookup paths, memory-seed removals for dropped stacks |
 | `platform:*` | `stack.platform`, memory seeds, branch patterns if relevant |
 | `cadence:*` | `labels.intent`, release umbrella list (re-derived), `workflow.phase_term` |
+| `tracker:migrate:<from>:<to>` | `ops.config.json -> trackers.dev` (new kind), `trackers.observed[]` (old kind appended as read-only), optional `trackers.release` update, new `migration` sidecar block on the config |
+
+## Tracker migration op
+
+Triggered when the user's intent matches `"we're migrating from <X> to <Y>"` or `"we're moving dev tickets from <X> to <Y>"` (X, Y ∈ {github, jira, linear, gitlab}). The signal classifier emits `tracker:migrate:<X>:<Y>` and the cascade runs through four staged invocations the user confirms one at a time:
+
+1. **Announce (diff stage)**: show the proposed diff that:
+   - Replaces `trackers.dev` (or `trackers.release` if the user named the release tracker) with a new target of kind `<Y>`. The user supplies the `<Y>` coordinates (site/project, workspace/team, or host/project_path) in the same prompt.
+   - Appends the outgoing `<X>` tracker to `trackers.observed[]` with `depth: "read-only"`. Read-only preserves the ability to reference historical issues via `tracker-sync` without ever writing back.
+   - Adds a top-level `migration` sidecar: `{ from: "<X>", to: "<Y>", started_at: "<ISO date>", cutover_at: null, notes: "<intent text>" }`. The schema does not require `migration`; it is a cooperative record skills read during the transition.
+2. **Dual-read (no-op mode)**: no diff; the skill prints guidance that both trackers are now authoritative within their scopes. `tracker-source-of-truth` formalises this. The agent emits cross-link comments of the form `[from <X>:<id>] now tracked as <Y>:<new-id>` on new items during this stage, so the provenance is on the record, not just in memory.
+3. **Cutover**: flip `migration.cutover_at` to today's ISO date. From this point forward the agent ignores `<X>` writes (the observed entry stays so historical reads keep working). Re-emits the `tracker-source-of-truth` guidance to the session.
+4. **Drop old** (optional, much later): remove the `<X>` entry from `trackers.observed[]` and delete the `migration` block. Run only when the team confirms no dangling references remain.
+
+Each stage is a separate `adapt-system` invocation with a dry-run diff, user approval, and an entry in the install manifest. The whole flow is deliberately slow so the team controls every tracker mutation explicitly; silently switching trackers mid-sprint would orphan every in-flight issue.
+
+Ambiguity halt (per `rules/ambiguity-halt.md`): if the proposed diff would touch any live PR / MR while `cutover_at === null`, or the `from` tracker has open issues the agent can't classify as "moving to <Y>" vs "staying on <X>", halt and surface the list of in-flight items before any mutation.
 
 ## Idempotency
 
@@ -92,7 +109,8 @@ If an intent contradicts a prior adapt ("we dropped the legacy analytics SDK" af
 ## Project contract
 
 - `project.name`, `project.repo` (for prefixing commit messages if the user asks for a commit).
-- `github.dev_projects[]`, `github.release_projects[]`, `github.observed_repos[]` (when relabelling propagates to multiple targets).
+- `trackers.dev`, `trackers.release`, `trackers.observed[]` (when relabelling propagates to multiple targets).
+- `migration` (optional sidecar) when a tracker migration is in flight; drives the cross-link comment format and the dual-read window.
 - `labels.type`, `labels.area`, `labels.priority`, `labels.intent`, `labels.size`, `labels.automation`, `labels.state_modifiers`.
 - `workflow.phase_term`, `workflow.pr.e2e_required_on`, `workflow.code_review.provider`.
 - `paths.templates`, `paths.reports` (to know where artefacts live).

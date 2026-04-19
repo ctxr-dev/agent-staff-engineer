@@ -76,6 +76,39 @@
       }
     },
 
+    "migration": {
+      "type": "object",
+      "description": "Optional sidecar recording an in-flight tracker migration. Written by adapt-system's `tracker:migrate:<from>:<to>` op and consulted by skills that emit cross-link comments during the dual-read window. Absent when no migration is in progress.",
+      "required": ["from", "to", "started_at"],
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string",
+          "enum": ["github", "jira", "linear", "gitlab"],
+          "description": "Outgoing tracker kind. Appended to trackers.observed[] with depth:read-only when the migration starts."
+        },
+        "to": {
+          "type": "string",
+          "enum": ["github", "jira", "linear", "gitlab"],
+          "description": "Incoming tracker kind. Becomes trackers.dev (and optionally trackers.release) on the migration's announce stage."
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 datetime when the migration was announced (adapt-system stage 1)."
+        },
+        "cutover_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "ISO 8601 datetime when the migration cut over (adapt-system stage 3). null while dual-read is in effect."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form note captured from the user's intent text at announce time."
+        }
+      }
+    },
+
     "workspace": {
       "type": "object",
       "description": "Optional multi-repo workspace binding. When present, each member declares its own tracker(s); a branch created under that member's path routes through its tracker instead of the project-level one. Absent for single-repo projects.",
