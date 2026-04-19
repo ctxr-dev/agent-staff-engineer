@@ -36,21 +36,23 @@ Centralises every tracker API call. Other skills describe what they want; `track
 
 ## Operations
 
-The method list is grouped by namespace on the Tracker interface (see `scripts/lib/trackers/tracker.mjs` for the canonical method names). Operations marked GitHub-only are implemented today on the github backend; on other backends they throw `NotSupportedError` until ported.
+The method list is grouped by namespace on the Tracker interface (see `scripts/lib/trackers/tracker.mjs` for the canonical method names). Each entry is tagged with its current implementation status on this PR: **implemented on github** means the github backend has working code; **stubbed on every backend** means every Tracker throws `NotSupportedError` today and the operation is part of the contract, pending a port of the pre-trackers gh-only code path. Real backends for jira / linear / gitlab land in follow-up PRs.
 
-- **`issues.createIssue`**: render the right template from `templates/` against caller-supplied placeholders, apply labels, link the release umbrella.
-- **`issues.updateIssueStatus`**: move an issue to a named status, never to Done. Status vocabulary comes from `trackers.<role>.status_values` (GitHub) or the per-kind equivalent (Jira workflow state, Linear workflow state, GitLab scoped label).
-- **`issues.comment`**: post a comment on an issue (e.g. a filled regression report).
-- **`issues.relabelIssue`** / **`labels.relabelBulk`**: apply a label taxonomy plan from `adapt-system`, including renames via add-new plus remove-old.
-- **`issues.getIssue`** / **`issues.listIssues`**: read-only lookups, respecting depth.
-- **`labels.reconcileLabels`**: compare the target's labels to `ops.config.json -> labels.*`; produce an add/edit/deprecate plan; apply on approval.
-- **`projects.reconcileProjectFields`** (GitHub-only today): ensure every field declared in the github tracker's `projects[].fields` exists on the right Project v2 board; add missing fields.
-- **`projects.listProjectItems`** (GitHub-only today): read-only snapshot of project items with their fields.
-- **`projects.updateProjectField`** (GitHub-only today): single-field update on a project item.
-- **`review.requestReview`** / **`review.pollForReview`** / **`review.fetchUnresolvedThreads`** / **`review.resolveThread`** / **`review.ciStateOnHead`**: the post-push review iteration surface used by `skills/pr-iteration`. GitHub implements all five via GraphQL; other kinds throw `NotSupportedError`.
-- **`create_release_umbrella`** (sub-op, not on the Tracker surface yet): create a Release umbrella issue (one per `labels.intent` value) using `templates/issue-release.md`. Currently calls `issues.createIssue` under the hood on the configured release tracker.
-- **`convert_rollout_to_issues`** (one-time sub-op): parse a legacy `rollout.md` into issues. Interactive; shows a batch preview of the first N and asks for approval before bulk-creating.
-- **`open_pr`** (GitHub-only today): open a PR with body from `templates/pr.md`, linking the dev issue with `workflow.pr.link_issue_with`. Does not merge. On non-github trackers, the equivalent (merge request on GitLab, branch review on others) surfaces `NotSupportedError` until ported.
+- **`issues.createIssue`** (stubbed on every backend): render the right template from `templates/` against caller-supplied placeholders, apply labels, link the release umbrella.
+- **`issues.updateIssueStatus`** (stubbed on every backend): move an issue to a named status, never to Done. Status vocabulary comes from `trackers.<role>.status_values` (GitHub) or the per-kind equivalent (Jira workflow state, Linear workflow state, GitLab scoped label).
+- **`issues.comment`** (stubbed on every backend): post a comment on an issue (e.g. a filled regression report).
+- **`issues.relabelIssue`** / **`labels.relabelBulk`** (stubbed on every backend): apply a label taxonomy plan from `adapt-system`, including renames via add-new plus remove-old.
+- **`issues.getIssue`** / **`issues.listIssues`** (stubbed on every backend): read-only lookups, respecting depth.
+- **`labels.reconcileLabels`** (stubbed on every backend): compare the target's labels to `ops.config.json -> labels.*`; produce an add/edit/deprecate plan; apply on approval.
+- **`projects.reconcileProjectFields`** (stubbed on every backend): ensure every field declared in the github tracker's `projects[].fields` exists on the right Project v2 board; add missing fields. The Project v2 concept is GitHub-specific; other tracker kinds will either surface `NotSupportedError` or map to a native equivalent when they ship.
+- **`projects.listProjectItems`** (stubbed on every backend): read-only snapshot of project items with their fields.
+- **`projects.updateProjectField`** (stubbed on every backend): single-field update on a project item.
+- **`review.requestReview`** / **`review.pollForReview`** / **`review.fetchUnresolvedThreads`** / **`review.resolveThread`** / **`review.ciStateOnHead`** (implemented on github; stubbed on jira/linear/gitlab): the post-push review iteration surface used by `skills/pr-iteration`. GitHub implements all five via GraphQL. This is the only namespace with a real github implementation on this PR; issues / projects / labels will be ported in follow-up work.
+- **`create_release_umbrella`** (sub-op, not on the Tracker surface yet; stubbed): create a Release umbrella issue (one per `labels.intent` value) using `templates/issue-release.md`. Will call `issues.createIssue` under the hood once that namespace is ported.
+- **`convert_rollout_to_issues`** (one-time sub-op; stubbed): parse a legacy `rollout.md` into issues. Interactive; shows a batch preview of the first N and asks for approval before bulk-creating.
+- **`open_pr`** (sub-op; stubbed on every backend): open a PR with body from `templates/pr.md`, linking the dev issue with `workflow.pr.link_issue_with`. Does not merge. On non-github trackers, the equivalent (merge request on GitLab, branch review on others) surfaces `NotSupportedError` until ported.
+
+Every stubbed op throws `NotSupportedError` tagged with `{ kind, namespace, op }` so callers can surface a pointed "not implemented" message and halt cleanly.
 
 ## Depth enforcement
 

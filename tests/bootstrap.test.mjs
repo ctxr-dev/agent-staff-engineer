@@ -402,6 +402,43 @@ describe("bootstrap.askTrackerTarget (round-7 T2: dev github repo validation)", 
     const t = await askTrackerTarget(ask, "github", "release", detection);
     assert.equal("repo" in t, false, "release tracker with empty repo must omit the field entirely");
   });
+
+  // Round-8 T1: release-tracker repo must be trimmed. A whitespace-only
+  // answer used to land in target.repo unchanged.
+  it("trims whitespace-only repo for role=release and omits the field", async () => {
+    const ask = makeQueuedAsk(["acme", "   ", ""]);
+    const t = await askTrackerTarget(ask, "github", "release", detection);
+    assert.equal("repo" in t, false, "whitespace-only repo must not be persisted");
+  });
+
+  // Round-8 T2: owner must be validated / trimmed across both roles
+  // via the shared askNonEmpty helper. Empty or whitespace-only owner
+  // re-prompts 3 times then throws, same as the dev-repo flow.
+  it("re-prompts on empty owner for role=dev and accepts the second non-empty try", async () => {
+    // Answers: owner="", owner="acme", repo, project-num.
+    const ask = makeQueuedAsk(["", "acme", "widgets", ""]);
+    const t = await askTrackerTarget(ask, "github", "dev", detection);
+    assert.equal(t.owner, "acme");
+  });
+
+  it("throws after 3 empty owner attempts", async () => {
+    const ask = makeQueuedAsk(["", "", ""]);
+    await assert.rejects(
+      () => askTrackerTarget(ask, "github", "dev", detection),
+      /non-empty GitHub owner after 3 attempts/,
+    );
+  });
+
+  it("trims whitespace-only owner (for both roles)", async () => {
+    // dev path
+    const askDev = makeQueuedAsk(["   ", "acme", "widgets", ""]);
+    const tDev = await askTrackerTarget(askDev, "github", "dev", detection);
+    assert.equal(tDev.owner, "acme", "whitespace-only owner must re-prompt");
+    // release path (no repo needed)
+    const askRelease = makeQueuedAsk(["\t\n", "acme", "", ""]);
+    const tRelease = await askTrackerTarget(askRelease, "github", "release", detection);
+    assert.equal(tRelease.owner, "acme");
+  });
 });
 
 describe("bootstrap.isOnPath (Node-native PATH search)", () => {

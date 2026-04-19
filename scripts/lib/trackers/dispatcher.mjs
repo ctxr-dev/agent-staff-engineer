@@ -81,13 +81,30 @@ export function pickReviewProvider(cfg) {
 }
 
 /**
- * Return the dev tracker kind without constructing a Tracker. Used by
- * callers that only need the kind string (logging, branch naming,
- * skill routing decisions). Throws the same errors as pickTracker if
- * the config is malformed.
+ * Return the tracker kind for the named role without constructing a
+ * Tracker. Used by callers that only need the kind string (logging,
+ * branch naming, skill routing decisions). Performs the same config
+ * validation as pickTracker (role check, trackers.<role> presence
+ * check, supported-kind check) but stops before calling any factory,
+ * so malformed / unsupported-kind configs still raise with the same
+ * pointed errors.
  */
 export function resolveTrackerKind(cfg, role = "dev") {
-  const { kind } = pickTracker(cfg, role);
+  if (role !== "dev" && role !== "release") {
+    throw new Error(`resolveTrackerKind: role must be "dev" or "release"; got ${JSON.stringify(role)}`);
+  }
+  const target = cfg?.trackers?.[role];
+  if (!target || typeof target !== "object" || Array.isArray(target)) {
+    throw new Error(
+      `resolveTrackerKind: ops.config.json is missing trackers.${role} (must be an object with a 'kind' discriminator)`,
+    );
+  }
+  const { kind } = target;
+  if (!SUPPORTED_KINDS.includes(kind)) {
+    throw new Error(
+      `resolveTrackerKind: unsupported tracker kind '${kind}' for role '${role}' (supported: ${SUPPORTED_KINDS.join(", ")})`,
+    );
+  }
   return kind;
 }
 

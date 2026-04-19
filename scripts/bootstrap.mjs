@@ -532,6 +532,34 @@ async function interview(rl, d, _bundleRef) {
 export const SUPPORTED_TRACKER_KINDS = Object.freeze(["github", "jira", "linear", "gitlab"]);
 
 /**
+ * Ask a prompt, normalise the answer (trim), re-prompt on empty input
+ * up to 3 times with a pointed stderr warning, and throw after the
+ * final attempt. Used for every required tracker-coordinate prompt
+ * (owner, repo) so whitespace-only or empty input surfaces an
+ * actionable error at prompt time rather than blowing up later in
+ * schema validation with a generic "required property" message.
+ *
+ * `humanLabel` appears in the warning and error text: "GitHub repo for
+ * the dev tracker", "GitHub owner", etc. Keep it short; the prompt
+ * question (first arg to `ask`) carries the conversational form.
+ */
+export async function askNonEmpty(ask, question, defaultValue, humanLabel) {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const raw = await ask(question, defaultValue);
+    const trimmed = String(raw ?? "").trim();
+    if (trimmed) return trimmed;
+    process.stderr.write(
+      `bootstrap: ${humanLabel} is required (attempt ${attempt}/${MAX_ATTEMPTS}). ` +
+      "Enter a non-empty value.\n",
+    );
+  }
+  throw new Error(
+    `bootstrap: could not obtain a non-empty ${humanLabel} after ${MAX_ATTEMPTS} attempts; re-run and enter a non-empty value`,
+  );
+}
+
+/**
  * Ask a tracker-kind question, normalise the answer (trim + lowercase),
  * validate against SUPPORTED_TRACKER_KINDS, and re-prompt up to 3 times
  * on invalid input before giving up and throwing. Bounding the retries
@@ -571,33 +599,32 @@ export async function askTrackerTarget(ask, kind, role, d, reference = null) {
   switch (kind) {
     case "github": {
       const [inferredOwner, inferredRepo] = (d.git.ownerRepo ?? "/").split("/");
-      const owner = await ask("   GitHub owner", reference?.kind === "github" ? reference.owner : inferredOwner);
+      // Owner is required across both roles. Validate with the same
+      // 3-attempt loop used for dev repo so a whitespace-only or empty
+      // answer produces a pointed error at prompt time rather than a
+      // schema-validation failure several steps later.
+      const owner = await askNonEmpty(
+        ask,
+        "   GitHub owner",
+        reference?.kind === "github" ? reference.owner : inferredOwner,
+        "GitHub owner",
+      );
       // Dev trackers require a concrete repo (schema enforces this via
-      // the trackers.dev if/then conditional). Loop on empty input up
-      // to 3 times so the user gets a pointed error at prompt time
-      // instead of a generic schema failure several interview steps
-      // later. Release trackers legitimately span repos, so empty is
-      // accepted there.
+      // the trackers.dev if/then conditional). Release trackers
+      // legitimately span repos, so empty is accepted there, but we
+      // still trim whitespace-only answers so `"   "` does not land as
+      // a real repo name in the config.
       let repo;
       if (role === "dev") {
-        const repoDefault = reference?.kind === "github" ? reference.repo ?? "" : inferredRepo;
-        const MAX_ATTEMPTS = 3;
-        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-          const raw = await ask("   GitHub repo", repoDefault);
-          repo = String(raw ?? "").trim();
-          if (repo) break;
-          process.stderr.write(
-            `bootstrap: GitHub repo is required for the dev tracker (attempt ${attempt}/${MAX_ATTEMPTS}). ` +
-            "Enter a repository name such as 'my-repo'.\n",
-          );
-        }
-        if (!repo) {
-          throw new Error(
-            "bootstrap: could not obtain a GitHub repo for the dev tracker after 3 attempts; re-run and enter a non-empty repository name",
-          );
-        }
+        repo = await askNonEmpty(
+          ask,
+          "   GitHub repo",
+          reference?.kind === "github" ? reference.repo ?? "" : inferredRepo,
+          "GitHub repo for the dev tracker",
+        );
       } else {
-        repo = await ask("   GitHub repo (optional for release tracker that spans repos)", "");
+        const raw = await ask("   GitHub repo (optional for release tracker that spans repos)", "");
+        repo = String(raw ?? "").trim();
       }
       const projectNumRaw = await ask(
         `   ${role === "dev" ? "Dev" : "Release"} Project v2 number (blank to skip)`,
@@ -633,6 +660,9 @@ export async function askTrackerTarget(ask, kind, role, d, reference = null) {
         depth: projectDepth,
         projects,
       };
+      // `repo` is already trimmed above; only persist when non-empty.
+      // Release trackers that legitimately span repos emit no `repo`
+      // key at all, so the schema's github release path accepts them.
       if (repo) target.repo = repo;
       return target;
     }
