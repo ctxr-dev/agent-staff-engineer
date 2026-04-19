@@ -8,6 +8,7 @@ do_not_trigger_on:
   - Issues in `Done` or closed without merge.
   - Targets where the dev_project has `depth: read-only`.
   - Without a valid ops.config.json (halt and point at bootstrap-ops-config).
+  - The dev issue already has an open PR whose branch is unknown locally, or two open PRs reference the same issue, or `github-sync` reports a status that contradicts local git state. Follow `rules/ambiguity-halt.md`: halt, surface the observation, ask; do not push, open, edit, close, or relabel anything while the question is open.
 writes_to_github: yes, via github-sync only (branch push, PR open, reviewer requests, status updates to In review, comments)
 writes_to_filesystem: yes, code edits plus a self-review report under paths.reports
 ---

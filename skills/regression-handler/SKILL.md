@@ -8,6 +8,7 @@ trigger_on:
 do_not_trigger_on:
   - New features that never worked (that is a bug but not a regression; use issue-bug template directly).
   - Questions that do not name specific behaviour ("something feels slow").
+  - The bug issue the user referenced is already closed with a resolution comment, OR a candidate "best match" has near-equal scores across multiple recently-closed issues. Follow `rules/ambiguity-halt.md`: halt, surface the observation, ask; do not reopen, relabel, or file a new issue while the question is open.
 writes_to_github: yes, via github-sync (reopen, comment with report, or create new linked issue), always behind user approval
 writes_to_filesystem: writes the regression report to paths.reports
 ---

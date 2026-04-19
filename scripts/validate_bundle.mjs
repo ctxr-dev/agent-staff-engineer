@@ -25,6 +25,14 @@
 //      .development/{shared,local,cache}/ must also reference
 //      rules/llm-wiki.md, so the write-through-wiki contract from
 //      AGENT.md is enforced at the skill level.
+//  12. bundle-index.md is complete and link-valid:
+//      - every markdown link inside bundle-index.md points at a
+//        file that exists on disk;
+//      - every file under skills/*/SKILL.md, rules/*.md,
+//        templates/*.md, memory-seeds/*.md appears at least once
+//        in bundle-index.md (no orphans);
+//      - when a new bundle doc is added, bundle-index must learn
+//        about it in the same PR.
 //
 
 import { readFile } from "node:fs/promises";
@@ -33,6 +41,7 @@ import { fileURLToPath } from "node:url";
 import { preflight } from "./preflight.mjs";
 import { walkFiles, readTextOrNull } from "./lib/fsx.mjs";
 import { validate } from "./lib/schema.mjs";
+import { extractIndexLinks, REQUIRED_INDEX_SURFACES } from "./lib/bundleIndex.mjs";
 
 await preflight();
 
@@ -318,6 +327,52 @@ async function checkWikiRuleReferences() {
   }
 }
 
+// ---- 12. bundle-index.md completeness + link integrity ----------------
+// The agent reads bundle-index.md first to route a task to the minimal
+// doc slice. That's only useful if the index is complete (every skill /
+// rule / template / memory seed is routable from it) and link-valid
+// (every path it names exists). Orphans silently reduce token economy;
+// dead links silently mislead the agent.
+//
+// Link-extraction logic is shared with tests/bundle-index.test.mjs via
+// scripts/lib/bundleIndex.mjs so prod and test can't drift.
+//
+// Failure messages use class prefixes (`missing-index:`, `dead-link:`,
+// `orphan:`) so a contributor scanning a validate run can tell cause
+// from effect at a glance (e.g. a renamed file produces one `dead-link`
+// plus one `orphan` unless both sides are updated).
+async function checkBundleIndex() {
+  const indexPath = join(BUNDLE_ROOT, "bundle-index.md");
+  const indexText = await readFile(indexPath, "utf8").catch(() => null);
+  if (indexText === null) {
+    err("missing-index: bundle-index.md is missing at the bundle root");
+    return;
+  }
+  const referenced = extractIndexLinks(indexText);
+  for (const rel of referenced) {
+    const abs = resolve(BUNDLE_ROOT, rel);
+    try {
+      await readFile(abs, "utf8");
+    } catch {
+      err(`dead-link: bundle-index.md -> ${rel} (file not found)`);
+    }
+  }
+  for (const { dir, nameFilter } of REQUIRED_INDEX_SURFACES) {
+    const abs = join(BUNDLE_ROOT, dir);
+    try {
+      for await (const fp of walkFiles(abs)) {
+        const rel = relative(BUNDLE_ROOT, fp).split(/[\\/]+/).join("/");
+        if (!nameFilter(rel)) continue;
+        if (!referenced.has(rel)) {
+          err(`orphan: ${rel} is not linked from bundle-index.md`);
+        }
+      }
+    } catch (e) {
+      if (e && e.code !== "ENOENT") throw e;
+    }
+  }
+}
+
 await checkLiterals();
 await checkDashes();
 await checkSkillStructure();
@@ -328,6 +383,7 @@ await checkRuleFrontmatter();
 await checkSeedFrontmatter();
 await checkNoRawHomePaths();
 await checkWikiRuleReferences();
+await checkBundleIndex();
 
 const summary = `validate_bundle: ${errors.length} error(s), ${warnings.length} warning(s)`;
 if (errors.length === 0 && warnings.length === 0) {

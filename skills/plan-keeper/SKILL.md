@@ -10,6 +10,7 @@ do_not_trigger_on:
   - The project's daily report folder. Not touched, ever.
   - The project's knowledge base. Not touched, ever.
   - Plans outside the configured plans_root.
+  - A plan one-liner flip would contradict the linked PR's current status as reported by `github-sync` (plan says `[x]` but PR says "In progress"), OR a plan claims a `related_github_issues` that no longer exists / has been reopened unexpectedly. Follow `rules/ambiguity-halt.md`: halt, surface the observation, ask; do not flip the checkbox or move the plan state while the question is open.
 writes_to_github: no
 writes_to_filesystem: plan files within paths.plans_root only
 ---
