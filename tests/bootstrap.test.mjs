@@ -10,6 +10,7 @@ import {
   canAutoPopulate,
   isOnPath,
   askTrackerKind,
+  askTrackerTarget,
   SUPPORTED_TRACKER_KINDS,
   pickDefaults,
   compose,
@@ -347,6 +348,59 @@ describe("bootstrap.askTrackerKind (round-3 T1: normalise + validate)", () => {
 
   it("SUPPORTED_TRACKER_KINDS is frozen (contract lock for downstream switches)", () => {
     assert.ok(Object.isFrozen(SUPPORTED_TRACKER_KINDS));
+  });
+});
+
+describe("bootstrap.askTrackerTarget (round-7 T2: dev github repo validation)", () => {
+  // Minimal fake-ask helper: yields scripted answers in order.
+  // askTrackerTarget calls ask twice (owner, repo) and then once more
+  // for the project-number question. The test only cares about the
+  // repo prompt's retry semantics.
+  const makeQueuedAsk = (answers) => {
+    const queue = [...answers];
+    return async () => {
+      if (queue.length === 0) throw new Error("fake ask exhausted");
+      return queue.shift();
+    };
+  };
+
+  const detection = {
+    git: { remote: "git@github.com:acme/foo.git", defaultBranch: "main", ownerRepo: "acme/foo" },
+    gh: { authed: true, login: "jane" },
+  };
+
+  it("accepts a non-empty repo for role=dev on the first attempt", async () => {
+    // Answers: owner, repo, project-num.
+    const ask = makeQueuedAsk(["acme", "widgets", ""]);
+    const t = await askTrackerTarget(ask, "github", "dev", detection);
+    assert.equal(t.repo, "widgets");
+  });
+
+  it("re-prompts on empty repo for role=dev and accepts the second non-empty try", async () => {
+    const ask = makeQueuedAsk(["acme", "", "widgets", ""]);
+    const t = await askTrackerTarget(ask, "github", "dev", detection);
+    assert.equal(t.repo, "widgets");
+  });
+
+  it("trims whitespace-only repo answers as empty for role=dev", async () => {
+    const ask = makeQueuedAsk(["acme", "   ", "\t\n", "widgets", ""]);
+    const t = await askTrackerTarget(ask, "github", "dev", detection);
+    assert.equal(t.repo, "widgets");
+  });
+
+  it("throws after 3 empty attempts for role=dev (pointed error)", async () => {
+    const ask = makeQueuedAsk(["acme", "", "", ""]);
+    await assert.rejects(
+      () => askTrackerTarget(ask, "github", "dev", detection),
+      /GitHub repo for the dev tracker after 3 attempts/,
+    );
+  });
+
+  it("accepts an empty repo for role=release (release trackers legitimately span repos)", async () => {
+    // Answers: owner, repo (empty), project-num (empty).
+    const ask = makeQueuedAsk(["acme", "", ""]);
+    const t = await askTrackerTarget(ask, "github", "release", detection);
+    assert.equal("repo" in t, false, "release tracker with empty repo must omit the field entirely");
   });
 });
 

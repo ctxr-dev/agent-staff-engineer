@@ -572,9 +572,33 @@ export async function askTrackerTarget(ask, kind, role, d, reference = null) {
     case "github": {
       const [inferredOwner, inferredRepo] = (d.git.ownerRepo ?? "/").split("/");
       const owner = await ask("   GitHub owner", reference?.kind === "github" ? reference.owner : inferredOwner);
-      const repo = role === "dev"
-        ? await ask("   GitHub repo", reference?.kind === "github" ? reference.repo ?? "" : inferredRepo)
-        : await ask("   GitHub repo (optional for release tracker that spans repos)", "");
+      // Dev trackers require a concrete repo (schema enforces this via
+      // the trackers.dev if/then conditional). Loop on empty input up
+      // to 3 times so the user gets a pointed error at prompt time
+      // instead of a generic schema failure several interview steps
+      // later. Release trackers legitimately span repos, so empty is
+      // accepted there.
+      let repo;
+      if (role === "dev") {
+        const repoDefault = reference?.kind === "github" ? reference.repo ?? "" : inferredRepo;
+        const MAX_ATTEMPTS = 3;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+          const raw = await ask("   GitHub repo", repoDefault);
+          repo = String(raw ?? "").trim();
+          if (repo) break;
+          process.stderr.write(
+            `bootstrap: GitHub repo is required for the dev tracker (attempt ${attempt}/${MAX_ATTEMPTS}). ` +
+            "Enter a repository name such as 'my-repo'.\n",
+          );
+        }
+        if (!repo) {
+          throw new Error(
+            "bootstrap: could not obtain a GitHub repo for the dev tracker after 3 attempts; re-run and enter a non-empty repository name",
+          );
+        }
+      } else {
+        repo = await ask("   GitHub repo (optional for release tracker that spans repos)", "");
+      }
       const projectNumRaw = await ask(
         `   ${role === "dev" ? "Dev" : "Release"} Project v2 number (blank to skip)`,
         role === "dev" ? "1" : "2",

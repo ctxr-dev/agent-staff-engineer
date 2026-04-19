@@ -19,8 +19,8 @@ Before acting, read the target project's `.claude/ops.config.json`. Refuse to ru
 
 Centralises every tracker API call. Other skills describe what they want; `tracker-sync` owns how it hits the API of the configured kind, how it respects per-target depth, and how it stays idempotent. Concrete backends live in `scripts/lib/trackers/`:
 
-- **GitHub**: full impl via `gh` CLI + GraphQL.
-- **Jira / Linear / GitLab**: stubs today; every op throws `NotSupportedError`. Callers catch and halt cleanly. Real backends land in follow-up PRs.
+- **GitHub**: partial impl via `gh` CLI + GraphQL. The `review.*` namespace is fully implemented (backs `skills/pr-iteration`); `issues.*`, `projects.*`, and `labels.*` are currently stubbed and throw `NotSupportedError` until ported from the pre-trackers gh-only path. Follow-up PRs wire those namespaces onto `scripts/lib/trackers/github.mjs`.
+- **Jira / Linear / GitLab**: every namespace stubbed today; every op throws `NotSupportedError`. Callers catch and halt cleanly. Real backends land in follow-up PRs.
 
 ## Inputs
 
