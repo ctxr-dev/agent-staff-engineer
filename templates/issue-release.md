@@ -1,7 +1,7 @@
 <!--
 agent-staff-engineer template: issue-release.md
 purpose: Release umbrella issue in the Release project (Project v2 role=release)
-rendered by: github-sync.create_issue (type=release) and release-tracker
+rendered by: tracker-sync.create_issue (type=release) and release-tracker
 ops.config keys read:
   - project.name
   - labels.intent                  (this umbrella represents one intent value)

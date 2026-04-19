@@ -65,7 +65,7 @@ Every code change the agent drives follows the same state machine from branch cr
 4. Produce a self-review artefact. Default provider is the external `ctxr-skill-code-review` skill; fall back only per `workflow.code_review.provider`.
 5. Open the PR with body rendered from `workflow.pr.body_template`, title from `workflow.pr.title`, linked with `workflow.pr.link_issue_with`.
 6. Request reviewers from `project.principals.reviewers_default` and any extras in `workflow.pr.request_reviewers`.
-7. Move the linked dev issue to `In review` via `github-sync`, not by direct `gh` call.
+7. Move the linked dev issue to `In review` via `tracker-sync`, not by direct `gh` call.
 8. Update the Release umbrella via `release-tracker` as a side-effect of the issue's status change.
 9. Keep the one-liner in the plan file in sync via `plan-keeper` when `workflow.pr.update_plan_oneliner` is true.
 10. On review comments, iterate, push again, keep the issue at `In review`. Never regress the status to `In progress` on a new push.
@@ -105,6 +105,6 @@ Gate 2, dev issue to Done, is the user's decision and is separate from the merge
 
 ## Related rules
 
-- [github-source-of-truth.md](github-source-of-truth.md)
+- [tracker-source-of-truth.md](tracker-source-of-truth.md)
 - [review-loop.md](review-loop.md)
 - [plan-management.md](plan-management.md)

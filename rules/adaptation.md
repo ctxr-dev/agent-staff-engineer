@@ -57,7 +57,7 @@ A "yes" to any two of the three is probably a shape-changing signal.
 ## Cascade targets (summary)
 
 - `ops.config.json -> compliance.*, stack.*, labels.*, area_keywords, workflow.phase_term`.
-- `labels.*` on every configured GitHub target (through `github-sync`).
+- `labels.*` on every configured GitHub target (through `tracker-sync`).
 - `templates/*.md` sections added, removed, or reworded.
 - `rules/product-*.md` created or removed (frontmatter `portable: false`).
 - Memory seeds installed or deprecated on the target's memory folder.
@@ -74,6 +74,6 @@ A signal that reverses an earlier adaptation is explicit and is handled. Example
 
 ## Related rules
 
-- [github-source-of-truth.md](github-source-of-truth.md): labels and issues on GitHub are part of the cascade.
+- [tracker-source-of-truth.md](tracker-source-of-truth.md): labels and issues on GitHub are part of the cascade.
 - [memory-hygiene.md](memory-hygiene.md): seeds installed via adaptation are treated the same as bootstrap seeds.
 - [no-dashes.md](no-dashes.md): applies to every authored surface the cascade touches.

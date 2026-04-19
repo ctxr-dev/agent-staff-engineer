@@ -10,7 +10,7 @@ do_not_trigger_on:
   - The project's daily report folder. Not touched, ever.
   - The project's knowledge base. Not touched, ever.
   - Plans outside the configured plans_root.
-  - A plan one-liner flip would contradict the linked PR's current status as reported by `github-sync` (plan says `[x]` but PR says "In progress"), OR a plan claims a `related_github_issues` that no longer exists / has been reopened unexpectedly. Follow `rules/ambiguity-halt.md` (halt, surface the observation, ask); do not flip the checkbox or move the plan state while the question is open.
+  - A plan one-liner flip would contradict the linked PR's current status as reported by `tracker-sync` (plan says `[x]` but PR says "In progress"), OR a plan claims a `related_github_issues` that no longer exists / has been reopened unexpectedly. Follow `rules/ambiguity-halt.md` (halt, surface the observation, ask); do not flip the checkbox or move the plan state while the question is open.
 writes_to_github: no
 writes_to_filesystem: plan files within paths.plans_root only
 ---
@@ -94,7 +94,7 @@ On every move, the skill:
 
 ## GitHub link sync
 
-When a plan's `related_github_issues` references issues, the skill can (via `github-sync` read-only) confirm the issues still exist and note any status changes next to the one-liner. It never edits the issue body or its status; that is `github-sync`'s job under other skills' approval.
+When a plan's `related_github_issues` references issues, the skill can (via `tracker-sync` read-only) confirm the issues still exist and note any status changes next to the one-liner. It never edits the issue body or its status; that is `tracker-sync`'s job under other skills' approval.
 
 When `workflow.pr.update_plan_oneliner` is true and `dev-loop` crosses a gate, `dev-loop` asks `plan-keeper` to flip the corresponding one-liner checkbox. The keeper's job is the move, not the decision.
 
@@ -119,7 +119,7 @@ When `workflow.pr.update_plan_oneliner` is true and `dev-loop` crosses a gate, `
 
 ## Cross-skill handoffs
 
-- `github-sync` (read-only only) for link sync.
+- `tracker-sync` (read-only only) for link sync.
 - Called by `dev-loop` for one-liner flips.
 - Called by `adapt-system` after `paths.*` changes (migrate existing plans into new folder names).
 

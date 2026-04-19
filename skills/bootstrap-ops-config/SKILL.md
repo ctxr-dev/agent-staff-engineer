@@ -65,7 +65,7 @@ Turns a fresh clone into a configured target. Two-phase: silent detection, then 
 
 - Called by `install.mjs` during the one-command install flow.
 - Hands off to `install_memory_seeds.mjs` after writing the config, so seeds get filtered by the declared stack tags.
-- Never calls `github-sync`, `dev-loop`, `release-tracker`, `regression-handler`, or `plan-keeper`.
+- Never calls `tracker-sync`, `dev-loop`, `release-tracker`, `regression-handler`, or `plan-keeper`.
 
 ## Idempotency
 

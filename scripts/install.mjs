@@ -645,7 +645,7 @@ function buildClaudeMdManagedBlock(cfg, agentPrefix) {
     "",
     `**Before acting on any task, read the bundle rules as wrappers at**:`,
     "",
-    `- ${rule("github-source-of-truth")}`,
+    `- ${rule("tracker-source-of-truth")}`,
     `- ${rule("pr-workflow")}`,
     `- ${rule("no-dashes")}`,
     `- ${rule("plan-management")}`,

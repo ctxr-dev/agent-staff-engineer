@@ -68,7 +68,7 @@ Examples per skill, indicative, not exhaustive:
 - **pr-iteration**: a review thread author is neither a configured bot nor the project owner AND the comment contradicts a prior commit of the loop; the PR's HEAD advanced while the round was in-flight (someone else pushed).
 - **regression-handler**: the bug issue the user referenced is already closed with a resolution comment; a candidate "best match" matches multiple recently-closed issues with near-equal scores.
 - **adapt-system**: the proposed diff would touch a file the validator flags as hand-authored (e.g. `bundle-index.md`, `.gitignore`, `CLAUDE.md` above the managed marker); two different user intents in the same session would cascade to contradictory labels.
-- **plan-keeper**: a plan one-liner flip would contradict the PR's current status as reported by `github-sync` (plan says `[x]`, PR says "In progress").
+- **plan-keeper**: a plan one-liner flip would contradict the PR's current status as reported by `tracker-sync` (plan says `[x]`, PR says "In progress").
 
 Each skill's SKILL.md lists its specific trigger conditions. The list above is for orientation; skills own the truth.
 
@@ -84,7 +84,7 @@ No silent resumption. The skill always confirms in one sentence what it understo
 
 ## Related
 
-- [rules/github-source-of-truth.md](github-source-of-truth.md): GitHub is authoritative; local files are projections. Ambiguity is usually a local-vs-remote divergence.
+- [rules/tracker-source-of-truth.md](tracker-source-of-truth.md): GitHub is authoritative; local files are projections. Ambiguity is usually a local-vs-remote divergence.
 - [rules/pr-workflow.md](pr-workflow.md): the two human gates (merge, Done) are absolute. This rule adds a third class of halt: anything weird.
 - [rules/pr-iteration.md](pr-iteration.md): iteration loop invokes this contract when the three exit conditions cannot be determined.
 - [bundle-index.md](../bundle-index.md): routing doc; this rule is referenced from the "Iterating on review comments", "Triaging a regression", "Writing / keeping plans in sync", and "Bootstrap + config changes" intents.

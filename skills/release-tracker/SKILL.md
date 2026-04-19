@@ -10,7 +10,7 @@ do_not_trigger_on:
   - Release projects whose `depth` is `read-only`.
   - Projects with zero release_projects configured.
   - The recompute would flip an umbrella to Done while one or more linked dev issues are reopened OR their relation to the umbrella was broken between fetch and write. Follow `rules/ambiguity-halt.md` (halt, surface the mismatch and the specific issue numbers, ask whether to exclude, re-link, or wait); do not flip the umbrella status or mutate the body while the question is open.
-writes_to_github: yes, via github-sync, only on release umbrellas
+writes_to_github: yes, via tracker-sync, only on release umbrellas
 writes_to_filesystem: no
 ---
 
@@ -23,7 +23,7 @@ Owns release umbrella state. Never touches dev issues. Never moves a dev issue t
 ## Inputs
 
 - A release umbrella issue reference, or `--all` to recompute every umbrella in every `release_project`.
-- A specific dev-issue change event (from `github-sync` or a user request).
+- A specific dev-issue change event (from `tracker-sync` or a user request).
 
 ## Outputs
 
@@ -72,17 +72,17 @@ A recompute against the same underlying state is a no-op write (the skill compar
 
 - **Umbrella missing the required block placeholders**: rewrite the body from `templates/issue-release.md`, preserving fields; warn.
 - **Linked relation broken (stale reference)**: log the stale link, continue with remaining; surface at the end.
-- **github-sync rate-limited**: back off per `github-sync`'s retry policy.
+- **tracker-sync rate-limited**: back off per `tracker-sync`'s retry policy.
 
 ## Cross-skill handoffs
 
-- Triggered by `github-sync` (via an event hook or explicit call) when linked issues change.
+- Triggered by `tracker-sync` (via an event hook or explicit call) when linked issues change.
 - Called by `adapt-system` after a change to `labels.intent` values (adds, renames, or removals), to recreate or reconcile umbrellas.
-- Consumes `github-sync` for every read and write.
+- Consumes `tracker-sync` for every read and write.
 
 ## Release umbrella creation
 
-Umbrellas are created by `github-sync.create_release_umbrella` when a new `labels.intent` value exists without a corresponding umbrella on any configured `release_project`. Title template from `workflow.release.umbrella_title`. `release-tracker` verifies one umbrella exists per intent value and asks `github-sync` to create missing ones on approval.
+Umbrellas are created by `tracker-sync.create_release_umbrella` when a new `labels.intent` value exists without a corresponding umbrella on any configured `release_project`. Title template from `workflow.release.umbrella_title`. `release-tracker` verifies one umbrella exists per intent value and asks `tracker-sync` to create missing ones on approval.
 
 ## Project contract
 

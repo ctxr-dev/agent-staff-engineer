@@ -11,7 +11,7 @@ do_not_trigger_on:
   - Intent is ambiguous; ask a clarifying question first.
   - The proposed cascading diff would touch a path the adapt-system skill never owns (`bundle-index.md`, `.gitignore`, any file in `.github/`, or any region of `CLAUDE.md` outside the managed block delimited by the `<!-- agent:block -->` markers). Follow `rules/ambiguity-halt.md` (halt, surface the observation, ask); do not apply the diff while the question is open.
   - Two different user intents in the same session cascade to contradictory labels or contradictory `ops.config.json` values. Follow `rules/ambiguity-halt.md` (halt, name the collision, ask which intent wins).
-writes_to_github: yes, but only via github-sync (label taxonomy changes, relabelling existing issues on user approval)
+writes_to_github: yes, but only via tracker-sync (label taxonomy changes, relabelling existing issues on user approval)
 writes_to_filesystem: yes, with diff preview and explicit user approval
 ---
 
@@ -24,7 +24,7 @@ Reshapes a live installation when the project's context changes. Every change is
 ## Inputs
 
 - Current `ops.config.json`, validated against the schema.
-- Current label set from GitHub (via `github-sync`).
+- Current label set from GitHub (via `tracker-sync`).
 - Current template, rule, and memory-seed state in the bundle.
 - Free-form user intent string, e.g. `"we handle PHI now"` or `"drop TelemetryDeck; we're moving to PostHog"`.
 - Optional structured flags (`--add-stack swift`, `--drop-area telemetry`).
@@ -33,12 +33,12 @@ Reshapes a live installation when the project's context changes. Every change is
 
 - A unified diff across (potentially) every file listed in "Cascade targets" below.
 - A label reconciliation plan (adds, renames, deprecations) presented alongside the diff.
-- On user approval, writes the file changes and calls `github-sync` to apply the label plan.
+- On user approval, writes the file changes and calls `tracker-sync` to apply the label plan.
 
 ## Flow
 
 1. **Parse intent**: classify into one or more signals (`domain:*`, `compliance:*`, `stack:add:*`, `stack:drop:*`, `audience:*`, `dependency:add:*`, `dependency:drop:*`, `platform:*`, `cadence:*`). If ambiguous, ask a clarifying question before proceeding.
-2. **Load state**: read `ops.config.json`, the bundle's current templates/rules/seeds, the current GitHub label set via `github-sync`.
+2. **Load state**: read `ops.config.json`, the bundle's current templates/rules/seeds, the current GitHub label set via `tracker-sync`.
 3. **Propose cascade**: for each signal, determine which files and keys need to change. Record decisions, not edits yet.
 4. **Dry-run diff**: materialise the full set of edits as a unified diff. Include:
    - `ops.config.json` key additions, updates, removals.
@@ -49,7 +49,7 @@ Reshapes a live installation when the project's context changes. Every change is
    - GitHub label taxonomy plan.
 5. **Narrate**: for each change, emit a one-line reason tying it back to the original intent. No silent edits.
 6. **Prompt user**: approve, edit, or reject. Edits can narrow scope ("skip the label changes, keep the config").
-7. **Apply** (only on approval): write file changes, commit nothing (user owns commits), call `github-sync` for label plan.
+7. **Apply** (only on approval): write file changes, commit nothing (user owns commits), call `tracker-sync` for label plan.
 8. **Record**: append an entry to the agent-scoped install manifest (`.claude/.<scoped-agent-slug>-install-manifest.json`) with the signals, the diff summary, and the date.
 
 ## Cascade targets
@@ -85,7 +85,7 @@ If an intent contradicts a prior adapt ("we dropped the legacy analytics SDK" af
 
 ## Cross-skill handoffs
 
-- `github-sync`: to inspect and reconcile labels and to relabel existing issues when the taxonomy shifts.
+- `tracker-sync`: to inspect and reconcile labels and to relabel existing issues when the taxonomy shifts.
 - `install_memory_seeds.mjs`: to install or remove memory seeds when `stack.*` changes.
 - Does not call `dev-loop`, `release-tracker`, `regression-handler`, `plan-keeper`.
 

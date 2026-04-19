@@ -9,7 +9,7 @@ do_not_trigger_on:
   - New features that never worked (that is a bug but not a regression; use issue-bug template directly).
   - Questions that do not name specific behaviour ("something feels slow").
   - The bug issue the user referenced is already closed with a resolution comment, OR a candidate "best match" has near-equal scores across multiple recently-closed issues. Follow `rules/ambiguity-halt.md` (halt, surface the observation, ask); do not reopen, relabel, or file a new issue while the question is open.
-writes_to_github: yes, via github-sync (reopen, comment with report, or create new linked issue), always behind user approval
+writes_to_github: yes, via tracker-sync (reopen, comment with report, or create new linked issue), always behind user approval
 writes_to_filesystem: writes the regression report to paths.reports
 ---
 
@@ -34,7 +34,7 @@ Makes regression triage reproducible. Every proposed action is logged in the rep
   - Reopen issue `#NNN` (if its close date is within a tunable window and the match is strong).
   - Create new bug issue linked to `#NNN` as the suspected origin.
   - Further investigation needed (no match strong enough).
-- On approval, `github-sync` executes the chosen action.
+- On approval, `tracker-sync` executes the chosen action.
 
 ## Lookup order
 
@@ -73,7 +73,7 @@ Running `regression-handler` twice on the same input produces the same report an
 
 ## Cross-skill handoffs
 
-- `github-sync` for every read and for the approved write action.
+- `tracker-sync` for every read and for the approved write action.
 - `plan-keeper` if the user wants to open a plan file for the investigation (optional).
 - Does not call `dev-loop`, `release-tracker`, `adapt-system`, `bootstrap-ops-config`.
 

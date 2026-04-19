@@ -60,5 +60,5 @@ On a given project, Claude memory should capture:
 
 ## Related rules
 
-- [github-source-of-truth.md](github-source-of-truth.md): memory is not source of truth.
+- [tracker-source-of-truth.md](tracker-source-of-truth.md): memory is not source of truth.
 - [adaptation.md](adaptation.md): adapt-system may propose installing new seeds when stack changes, but never rewrites the user's memory silently.

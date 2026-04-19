@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@ctxr/agent-staff-engineer)](https://www.npmjs.com/package/@ctxr/agent-staff-engineer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A portable, adaptive Claude Code agent that acts as a staff engineer for any project. GitHub Issues + Projects are the single source of truth. The agent drives the full dev loop (branch, code, local review, self-review, PR open, reviewer requests, status sync up to In review) and reserves exactly two gates for you: **PR merge** and **dev-issue Done**.
+A portable, adaptive Claude Code agent that acts as a staff engineer for any project. The configured issue tracker (GitHub, Jira, Linear, or GitLab) is the single source of truth. The agent drives the full dev loop (branch, code, local review, self-review, PR / MR open, reviewer requests, status sync up to In review) and reserves exactly two gates for you: **merge** and **dev-issue Done**.
 
 ## Quick start (via @ctxr/kit)
 
@@ -19,7 +19,7 @@ Then in Claude Code, ask Claude to run the agent, for example:
 Run the agent-staff-engineer and help me set it up for this project.
 ```
 
-On first run, the agent detects that `.claude/ops.config.json` is missing and self-bootstraps: it runs its own installer, launches an interactive interview (work tracking style, release cadence, e2e setup, which GitHub projects to observe and at what depth, compliance context), writes `ops.config.json`, generates thin wrapper files at the canonical Claude Code locations, and hands control back.
+On first run, the agent detects that `.claude/ops.config.json` is missing and self-bootstraps: it runs its own installer, launches an interactive interview (work tracking style, which tracker hosts dev issues and release umbrellas (GitHub / Jira / Linear / GitLab), release cadence, e2e setup, observation depth, compliance context), writes `ops.config.json`, generates thin wrapper files at the canonical Claude Code locations, and hands control back.
 
 On every later invocation the agent acts on your request directly, guided by the configured rules.
 
@@ -28,7 +28,12 @@ On every later invocation the agent acts on your request directly, guided by the
 - [Claude Code](https://claude.ai/code) CLI or IDE extension.
 - **Node.js 20+** (preflight enforces this and offers platform-specific install guidance on mismatch).
 - **Git** (for the bundle repo + dev loop operations).
-- **GitHub CLI** (`gh`) authed with scopes `repo`, `project`, `read:org`, `workflow`.
+- A tracker CLI or token matching `trackers.*.kind` in `ops.config.json`:
+  - **GitHub**: `gh` CLI authed with scopes `repo`, `project`, `read:org`, `workflow`.
+  - **Jira**: `JIRA_API_TOKEN` env var (optionally `jira-cli` if present).
+  - **Linear**: `LINEAR_API_KEY` env var.
+  - **GitLab**: `GITLAB_TOKEN` env var (optionally `glab` if present).
+  - Jira / Linear / GitLab backends are placeholders on this release; every op throws `NotSupportedError`. Real backends land in follow-up releases.
 
 ## What you get
 
@@ -37,13 +42,13 @@ On every later invocation the agent acts on your request directly, guided by the
 - **Auto-update via `git pull`** inside the bundle folder. Wrappers reference stable in-bundle paths, so content updates take effect immediately. Run `install.mjs --update` only when the canonical file set or schema changes.
 - **Interactive bootstrap** asks the right questions; user input wins over heuristic detections.
 - **Continuous adaptation**: the `adapt-system` skill takes free-form user intent ("we handle PHI now", "we added a Chrome extension target", "dropped the legacy analytics SDK") and produces cascading diffs across config, labels, templates, rules, and memory seeds. Idempotent, diff-previewed, never silent.
-- **Multi-target GitHub observation**: the config supports multiple dev projects, multiple release projects, and additional watched repos, each with its own depth setting (`full`, `umbrella-only`, `assigned-to-principals`, `labeled:X`, `issues-only`, `read-only`).
+- **Multi-tracker observation**: the config's `trackers` block binds a dev tracker, a release tracker, and zero or more read-only `observed` trackers (each independently kinded across github / jira / linear / gitlab). Every entry carries its own depth setting (`full`, `umbrella-only`, `assigned-to-principals`, `labeled:X`, `issues-only`, `read-only`). Multi-repo workspaces route per-member via the optional top-level `workspace.members[]` block.
 - **Code review default**: the `dev-loop` skill delegates self-review to [`@ctxr/skill-code-review`](https://github.com/ctxr-dev/skill-code-review) (up to 18 specialist reviewers, GO / CONDITIONAL / NO-GO verdict). Configurable; falls back to an internal template on projects that have not installed the external skill.
 
 ## Hard rules the agent never breaks
 
-- GitHub is the source of truth. Local files are projections.
-- The agent **never merges a PR**. Merge belongs to you.
+- The configured tracker(s) in `trackers.*` are the source of truth. Local files are projections.
+- The agent **never merges a PR / MR**. Merge belongs to you.
 - The agent **never sets a dev issue to Done**. Done belongs to you.
 - No em or en dashes in any Claude-authored text. Use commas, colons, parentheses, or line breaks.
 - The agent does not touch `daily/` or `knowledge/` folders. Those belong to the project's own hooks.
@@ -60,8 +65,8 @@ The scripts self-locate via `import.meta.url`, so they work regardless of where 
 ## Structure
 
 - `AGENT.md`: Claude Code agent entry point with self-bootstrap instructions.
-- `skills/`: seven workflow skills (bootstrap-ops-config, adapt-system, github-sync, dev-loop, release-tracker, regression-handler, plan-keeper).
-- `rules/`: seven portable process rules (GitHub as truth, PR workflow, no dashes, plan management, review loop, memory hygiene, adaptation).
+- `skills/`: seven workflow skills (bootstrap-ops-config, adapt-system, tracker-sync, dev-loop, release-tracker, regression-handler, plan-keeper).
+- `rules/`: portable process rules (tracker as source of truth, PR workflow, pr-iteration, ambiguity-halt, no dashes, plan management, review loop, memory hygiene, adaptation, llm-wiki).
 - `memory-seeds/`: eight starter memory entries, stack-tag filtered at install time.
 - `templates/`: ten issue / PR / report templates with `{{ placeholder }}` substitution.
 - `schemas/ops.config.schema.json`: strict JSON Schema validated on every install.
