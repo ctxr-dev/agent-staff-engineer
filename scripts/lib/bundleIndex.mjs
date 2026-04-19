@@ -28,7 +28,7 @@ export function extractIndexLinks(text) {
   // Negative lookbehind `(?<!!)` rejects `![alt](path)` image syntax
   // while still matching `[text](path)`. Without the lookbehind, an
   // image link would be treated as a routing entry and get orphan
-  // credit — silently satisfying the check without actually routing
+  // credit silently satisfying the check without actually routing
   // the file to any reader.
   const LINK_RE = /(?<!!)\[[^\]]+\]\(([^)\s#][^)\s]*?)(#[^)\s]*)?\)/g;
   const out = new Set();
@@ -37,6 +37,16 @@ export function extractIndexLinks(text) {
     const target = m[1];
     if (/^https?:\/\//.test(target)) continue;
     if (target.startsWith("mailto:")) continue;
+    // Reject anything that escapes the bundle root. The validator
+    // later calls readFile(resolve(BUNDLE_ROOT, target)), and without
+    // this filter an absolute path ("/etc/passwd") or a parent-traversal
+    // ("../../host-file") would be read off the filesystem, making CI
+    // state depend on host layout. Accept only paths that stay inside
+    // the bundle: no leading "/", no ".." segment. This is a defense-in-
+    // depth filter; the validator still re-checks via readFile exist.
+    if (target.startsWith("/")) continue;
+    const segments = target.split("/");
+    if (segments.some((s) => s === "..")) continue;
     out.add(target);
   }
   return out;

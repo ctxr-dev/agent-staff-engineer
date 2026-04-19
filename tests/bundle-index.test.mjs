@@ -7,7 +7,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { walkFiles } from "../scripts/lib/fsx.mjs";
@@ -24,11 +24,27 @@ async function loadIndexLinks() {
 }
 
 // Walks `dir` (required to exist) and returns bundle-relative paths
-// filtered by `nameFilter`. Throws on ENOENT: the caller is asking
-// about a surface the bundle-index MUST cover, so a missing dir is a
-// structural regression, not a skip.
+// filtered by `nameFilter`. Throws an explicit error when `dir` is
+// missing: the caller is asking about a surface the bundle-index MUST
+// cover, so a missing dir is a structural regression. `walkFiles()`
+// itself swallows ENOENT (yields nothing), so we stat() up front to
+// surface a clear message rather than let it fall through to a
+// confusing "expected at least one doc" assertion failure downstream.
 async function collectRequiredDocs(dir, nameFilter) {
   const abs = join(BUNDLE_ROOT, dir);
+  try {
+    const s = await stat(abs);
+    if (!s.isDirectory()) {
+      throw new Error(`collectRequiredDocs: ${dir} is not a directory`);
+    }
+  } catch (e) {
+    if (e && e.code === "ENOENT") {
+      throw new Error(
+        `collectRequiredDocs: required bundle surface ${dir}/ does not exist`,
+      );
+    }
+    throw e;
+  }
   const rels = [];
   for await (const fp of walkFiles(abs)) {
     const rel = relative(BUNDLE_ROOT, fp).split(/[\\/]+/).join("/");
@@ -59,6 +75,26 @@ describe("extractIndexLinks: regex behaviour (pinned fixtures)", () => {
   it("rejects fragment-only anchors", () => {
     const out = extractIndexLinks("[x](#only-anchor)");
     assert.equal(out.size, 0);
+  });
+  it("rejects absolute paths (would escape bundle root)", () => {
+    const out = extractIndexLinks("[x](/etc/passwd) [y](/absolute/in/repo.md)");
+    assert.equal(out.size, 0, "leading '/' must not produce a reference; avoids host-dependent reads in CI");
+  });
+  it("rejects parent-traversal paths (would escape bundle root)", () => {
+    const cases = [
+      "[x](../outside.md)",
+      "[y](a/../../escape.md)",
+      "[z](a/..)",
+    ];
+    for (const text of cases) {
+      const out = extractIndexLinks(text);
+      assert.equal(out.size, 0, `'..' segment in ${text} must not produce a reference`);
+    }
+  });
+  it("accepts legitimate relative paths with `.` or subdirs (no '..')", () => {
+    const out = extractIndexLinks("[x](./same-dir.md) [y](sub/dir/file.md)");
+    assert.ok(out.has("./same-dir.md"));
+    assert.ok(out.has("sub/dir/file.md"));
   });
   it("extracts multiple links from mixed prose", () => {
     const text = "See [a](one.md) and [b](two.md#x); not [this](https://y) and not ![img](p.png).";
