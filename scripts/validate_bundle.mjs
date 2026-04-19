@@ -27,7 +27,11 @@
 //      AGENT.md is enforced at the skill level.
 //  12. bundle-index.md is complete and link-valid:
 //      - every markdown link inside bundle-index.md points at a
-//        file that exists on disk;
+//        file that exists on disk (dead-link failures include the
+//        OS error code when it is not a plain "file not found");
+//      - every required surface directory (skills/, rules/,
+//        templates/, memory-seeds/) exists as a directory, not
+//        just "empty or missing" (missing-surface);
 //      - every file under skills/*/SKILL.md, rules/*.md,
 //        templates/*.md, memory-seeds/*.md appears at least once
 //        in bundle-index.md (no orphans);
@@ -35,7 +39,7 @@
 //        about it in the same PR.
 //
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { preflight } from "./preflight.mjs";
@@ -343,32 +347,64 @@ async function checkWikiRuleReferences() {
 // plus one `orphan` unless both sides are updated).
 async function checkBundleIndex() {
   const indexPath = join(BUNDLE_ROOT, "bundle-index.md");
-  const indexText = await readFile(indexPath, "utf8").catch(() => null);
-  if (indexText === null) {
-    err("missing-index: bundle-index.md is missing at the bundle root");
-    return;
+  let indexText;
+  try {
+    indexText = await readFile(indexPath, "utf8");
+  } catch (e) {
+    if (e && e.code === "ENOENT") {
+      err("missing-index: bundle-index.md is missing at the bundle root");
+      return;
+    }
+    // Surface EACCES / EISDIR / etc. with their real class instead of
+    // masking them as "missing" — a permission or IO fault is a bug the
+    // contributor needs to see clearly, not a false "just add the file".
+    throw e;
   }
   const referenced = extractIndexLinks(indexText);
   for (const rel of referenced) {
     const abs = resolve(BUNDLE_ROOT, rel);
     try {
-      await readFile(abs, "utf8");
-    } catch {
-      err(`dead-link: bundle-index.md -> ${rel} (file not found)`);
+      // Existence probe only; no need to read the bytes. Using stat()
+      // over readFile() lets us distinguish ENOENT from EACCES/EISDIR
+      // and include the OS error code in the message so a contributor
+      // can act on it without guessing.
+      await stat(abs);
+    } catch (e) {
+      const code = e && e.code ? e.code : "unknown";
+      if (code === "ENOENT") {
+        err(`dead-link: bundle-index.md -> ${rel} (file not found)`);
+      } else {
+        err(`dead-link: bundle-index.md -> ${rel} (${code})`);
+      }
     }
   }
   for (const { dir, nameFilter } of REQUIRED_INDEX_SURFACES) {
     const abs = join(BUNDLE_ROOT, dir);
+    // Surface-dir precondition: the directory MUST exist and be a
+    // directory. walkFiles() swallows ENOENT silently (yields nothing),
+    // which would let a missing required surface slip through as "no
+    // orphans found" — exactly the structural regression the tests
+    // already treat as fatal. Mirror the test's stat() check here so
+    // validate + test agree on what counts as a broken bundle.
     try {
-      for await (const fp of walkFiles(abs)) {
-        const rel = relative(BUNDLE_ROOT, fp).split(/[\\/]+/).join("/");
-        if (!nameFilter(rel)) continue;
-        if (!referenced.has(rel)) {
-          err(`orphan: ${rel} is not linked from bundle-index.md`);
-        }
+      const s = await stat(abs);
+      if (!s.isDirectory()) {
+        err(`missing-surface: required bundle surface ${dir}/ is not a directory`);
+        continue;
       }
     } catch (e) {
-      if (e && e.code !== "ENOENT") throw e;
+      if (e && e.code === "ENOENT") {
+        err(`missing-surface: required bundle surface ${dir}/ does not exist`);
+        continue;
+      }
+      throw e;
+    }
+    for await (const fp of walkFiles(abs)) {
+      const rel = relative(BUNDLE_ROOT, fp).split(/[\\/]+/).join("/");
+      if (!nameFilter(rel)) continue;
+      if (!referenced.has(rel)) {
+        err(`orphan: ${rel} is not linked from bundle-index.md`);
+      }
     }
   }
 }

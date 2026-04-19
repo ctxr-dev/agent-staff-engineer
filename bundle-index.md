@@ -16,7 +16,7 @@ When you add or remove a bundle doc, update this file in the same PR.
 - [README.md](README.md): end-user-facing; skip at runtime unless the user is asking a README question.
 - [INSTALL.md](INSTALL.md): installer reference; skip at runtime.
 - [CONTRIBUTING.md](CONTRIBUTING.md): contributor workflow; skip at runtime.
-- [design/ARCHITECTURE.md](design/ARCHITECTURE.md): 646-line deep dive; load only when debugging structural questions or proposing a cross-cutting change.
+- [design/ARCHITECTURE.md](design/ARCHITECTURE.md): deep dive; load only when debugging structural questions or proposing a cross-cutting change.
 
 ## By intent
 
