@@ -1,5 +1,21 @@
 name: Release
 
+# Opens a release PR that bumps package.json (and npm-shrinkwrap.json
+# if present) to the next semver. The PR goes through whatever
+# branch-protection rules `main` has configured (review, code
+# scanning, CODEOWNERS, thread resolution) exactly like any other
+# change; the bot does not push directly to main. Once the PR
+# merges, a separate `tag-on-main.yml` workflow creates the
+# matching `v<version>` tag.
+#
+# Publishing does NOT auto-chain: tags pushed with the default
+# `GITHUB_TOKEN` do not trigger `on: push: tags` workflows (GitHub
+# design, to prevent workflow recursion). After the tag lands,
+# dispatch `publish.yml` against the tag via Actions UI (documented
+# in README `## Releasing`). To remove that manual step, swap the
+# tag-push credential in `tag-on-main.yml` for a GitHub App token
+# or fine-grained PAT.
+
 on:
   workflow_dispatch:
     inputs:
@@ -12,42 +28,176 @@ on:
           - minor
           - major
 
-permissions:
-  contents: write
+# Tighten default permissions at workflow scope to nothing; grant
+# only what each job needs explicitly below. Jobs added later don't
+# silently inherit write.
+permissions: {}
+
+# Serialize release dispatches so two operators can't race on the
+# same `release/v<version>` branch. A queued run picks up after
+# the earlier one finishes.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Bump version & tag
+  open-release-pr:
+    name: Open release PR
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push release/v<version> branch
+      pull-requests: write   # open/edit the release PR
 
     steps:
+      - name: Refuse dispatch from non-main refs
+        # `workflow_dispatch` can be fired from the UI against any
+        # ref. We want the run to show as FAILED with a clear
+        # error when an operator accidentally picks a feature
+        # branch, not skipped/green the way a job-level `if` would
+        # render. Releases always cut from main.
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Release workflow must be dispatched from main; got ${{ github.ref }}."
+          echo "::error::Switch the branch selector in the Actions UI to \`main\` and retry."
+          exit 1
+
       - uses: actions/checkout@v4
         with:
+          # Defensive double-belt: even if the dispatch came from
+          # a non-main ref and the early step above is somehow
+          # bypassed, explicitly check out main so the bump commit
+          # is always parented to it.
+          ref: main
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-
-      - name: Install dev deps
-        run: npm ci
-
-      - name: Validate + test before bump
-        run: |
-          npm run validate
-          npm test
+          # No `cache: npm` here: this job only runs `npm version
+          # --no-git-tag-version --ignore-scripts`, which touches
+          # package.json/npm-shrinkwrap.json but never installs
+          # anything. Caching would add setup overhead with no
+          # install step to benefit from it.
 
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump version
+      - name: Bump version on a release branch
+        id: bump
+        env:
+          # Pass `inputs.bump` via env rather than direct `${{ }}`
+          # interpolation into the shell body. The `choice` input is
+          # fixed to patch/minor/major today, but a later refactor to
+          # `type: string` would silently open a script-injection
+          # sink. The env + explicit allowlist below closes the class.
+          BUMP: ${{ inputs.bump }}
         run: |
-          npm version ${{ inputs.bump }} -m "chore(release): v%s"
+          case "$BUMP" in patch|minor|major) ;; *)
+            echo "::error::unexpected bump value: $BUMP"; exit 1 ;;
+          esac
+          # Read current to detect no-op bumps (shouldn't happen with
+          # npm version <bump>, but bail loudly if it does).
+          BEFORE=$(node -p "require('./package.json').version")
+          # --ignore-scripts: npm version runs preversion/version/
+          # postversion lifecycle scripts by default. None are defined
+          # today, but a future addition (or a transitive one via a
+          # config change) would silently run in CI with write access
+          # to the repo. Keep the bump bounded to version files only.
+          # Note: this repo also has a `prepare: husky` script; npm
+          # version does not invoke `prepare`, but --ignore-scripts
+          # makes the guarantee explicit.
+          npm version "$BUMP" --no-git-tag-version --ignore-scripts
+          AFTER=$(node -p "require('./package.json').version")
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "::error::npm version produced no change ($BEFORE == $AFTER)"
+            exit 1
+          fi
 
-      - name: Push commit and tag
+          BRANCH="release/v${AFTER}"
+          echo "version=${AFTER}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+          # Use -B so a stale branch from a prior failed attempt is
+          # reset in place rather than making us error out.
+          git checkout -B "${BRANCH}"
+          git add package.json
+          # This repo ships `npm-shrinkwrap.json` (the opt-in form of
+          # package-lock.json that npm publishes). Guard the add with
+          # a presence check so the same workflow keeps working if a
+          # future change removes the shrinkwrap. Include the plain
+          # package-lock.json as well for the same reason.
+          if [ -f npm-shrinkwrap.json ]; then
+            git add npm-shrinkwrap.json
+          fi
+          if [ -f package-lock.json ]; then
+            git add package-lock.json
+          fi
+          git commit -m "release: v${AFTER}"
+
+          # Push safely whether or not the branch pre-exists on the
+          # remote. actions/checkout does NOT seed remote-tracking
+          # refs for arbitrary release branches, so bare
+          # `--force-with-lease` has no base and can degrade to
+          # unsafe behaviour. We fetch the remote branch first (if
+          # it exists) and then force-with-lease using the EXPLICIT
+          # ref:sha form so the lease is actually enforced against
+          # a known SHA. If the branch doesn't exist on the remote
+          # yet, a plain push is sufficient and safe.
+          #
+          # Additional guard: if a reviewer has pushed fix commits
+          # to the existing release PR, force-pushing here would
+          # silently drop them. Detect the "more than one commit
+          # ahead of main" state and refuse loudly so the operator
+          # merges the existing PR (or deletes the branch) before
+          # re-dispatching. 0 or 1 commit ahead = safe overwrite
+          # (no human edits, just a prior bump); >1 = unsafe.
+          if git ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then
+            git fetch origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" "+refs/heads/main:refs/remotes/origin/main"
+            REMOTE_SHA=$(git rev-parse "refs/remotes/origin/${BRANCH}")
+            MAIN_SHA=$(git rev-parse "refs/remotes/origin/main")
+            AHEAD=$(git rev-list --count "${MAIN_SHA}..${REMOTE_SHA}" 2>/dev/null || echo "many")
+            if [ "$AHEAD" != "0" ] && [ "$AHEAD" != "1" ]; then
+              echo "::error::Remote branch ${BRANCH} is ${AHEAD} commits ahead of main; force-pushing would clobber human edits on the existing release PR."
+              echo "::error::Merge or close the existing release PR first, then re-dispatch. If the branch is stale, 'git push origin --delete ${BRANCH}' and re-run."
+              exit 1
+            fi
+            git push --force-with-lease="refs/heads/${BRANCH}:${REMOTE_SHA}" origin "${BRANCH}"
+          else
+            git push origin "${BRANCH}"
+          fi
+
+      - name: Open or update the release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git push origin HEAD
-          git push origin --tags
+          VERSION="${{ steps.bump.outputs.version }}"
+          BRANCH="${{ steps.bump.outputs.branch }}"
+          # Assemble the PR body with printf so every paragraph sits
+          # at column 0 in the final string. A single quoted string
+          # split across yaml lines preserves the script indentation
+          # on every continuation line and makes GitHub render the
+          # PR body as a <pre> code block.
+          BODY="$(printf '%s\n\n%s\n\n%s' \
+            "Automated release PR created by \`release.yml\`. Bumps package.json (and npm-shrinkwrap.json, if present) to \`v${VERSION}\`." \
+            "Once this PR merges to main, \`tag-on-main.yml\` creates the matching \`v${VERSION}\` tag. After the tag lands, dispatch \`publish.yml\` against \`v${VERSION}\` via Actions to publish the package to npm (see README \`## Releasing\` for why this step is manual)." \
+            "Review the diff for any surprises (shrinkwrap regeneration drift, etc.) before approving.")"
+
+          # `gh pr view "$BRANCH"` matches closed/merged PRs too, so
+          # a previous release attempt that left a closed PR on the
+          # same head branch would cause this step to silently edit
+          # the closed PR and never open a new one; the operator
+          # would see the workflow succeed but have no PR to merge.
+          # Filter explicitly to open PRs for this head branch.
+          OPEN_PR_NUMBER="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+          if [ -n "$OPEN_PR_NUMBER" ]; then
+            gh pr edit "$OPEN_PR_NUMBER" --title "release: v${VERSION}" --body "$BODY"
+            echo "Updated existing open release PR #$OPEN_PR_NUMBER for $BRANCH"
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "release: v${VERSION}" \
+              --body "$BODY"
+          fi

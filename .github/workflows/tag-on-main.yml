@@ -1,0 +1,225 @@
+name: Tag release on main
+
+# Fires on every push to main. Decides whether this push IS a
+# release (package.json version changed relative to the previous
+# main SHA) and, if so, creates the matching `v<version>` tag.
+# Non-release commits are a fast no-op.
+#
+# The paired `release.yml` workflow opens a bump PR; merging that
+# PR triggers this workflow, which then creates the tag. The tag
+# push does NOT auto-trigger `publish.yml`: the default
+# `GITHUB_TOKEN` cannot fire other workflows (GitHub design, to
+# prevent workflow recursion). Publishing is a separate manual
+# `workflow_dispatch` on the tag, documented in README
+# `## Releasing`. Swap this step's credential for a GitHub App
+# token or PAT to remove the manual step.
+#
+# Why the version-change gate: without it, any non-release commit
+# landing on main after a release would see the existing
+# `v<current-version>` tag at a different commit than HEAD and
+# (correctly, in isolation) flag it as the orphan-tag failure
+# mode. But after a normal release, the tag SHOULD keep pointing
+# at the release commit while main moves forward; that's the
+# canonical state, not an error. We only treat "tag exists
+# elsewhere" as an error when THIS push was itself a release
+# (i.e. the version number just changed).
+#
+# Tag push is NOT blocked by the branch ruleset: rules target
+# refs/heads/main only; refs/tags/* is a separate namespace. The
+# default GITHUB_TOKEN is sufficient; no bypass actor needed.
+
+on:
+  push:
+    branches: [main]
+
+# Tighten default permissions at workflow scope to nothing; the
+# one job that needs to push a tag grants itself `contents: write`
+# explicitly below. Future jobs don't silently inherit write.
+permissions: {}
+
+# Serialize pushes to main so two concurrent release merges can't
+# both observe the tag as absent and then race on `git push`.
+# cancel-in-progress:false because every run MUST complete:
+# cancelling a run would skip tagging a legitimate release commit.
+concurrency:
+  group: tag-on-main
+  cancel-in-progress: false
+
+jobs:
+  maybe-tag:
+    name: Tag current main if package.json version is new
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push refs/tags/v<version>
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          # No `cache: npm` here: this job only uses `node -p` to
+          # read package.json and `git show ... | node` to extract
+          # the previous version. It never runs npm install/ci, so
+          # caching would add setup overhead with no install step
+          # to benefit from it.
+
+      - name: Detect whether this push changed the package version
+        id: version
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        # Set strict shell options explicitly so this step behaves
+        # predictably across environments regardless of Actions'
+        # defaults. `pipefail` makes `git show ... | node` fail
+        # loudly when an upstream command fails (instead of silently
+        # passing empty input through), and `-u` catches
+        # unset-variable typos. The `|| true` on `git show` remains
+        # the explicit opt-out for the one case where absence is
+        # intentional.
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          TAG="v${CURRENT_VERSION}"
+          echo "version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          # `github.event.before` is 40 zeros on the very first push
+          # to a new branch (or for unusual event shapes). In those
+          # cases we can't compute a diff; be conservative and treat
+          # the push as a release attempt so the tag gets created.
+          ZERO_SHA="0000000000000000000000000000000000000000"
+          if [ -z "$GITHUB_EVENT_BEFORE" ] || [ "$GITHUB_EVENT_BEFORE" = "$ZERO_SHA" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "No previous SHA on this push; treating as release by default."
+            exit 0
+          fi
+
+          # Compare the version at this push's starting SHA to HEAD.
+          # If git can't read package.json at the before-SHA (file
+          # introduced in this push, tree rewritten, etc.), we treat
+          # the absence as a version change; the conservative
+          # direction that produces a tag rather than silently
+          # skipping. `|| true` keeps the pipeline's exit status 0
+          # under bash -eo pipefail so the step continues.
+          PREV_JSON=$(git show "${GITHUB_EVENT_BEFORE}:package.json" 2>/dev/null || true)
+          if [ -z "$PREV_JSON" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Previous package.json not readable at ${GITHUB_EVENT_BEFORE}; treating as change."
+            exit 0
+          fi
+          # Parse the prior package.json version via a direct
+          # `node -e` with the JSON passed as argv, not via stdin.
+          # The stdin-streaming form buys nothing when the content
+          # is already a shell variable and obscures intent. A
+          # parse error falls back to the empty string, which the
+          # change check below treats as "version unknown, assume
+          # changed".
+          PREV_VERSION=$(PREV_JSON="$PREV_JSON" node -e 'try { process.stdout.write(JSON.parse(process.env.PREV_JSON).version || "") } catch { process.stdout.write("") }')
+          if [ -z "$PREV_VERSION" ] || [ "$PREV_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Version changed: ${PREV_VERSION:-<unknown>} -> ${CURRENT_VERSION}; this is a release commit."
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Version unchanged at ${CURRENT_VERSION}; non-release commit, no-op."
+          fi
+
+      - name: Check whether the tag already exists on the remote
+        id: check
+        if: steps.version.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          HEAD_SHA=$(git rev-parse HEAD)
+
+          # Query for the dereferenced commit sha first (annotated
+          # tag shape). If the tag is annotated, this returns its
+          # commit; if absent OR lightweight, this returns nothing,
+          # and we fall back to the bare refspec (commit sha for
+          # lightweight tags). Two narrow calls beat parsing a
+          # fragile `^{}`-suffix regex on a combined ls-remote.
+          REMOTE_SHA=$(git ls-remote --tags origin "refs/tags/${TAG}^{}" 2>/dev/null | awk '{print $1; exit}')
+          if [ -z "$REMOTE_SHA" ]; then
+            REMOTE_SHA=$(git ls-remote --tags origin "refs/tags/${TAG}" 2>/dev/null | awk '{print $1; exit}')
+          fi
+
+          if [ -z "$REMOTE_SHA" ]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$REMOTE_SHA" = "$HEAD_SHA" ]; then
+            # Tag already points at the commit we'd tag anyway,
+            # a legitimate rerun on the same main commit. No-op.
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} already points at HEAD ($HEAD_SHA); nothing to do."
+          else
+            # This push changed the version AND a tag for the new
+            # version already exists at a different commit. Classic
+            # orphan-tag failure mode: publish.yml would not fire
+            # for the current release, and the tag would stay
+            # pointed at a stale commit. Fail loudly.
+            echo "::error::Tag ${TAG} exists on the remote but points at ${REMOTE_SHA}, not the current main HEAD ${HEAD_SHA}."
+            echo "::error::This is the orphan-tag failure mode. Delete the stale tag and re-run:"
+            echo "::error::  git push origin --delete ${TAG}"
+            exit 1
+          fi
+
+      - name: Create and push the tag
+        if: steps.version.outputs.changed == 'true' && steps.check.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          TAG="${{ steps.version.outputs.tag }}"
+          git tag -a "${TAG}" -m "release ${TAG}"
+
+          # Tolerate "already exists" as success. The concurrency
+          # group above serialises runs on main, but a belt-and-
+          # suspenders guard closes the residual race where a user
+          # (or another workflow) created the same tag between our
+          # ls-remote check above and this push. We only swallow the
+          # specific "already exists" failure; any other push error
+          # still surfaces.
+          #
+          # LC_ALL=C pins git's error text to the C locale so the
+          # grep below is not dependent on the runner's locale.
+          # Without this, a localised runner would turn the race
+          # path into a hard failure because the English substring
+          # "already exists" would be absent.
+          set +e
+          PUSH_OUT=$(LC_ALL=C git push origin "refs/tags/${TAG}" 2>&1)
+          PUSH_STATUS=$?
+          set -e
+          echo "$PUSH_OUT"
+          if [ $PUSH_STATUS -eq 0 ]; then
+            echo "Created and pushed tag ${TAG}"
+          elif echo "$PUSH_OUT" | grep -q "already exists"; then
+            # Someone (or something) created this tag between our
+            # ls-remote check above and this push. "already exists"
+            # alone is not enough to treat as success: the concurrent
+            # creator may have tagged a different commit, in which
+            # case this release is orphaned (publish.yml fires for
+            # their commit, not ours). Re-read the remote tag and
+            # compare to HEAD before declaring success.
+            HEAD_SHA=$(git rev-parse HEAD)
+            # Same two-call pattern as the `check` step: prefer the
+            # dereferenced commit sha (annotated tag); fall back to
+            # the bare refspec (lightweight tag).
+            VERIFY_SHA=$(git ls-remote --tags origin "refs/tags/${TAG}^{}" 2>/dev/null | awk '{print $1; exit}')
+            if [ -z "$VERIFY_SHA" ]; then
+              VERIFY_SHA=$(git ls-remote --tags origin "refs/tags/${TAG}" 2>/dev/null | awk '{print $1; exit}')
+            fi
+            if [ "$VERIFY_SHA" = "$HEAD_SHA" ]; then
+              echo "Tag ${TAG} was created concurrently at HEAD ($HEAD_SHA); treating as success."
+            else
+              echo "::error::Tag ${TAG} was created concurrently but points at ${VERIFY_SHA:-<unknown>}, not HEAD ${HEAD_SHA}."
+              echo "::error::Another actor tagged a different commit. This release is orphaned. Delete the stale tag and re-run:"
+              echo "::error::  git push origin --delete ${TAG}"
+              exit 1
+            fi
+          else
+            exit $PUSH_STATUS
+          fi
