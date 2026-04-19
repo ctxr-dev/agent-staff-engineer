@@ -46,6 +46,13 @@
 //      which downstream consumers (Claude Code runtime) parse as
 //      garbage. Failure classes: `frontmatter-parse:` (hard YAML
 //      error), `frontmatter-type:` (list entry is not a string).
+//  14. No stale references to the pre-trackers names:
+//      - `github-sync` (renamed to `tracker-sync`)
+//      - `github-source-of-truth` (renamed to `tracker-source-of-truth`)
+//      Catches a future PR that re-introduces the old name in a
+//      skill, rule, doc, or template before it lands. The canonical
+//      tracker lib's historical comments under scripts/lib/trackers/
+//      are exempt: they explain the rename for future readers.
 //
 
 import { readFile, stat } from "node:fs/promises";
@@ -479,6 +486,77 @@ async function checkFrontmatterParses() {
   }
 }
 
+// ---- 14. No stale legacy tracker names -------------------------------
+// After the github-sync -> tracker-sync + github-source-of-truth ->
+// tracker-source-of-truth rename, no bundle-shipped skill / rule /
+// template / doc should reference the retired names. The rename is a
+// hard break; a drive-by PR that introduces the old name in a new doc
+// would silently point readers at paths that don't exist. This gate
+// catches it.
+//
+// scripts/lib/trackers/ is deliberately exempt: those files keep
+// historical "formerly github-sync" comments so readers discover the
+// old name on code-spelunking. The comments live in a single subtree,
+// so a path-prefix exemption is precise enough.
+async function checkNoLegacyNames() {
+  const legacyNeedles = [
+    // Retired skill name. Use word-boundary to avoid matching things
+    // like "async" or random substrings. The pattern matches both the
+    // bare `github-sync` and the scripts/lib/ path `lib/github-sync`.
+    { needle: "github-sync", class: "legacy-skill-name" },
+    { needle: "github-source-of-truth", class: "legacy-rule-name" },
+  ];
+  const scanRoots = [
+    "skills",
+    "rules",
+    "memory-seeds",
+    "templates",
+    "design",
+    "examples",
+    "schemas",
+  ];
+  const topLevelDocs = [
+    "AGENT.md",
+    "README.md",
+    "INSTALL.md",
+    "CONTRIBUTING.md",
+    "bundle-index.md",
+  ];
+  const exemptPrefixes = [
+    "scripts/lib/trackers/",
+  ];
+
+  const fpsToScan = [];
+  for (const root of scanRoots) {
+    for await (const fp of walkFiles(join(BUNDLE_ROOT, root))) {
+      if (fp.endsWith(".md") || fp.endsWith(".json") || fp.endsWith(".mjs")) {
+        fpsToScan.push(fp);
+      }
+    }
+  }
+  for (const top of topLevelDocs) {
+    const fp = join(BUNDLE_ROOT, top);
+    try {
+      await stat(fp);
+      fpsToScan.push(fp);
+    } catch {
+      // file absent is fine; the list is an allow-list of known docs.
+    }
+  }
+
+  for (const fp of fpsToScan) {
+    const rel = relative(BUNDLE_ROOT, fp).split(/[\\/]+/).join("/");
+    if (exemptPrefixes.some((p) => rel.startsWith(p))) continue;
+    const text = await readTextOrNull(fp);
+    if (text == null) continue;
+    for (const { needle, class: cls } of legacyNeedles) {
+      if (text.includes(needle)) {
+        err(`${cls}: ${rel} still references '${needle}' (renamed; update to the tracker-* form)`);
+      }
+    }
+  }
+}
+
 await checkLiterals();
 await checkDashes();
 await checkSkillStructure();
@@ -491,6 +569,7 @@ await checkNoRawHomePaths();
 await checkWikiRuleReferences();
 await checkBundleIndex();
 await checkFrontmatterParses();
+await checkNoLegacyNames();
 
 const summary = `validate_bundle: ${errors.length} error(s), ${warnings.length} warning(s)`;
 if (errors.length === 0 && warnings.length === 0) {
