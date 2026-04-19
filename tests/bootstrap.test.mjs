@@ -392,7 +392,7 @@ describe("bootstrap.askTrackerTarget (round-7 T2: dev github repo validation)", 
     const ask = makeQueuedAsk(["acme", "", "", ""]);
     await assert.rejects(
       () => askTrackerTarget(ask, "github", "dev", detection),
-      /GitHub repo for the dev tracker after 3 attempts/,
+      /valid GitHub repo for the dev tracker after 3 attempts/,
     );
   });
 
@@ -425,7 +425,7 @@ describe("bootstrap.askTrackerTarget (round-7 T2: dev github repo validation)", 
     const ask = makeQueuedAsk(["", "", ""]);
     await assert.rejects(
       () => askTrackerTarget(ask, "github", "dev", detection),
-      /non-empty GitHub owner after 3 attempts/,
+      /valid GitHub owner after 3 attempts/,
     );
   });
 
@@ -438,6 +438,63 @@ describe("bootstrap.askTrackerTarget (round-7 T2: dev github repo validation)", 
     const askRelease = makeQueuedAsk(["\t\n", "acme", "", ""]);
     const tRelease = await askTrackerTarget(askRelease, "github", "release", detection);
     assert.equal(tRelease.owner, "acme");
+  });
+
+  // Round-9 T5: Jira site + project_key prompts must be validated at
+  // ask time with pattern + non-empty checks. site matches
+  // <subdomain>.atlassian.net; project key matches the schema's
+  // /^[A-Z][A-Z0-9_]*$/.
+  it("validates Jira site (must match *.atlassian.net)", async () => {
+    // First attempt fails the pattern, second succeeds.
+    const ask = makeQueuedAsk(["not-a-host", "acme.atlassian.net", "PLAT"]);
+    const t = await askTrackerTarget(ask, "jira", "dev", detection);
+    assert.equal(t.site, "acme.atlassian.net");
+    assert.equal(t.project, "PLAT");
+  });
+
+  it("rejects lowercase or invalid Jira project keys", async () => {
+    // Invalid: "plat" (lowercase), "1PLAT" (leading digit); then "PLAT" valid.
+    const ask = makeQueuedAsk(["acme.atlassian.net", "plat", "1PLAT", "PLAT"]);
+    const t = await askTrackerTarget(ask, "jira", "dev", detection);
+    assert.equal(t.project, "PLAT");
+  });
+
+  it("throws after 3 invalid Jira site attempts", async () => {
+    const ask = makeQueuedAsk(["not-a-host", "also-bad", "still-bad"]);
+    await assert.rejects(
+      () => askTrackerTarget(ask, "jira", "dev", detection),
+      /valid Jira site after 3 attempts/,
+    );
+  });
+
+  // Round-9 T1: Linear workspace + team prompts must validate.
+  // Team pattern mirrors the schema: 2-10 chars, uppercase letters or
+  // digits, starting with a letter.
+  it("validates Linear workspace and team key", async () => {
+    // workspace empty -> reprompt; team "eng" (lowercase) -> reprompt;
+    // team "X" (too short) -> reprompt; then valid values.
+    const ask = makeQueuedAsk(["", "acme", "eng", "X", "ENG"]);
+    const t = await askTrackerTarget(ask, "linear", "dev", detection);
+    assert.equal(t.workspace, "acme");
+    assert.equal(t.team, "ENG");
+  });
+
+  // Round-9 T2: GitLab host + project_path prompts must validate.
+  // project_path requires at least two "/"-separated segments.
+  it("validates GitLab host and project_path (at least two segments)", async () => {
+    // host empty -> reprompt; project_path "onlyone" (single segment)
+    // -> reprompt; then valid.
+    const ask = makeQueuedAsk(["", "gitlab.com", "onlyone", "acme/widgets"]);
+    const t = await askTrackerTarget(ask, "gitlab", "dev", detection);
+    assert.equal(t.host, "gitlab.com");
+    assert.equal(t.project_path, "acme/widgets");
+  });
+
+  it("accepts deeply-nested gitlab project_paths", async () => {
+    const ask = makeQueuedAsk(["gitlab.acme.internal", "acme/platform/billing/api"]);
+    const t = await askTrackerTarget(ask, "gitlab", "dev", detection);
+    assert.equal(t.host, "gitlab.acme.internal");
+    assert.equal(t.project_path, "acme/platform/billing/api");
   });
 });
 

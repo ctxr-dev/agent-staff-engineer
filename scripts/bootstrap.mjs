@@ -521,7 +521,11 @@ async function interview(rl, d, _bundleRef) {
     devTracker,
     releaseTracker,
     observed,
-    defaultDepth,
+    // defaultDepth lives as a local variable only: its single use is
+    // parseObservedGithubRepos() above, which consumes it inline to
+    // stamp each observed tracker. compose() doesn't re-read it, so
+    // persisting it in the answers object would imply a downstream
+    // effect it doesn't actually have.
     regimes,
     dataClasses,
     seedProductRules,
@@ -532,30 +536,45 @@ async function interview(rl, d, _bundleRef) {
 export const SUPPORTED_TRACKER_KINDS = Object.freeze(["github", "jira", "linear", "gitlab"]);
 
 /**
- * Ask a prompt, normalise the answer (trim), re-prompt on empty input
- * up to 3 times with a pointed stderr warning, and throw after the
- * final attempt. Used for every required tracker-coordinate prompt
- * (owner, repo) so whitespace-only or empty input surfaces an
- * actionable error at prompt time rather than blowing up later in
- * schema validation with a generic "required property" message.
+ * Ask a prompt, normalise the answer (trim), optionally validate it
+ * against a regex, re-prompt on empty or pattern-mismatched input up
+ * to 3 times with a pointed stderr warning, and throw after the final
+ * attempt. Used for every required tracker-coordinate prompt (owner,
+ * repo, jira site, linear team key, gitlab project_path, etc.) so
+ * invalid input surfaces an actionable error at prompt time rather
+ * than blowing up later in schema validation with a generic "required
+ * property" / "does not match pattern" message.
  *
- * `humanLabel` appears in the warning and error text: "GitHub repo for
- * the dev tracker", "GitHub owner", etc. Keep it short; the prompt
- * question (first arg to `ask`) carries the conversational form.
+ * `humanLabel` appears in the warning and error text (short form, e.g.
+ * "GitHub owner", "Linear team key"). The `options.pattern` regex, if
+ * supplied, is tested against the trimmed value; `options.patternHelp`
+ * is a one-liner shown to the user on mismatch explaining the expected
+ * format (e.g. "2-10 uppercase letters, e.g. ENG").
  */
-export async function askNonEmpty(ask, question, defaultValue, humanLabel) {
+export async function askNonEmpty(ask, question, defaultValue, humanLabel, options = {}) {
   const MAX_ATTEMPTS = 3;
+  const { pattern = null, patternHelp = "" } = options;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     const raw = await ask(question, defaultValue);
     const trimmed = String(raw ?? "").trim();
-    if (trimmed) return trimmed;
-    process.stderr.write(
-      `bootstrap: ${humanLabel} is required (attempt ${attempt}/${MAX_ATTEMPTS}). ` +
-      "Enter a non-empty value.\n",
-    );
+    if (!trimmed) {
+      process.stderr.write(
+        `bootstrap: ${humanLabel} is required (attempt ${attempt}/${MAX_ATTEMPTS}). ` +
+        "Enter a non-empty value.\n",
+      );
+      continue;
+    }
+    if (pattern && !pattern.test(trimmed)) {
+      process.stderr.write(
+        `bootstrap: ${humanLabel} '${trimmed}' does not match the expected format (attempt ${attempt}/${MAX_ATTEMPTS}). ` +
+        `${patternHelp || "See the schema for the accepted shape."}\n`,
+      );
+      continue;
+    }
+    return trimmed;
   }
   throw new Error(
-    `bootstrap: could not obtain a non-empty ${humanLabel} after ${MAX_ATTEMPTS} attempts; re-run and enter a non-empty value`,
+    `bootstrap: could not obtain a valid ${humanLabel} after ${MAX_ATTEMPTS} attempts; re-run and enter a non-empty value${pattern ? ` matching the expected format` : ""}`,
   );
 }
 
@@ -667,13 +686,30 @@ export async function askTrackerTarget(ask, kind, role, d, reference = null) {
       return target;
     }
     case "jira": {
-      const site = await ask(
+      // Validate both fields at prompt time so the user sees a pointed
+      // error naming the offending prompt, not a generic schema error
+      // several interview steps later. Patterns mirror the schema's:
+      //   site: "<subdomain>.atlassian.net" with dot-separated ASCII
+      //   project: uppercase letters/digits/underscore, leading letter
+      const site = await askNonEmpty(
+        ask,
         "   Jira site (e.g. acme.atlassian.net)",
-        reference?.kind === "jira" ? reference.site : ""
+        reference?.kind === "jira" ? reference.site : "",
+        "Jira site",
+        {
+          pattern: /^[A-Za-z0-9][A-Za-z0-9.-]*\.atlassian\.net$/,
+          patternHelp: "Expected format: <subdomain>.atlassian.net (e.g. acme.atlassian.net).",
+        },
       );
-      const project = await ask(
+      const project = await askNonEmpty(
+        ask,
         "   Jira project key (e.g. PLAT)",
-        reference?.kind === "jira" ? reference.project : ""
+        reference?.kind === "jira" ? reference.project : "",
+        "Jira project key",
+        {
+          pattern: /^[A-Z][A-Z0-9_]*$/,
+          patternHelp: "Expected format: uppercase letters / digits / underscore, starting with a letter (e.g. PLAT, ENG_2).",
+        },
       );
       return {
         kind: "jira",
@@ -690,13 +726,21 @@ export async function askTrackerTarget(ask, kind, role, d, reference = null) {
       };
     }
     case "linear": {
-      const workspace = await ask(
+      const workspace = await askNonEmpty(
+        ask,
         "   Linear workspace URL key",
-        reference?.kind === "linear" ? reference.workspace : ""
+        reference?.kind === "linear" ? reference.workspace : "",
+        "Linear workspace",
       );
-      const team = await ask(
-        "   Linear team key (2-10 uppercase letters, e.g. ENG)",
-        reference?.kind === "linear" ? reference.team : ""
+      const team = await askNonEmpty(
+        ask,
+        "   Linear team key (2-10 uppercase letters / digits, starting with a letter, e.g. ENG)",
+        reference?.kind === "linear" ? reference.team : "",
+        "Linear team key",
+        {
+          pattern: /^[A-Z][A-Z0-9]{1,9}$/,
+          patternHelp: "Expected format: 2-10 characters, uppercase letters or digits, starting with a letter (e.g. ENG, PROD2).",
+        },
       );
       return {
         kind: "linear",
@@ -712,13 +756,24 @@ export async function askTrackerTarget(ask, kind, role, d, reference = null) {
       };
     }
     case "gitlab": {
-      const host = await ask(
+      const host = await askNonEmpty(
+        ask,
         "   GitLab host",
-        reference?.kind === "gitlab" ? reference.host : "gitlab.com"
+        reference?.kind === "gitlab" ? reference.host : "gitlab.com",
+        "GitLab host",
       );
-      const project_path = await ask(
-        "   GitLab project_path (group/subgroup/repo)",
-        reference?.kind === "gitlab" ? reference.project_path : ""
+      const project_path = await askNonEmpty(
+        ask,
+        "   GitLab project_path (group/subgroup/repo, at least two segments)",
+        reference?.kind === "gitlab" ? reference.project_path : "",
+        "GitLab project_path",
+        {
+          // Matches the schema's pattern: at least two "/"-separated
+          // segments of [A-Za-z0-9._-]+, e.g. group/repo or
+          // group/subgroup/repo.
+          pattern: /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)+$/,
+          patternHelp: "Expected format: at least two segments separated by '/' (e.g. acme/widgets or acme/platform/widgets).",
+        },
       );
       return {
         kind: "gitlab",
@@ -813,7 +868,6 @@ export function pickDefaults(d) {
     devTracker,
     releaseTracker,
     observed: [],
-    defaultDepth: "full",
     regimes: ["none"],
     dataClasses: ["none"],
     seedProductRules: false,

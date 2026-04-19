@@ -7,7 +7,7 @@ trigger_on:
 do_not_trigger_on:
   - workflow.external_review.enabled is false (dev-loop halts at In review instead).
   - workflow.external_review.provider is "none", i.e. the dispatcher resolves kind to "none" as an explicit opt-out. Same effect as enabled:false; halt cleanly at In review, do NOT surface a NotSupportedError (which is reserved for unsupported tracker kinds).
-  - PRs on trackers where the ReviewProvider dispatcher returns the stub for a tracker kind that isn't "none" (Jira/Linear/GitLab today). Surface the `NotSupportedError` message and halt.
+  - PRs on trackers where the tracker dispatcher (`scripts/lib/trackers/dispatcher.mjs#pickReviewProvider`) returns the stub `.review` namespace for a tracker kind that isn't "none" (Jira / Linear / GitLab today). Surface the `NotSupportedError` message and halt.
   - Without a valid ops.config.json (halt and point at bootstrap-ops-config).
   - The PR HEAD advanced between rounds by a commit this loop did not author, OR an unresolved review thread's author is neither a configured bot (`workflow.external_review.bots`) nor the project owner AND the comment contradicts a commit of the loop. Follow `rules/ambiguity-halt.md` (halt, surface the observation, ask); do not push, resolve threads, or re-request reviewers while the question is open.
 writes_to_github: yes, via tracker-sync for status updates and via tracker-specific providers (GraphQL requestReviews / resolveReviewThread for GitHub) for review mutations
@@ -45,14 +45,14 @@ Hard rule baked in: **pr-iteration never merges a PR.** Merge is a human gate. E
 [push feature branch]
       |
       v
-[ReviewProvider.requestReview on HEAD]
+[tracker.review.requestReview on HEAD]
       |
       v
 [poll every poll_interval_seconds]
       |
       +-- CI terminal AND (unresolved>0 OR reviewOnHead) --> [fetch threads, triage, fix + commit + push + resolve + re-request] --> back to poll
       +-- poll_timeout_seconds exceeded --> [surface state, stop]
-      +-- provider.NotSupportedError --> [clean halt at In review]
+      +-- NotSupportedError from tracker.review.* --> [clean halt at In review]
       |
       v
 [all three exit conditions hold on current HEAD]
