@@ -78,10 +78,20 @@ describe("install: legacy `github:` config shape is hard-refused", () => {
     assert.match(stderr, /re-run 'install\.mjs --apply'/);
   });
 
-  it("writes a timestamped .pre-trackers-<ts>.bak backup alongside the original", async () => {
+  it("writes a .pre-trackers-<ts>-pid<pid>[-<counter>].bak backup alongside the original", async () => {
+    // Naming shape (see scripts/install.mjs): the stamp is a filename-
+    // safe ISO 8601 (colons/dots replaced with dashes), pid keeps two
+    // parallel installs from colliding, and an optional -<counter>
+    // suffix (added only when a candidate path already exists) keeps
+    // even an absurd 1000-way collision distinct. The regex here
+    // deliberately matches any suffix combination so a future tweak to
+    // the counter scheme won't silently break this test.
     const entries = await readdir(join(targetRoot, ".claude"));
     const backup = entries.find((n) => /^ops\.config\.json\.pre-trackers-.+\.bak$/.test(n));
     assert.ok(backup, `expected a backup file, got: ${entries.join(", ")}`);
+    // Sanity: the filename must contain a pid marker so a regression
+    // that dropped the uniqueness suffix (round-3 T2) would fail here.
+    assert.match(backup, /-pid\d+/, `expected '-pid<pid>' in the backup filename, got: ${backup}`);
     const backupText = await readFile(join(targetRoot, ".claude", backup), "utf8");
     // Backup round-trips JSON; bytes may reformat but content is equal.
     assert.deepEqual(JSON.parse(backupText), JSON.parse(originalContent));
