@@ -452,7 +452,7 @@ async function interview(rl, d, _bundleRef) {
   };
 
   process.stdout.write("interview (8 topics). Enter accepts the default shown in brackets.\n");
-  process.stdout.write("Note: the agent's full write surface is implemented for GitHub today; Jira / Linear / GitLab backends accept the config but every write op throws NotSupportedError until their real impls land.\n\n");
+  process.stdout.write("Note: on GitHub, only the review namespace is implemented today (used by skills/pr-iteration); issues / projects / labels namespaces are stubbed. Jira / Linear / GitLab backends accept the config but EVERY op (read or write) throws NotSupportedError until their real impls land.\n\n");
 
   const cadence = await ask(
     "1. Release cadence: continuous / per-wave / per-version / adhoc",
