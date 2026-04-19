@@ -39,9 +39,11 @@ Every code change the agent drives follows the same state machine from branch cr
  poll for CI + review, triage unresolved threads, fix + push +
  resolve, iterate until all three exit conditions hold on current
  HEAD. Governed by rules/pr-iteration.md.]
-   |  skipped when workflow.external_review.enabled is false, or
-   |  when the ReviewProvider dispatcher returns the stub for the
-   |  configured tracker kind (Jira/Linear/GitLab today).
+   |  skipped when workflow.external_review.enabled is false, when
+   |  workflow.external_review.provider is "none" (or the dispatcher
+   |  otherwise resolves the provider kind to "none"), or when the
+   |  ReviewProvider dispatcher returns the stub for the configured
+   |  tracker kind (Jira/Linear/GitLab today).
    v
 ***  HUMAN GATE 1: PR merge  ***
    |

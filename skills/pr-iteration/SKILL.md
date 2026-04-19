@@ -6,7 +6,8 @@ trigger_on:
   - User explicitly runs /pr-iteration <pr-number> on an existing PR.
 do_not_trigger_on:
   - workflow.external_review.enabled is false (dev-loop halts at In review instead).
-  - PRs on trackers where the ReviewProvider dispatcher returns the stub. Surface the `NotSupportedError` message and halt.
+  - workflow.external_review.provider is "none", i.e. the dispatcher resolves kind to "none" as an explicit opt-out. Same effect as enabled:false; halt cleanly at In review, do NOT surface a NotSupportedError (which is reserved for unsupported tracker kinds).
+  - PRs on trackers where the ReviewProvider dispatcher returns the stub for a tracker kind that isn't "none" (Jira/Linear/GitLab today). Surface the `NotSupportedError` message and halt.
   - Without a valid ops.config.json (halt and point at bootstrap-ops-config).
 writes_to_github: yes, via github-sync for status updates and via tracker-specific providers (GraphQL requestReviews / resolveReviewThread for GitHub) for review mutations
 writes_to_filesystem: yes, code edits per round plus a per-round pr-iteration report under paths.reports (written via @ctxr/skill-llm-wiki, per rules/llm-wiki.md)

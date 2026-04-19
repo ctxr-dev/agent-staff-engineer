@@ -115,11 +115,21 @@ async function githubPollForReview(ctx) {
   //   1. ctx.botLogins non-empty -> author.login must be one of those.
   //   2. Otherwise accept any `Bot`-typed author (keeps the code
   //      useful for callers that don't want login-level precision).
+  // Comparison is case-insensitive because GitHub logins are
+  // case-insensitive and config may carry mixed casing
+  // ("Copilot-pull-request-reviewer" etc).
+  const lowerBotLogins =
+    Array.isArray(botLogins) && botLogins.length > 0
+      ? new Set(botLogins.map((x) => String(x).toLowerCase()))
+      : null;
   const reviewOnHead = pr.reviews.nodes.some((r) => {
     if ((r.commit?.oid ?? null) !== prHeadSha) return false;
     const author = r.author || {};
-    if (Array.isArray(botLogins) && botLogins.length > 0) {
-      return typeof author.login === "string" && botLogins.includes(author.login);
+    if (lowerBotLogins) {
+      return (
+        typeof author.login === "string" &&
+        lowerBotLogins.has(author.login.toLowerCase())
+      );
     }
     return author.__typename === "Bot";
   });

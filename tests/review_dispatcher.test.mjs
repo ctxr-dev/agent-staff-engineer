@@ -109,19 +109,19 @@ describe("pickReviewProvider", () => {
     }
   });
 
-  it("returns a stub for jira (NotSupportedError on every op)", () => {
+  it("returns a stub for jira (NotSupportedError on every op)", async () => {
     const { provider, kind } = pickReviewProvider({ trackers: { dev: { kind: "jira" } } });
     assert.equal(kind, "jira");
-    assert.throws(() => provider.requestReview({}), (err) => {
+    await assert.rejects(() => provider.requestReview({}), (err) => {
       return err instanceof NotSupportedError && err.kind === "jira";
     });
   });
 
-  it("returns a stub for linear and gitlab (PR 3 will swap these for real impls)", () => {
+  it("returns a stub for linear and gitlab (PR 3 will swap these for real impls)", async () => {
     for (const k of ["linear", "gitlab"]) {
       const { provider, kind } = pickReviewProvider({ trackers: { dev: { kind: k } } });
       assert.equal(kind, k);
-      assert.throws(() => provider.pollForReview({}), NotSupportedError);
+      await assert.rejects(() => provider.pollForReview({}), NotSupportedError);
     }
   });
 
@@ -148,10 +148,10 @@ describe("pickReviewProvider", () => {
     }
   });
 
-  it("returns a stub with kind='unknown' when nothing is configured", () => {
+  it("returns a stub with kind='unknown' when nothing is configured", async () => {
     const { provider, kind } = pickReviewProvider({});
     assert.equal(kind, "unknown");
-    assert.throws(() => provider.ciStateOnHead({}), (err) => {
+    await assert.rejects(() => provider.ciStateOnHead({}), (err) => {
       return err instanceof NotSupportedError && err.kind === "unknown";
     });
   });

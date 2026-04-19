@@ -133,14 +133,22 @@ async function withFakeGh(fixture, fn) {
   const fixBefore = process.env.FAKE_GH_FIXTURE;
   const logBefore = process.env.FAKE_GH_LOG;
   try {
-    process.env.PATH = scratch + ":" + pathBefore;
+    // PATH may be unset on constrained test runners; use "" as the
+    // default so the shim directory is first on the search path and
+    // the restore logic below can distinguish "was unset" (delete)
+    // from "was set" (assign).
+    process.env.PATH = scratch + ":" + (pathBefore ?? "");
     process.env.FAKE_GH_FIXTURE = fixture;
     process.env.FAKE_GH_LOG = logPath;
     const result = await fn();
     const log = await readFile(logPath, "utf8");
     return { result, log };
   } finally {
-    process.env.PATH = pathBefore;
+    // Restoring via `process.env.PATH = undefined` would set the
+    // literal string "undefined" and pollute subsequent tests.
+    // Same pattern for the other two env vars.
+    if (pathBefore === undefined) delete process.env.PATH;
+    else process.env.PATH = pathBefore;
     if (fixBefore === undefined) delete process.env.FAKE_GH_FIXTURE;
     else process.env.FAKE_GH_FIXTURE = fixBefore;
     if (logBefore === undefined) delete process.env.FAKE_GH_LOG;
@@ -291,6 +299,22 @@ describe("github review provider: pollForReview", skipOpts, () => {
       }),
     );
     assert.equal(result.reviewOnHead, true, "matching bot login should satisfy the gate");
+  });
+
+  it("ctx.botLogins filter is case-insensitive (GitHub logins are)", async () => {
+    // poll_bot_login_filter fixture has author login
+    // "copilot-pull-request-reviewer" (lowercase). Config may carry
+    // mixed casing; ensure the filter treats them equal.
+    const { result } = await withFakeGh("poll_bot_login_filter", () =>
+      makeGithubReviewProvider().pollForReview({
+        owner: "o",
+        repo: "r",
+        prNumber: 1,
+        headSha: "HEAD_SHA",
+        botLogins: ["Copilot-Pull-Request-Reviewer"],
+      }),
+    );
+    assert.equal(result.reviewOnHead, true, "casing difference must not break the match");
   });
 
   it("filters reviewOnHead by ctx.botLogins when provided (non-matching login rejected)", async () => {

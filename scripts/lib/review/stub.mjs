@@ -15,7 +15,12 @@ import { NotSupportedError, REVIEW_PROVIDER_METHODS } from "./provider.mjs";
 export function makeStubProvider(kind) {
   const impl = {};
   for (const op of REVIEW_PROVIDER_METHODS) {
-    impl[op] = () => {
+    // Stub methods are async so the contract matches the real
+    // providers (github.mjs methods all return Promises). Without
+    // this, a caller doing `provider.pollForReview(ctx).catch(...)`
+    // would crash synchronously before getting a Promise back; the
+    // stub would not be substitutable for the real provider.
+    impl[op] = async () => {
       throw new NotSupportedError(
         `pr-iteration review op '${op}' is not implemented for tracker kind '${kind}' yet; see rules/pr-iteration.md fallback`,
         { kind, op },
