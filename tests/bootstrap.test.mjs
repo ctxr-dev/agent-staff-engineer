@@ -9,6 +9,8 @@ import {
   defaultTrackerTarget,
   canAutoPopulate,
   isOnPath,
+  askTrackerKind,
+  SUPPORTED_TRACKER_KINDS,
   pickDefaults,
   compose,
   cadenceToIntent,
@@ -233,20 +235,30 @@ describe("bootstrap.defaultTrackerTarget", () => {
     assert.equal(t.projects[0].depth, "umbrella-only");
   });
 
-  it("produces a schema-valid jiraTracker shell", () => {
+  // Jira / Linear shells intentionally leave required coordinates
+  // empty (site, project, workspace, team). They fail schema
+  // validation on their own; the user must fill them via the
+  // interactive bootstrap or a manual ops.config.json edit. The
+  // tests below only lock the shape (kind + status_values present,
+  // correct labels_field on jira, etc.), NOT schema validity.
+  it("produces the expected jiraTracker shape (required keys present; schema fails until the user fills site/project)", () => {
     const t = defaultTrackerTarget("jira", "dev", d);
     assert.equal(t.kind, "jira");
+    assert.equal(t.site, "");
+    assert.equal(t.project, "");
     assert.ok("status_values" in t);
     assert.ok("labels_field" in t);
   });
 
-  it("produces a schema-valid linearTracker shell", () => {
+  it("produces the expected linearTracker shape (required keys present; schema fails until the user fills workspace/team)", () => {
     const t = defaultTrackerTarget("linear", "dev", d);
     assert.equal(t.kind, "linear");
+    assert.equal(t.workspace, "");
+    assert.equal(t.team, "");
     assert.ok("status_values" in t);
   });
 
-  it("produces a schema-valid gitlabTracker shell with gitlab.com fallback when remote is non-gitlab", () => {
+  it("produces the expected gitlabTracker shape with gitlab.com fallback when remote is non-gitlab", () => {
     const t = defaultTrackerTarget("gitlab", "dev", d);
     assert.equal(t.kind, "gitlab");
     // Test fixture's remote is github; asking for a gitlab target
@@ -293,6 +305,48 @@ describe("bootstrap.defaultTrackerTarget", () => {
 
   it("throws on unsupported kinds", () => {
     assert.throws(() => defaultTrackerTarget("bitbucket", "dev", d), /unsupported kind/);
+  });
+});
+
+describe("bootstrap.askTrackerKind (round-3 T1: normalise + validate)", () => {
+  // A tiny fake `ask` that yields scripted answers one at a time.
+  // askTrackerKind calls ask(question, default); this stub ignores
+  // both and just drains a queue, so tests can assert the exact
+  // retry semantics without a real readline.
+  function makeFakeAsk(answers) {
+    const queue = [...answers];
+    return async () => {
+      if (queue.length === 0) throw new Error("fake ask exhausted");
+      return queue.shift();
+    };
+  }
+
+  it("returns the normalised kind when the first answer is valid", async () => {
+    const out = await askTrackerKind(makeFakeAsk(["github"]), "q", "github");
+    assert.equal(out, "github");
+  });
+
+  it("accepts capitalised / whitespace-padded input (caught by a prior version's switch default)", async () => {
+    for (const raw of ["GitHub", "  jira  ", "LINEAR", "\tGitLab\n"]) {
+      const out = await askTrackerKind(makeFakeAsk([raw]), "q", "github");
+      assert.ok(SUPPORTED_TRACKER_KINDS.includes(out), `'${raw}' should normalise to a supported kind`);
+    }
+  });
+
+  it("re-prompts on invalid input and accepts the second try", async () => {
+    const out = await askTrackerKind(makeFakeAsk(["bitbucket", "gitlab"]), "q", "github");
+    assert.equal(out, "gitlab");
+  });
+
+  it("gives up after 3 bad attempts with a pointed error", async () => {
+    await assert.rejects(
+      () => askTrackerKind(makeFakeAsk(["bitbucket", "codeberg", "fogbugz"]), "q", "github"),
+      /valid tracker kind after 3 attempts/,
+    );
+  });
+
+  it("SUPPORTED_TRACKER_KINDS is frozen (contract lock for downstream switches)", () => {
+    assert.ok(Object.isFrozen(SUPPORTED_TRACKER_KINDS));
   });
 });
 

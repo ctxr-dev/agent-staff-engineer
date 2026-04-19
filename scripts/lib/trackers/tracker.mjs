@@ -28,14 +28,22 @@
 
 /**
  * Thrown by Tracker implementations that don't support a given
- * operation on the current tracker kind. Carries `kind` and `op` for
- * useful diagnostics at the skill level.
+ * operation on the current tracker kind. Carries `kind`, `op`, and
+ * `namespace` for useful diagnostics at the skill level.
+ *
+ * Catching code can rebuild the fully-qualified op string for logs
+ * via `${namespace}.${op}` when `namespace` is set, or just `${op}`
+ * when it isn't.
  *
  * @param {string} message
  * @param {{kind?: string, op?: string, namespace?: string}} [info]
  *   kind: tracker kind ("jira", "linear", "gitlab", ...)
- *   op: operation name ("createIssue", "review.requestReview", ...)
- *   namespace: sub-namespace ("review", "issues", "projects") if any
+ *   op: method name only ("createIssue", "requestReview", ...); the
+ *     namespace is kept in its own field so callers don't parse the
+ *     string.
+ *   namespace: sub-namespace ("review", "issues", "projects", "labels")
+ *     when the method lives under a namespace; absent for top-level
+ *     tracker methods.
  */
 export class NotSupportedError extends Error {
   constructor(message, { kind = null, op = null, namespace = null } = {}) {

@@ -464,15 +464,17 @@ async function interview(rl, d, _bundleRef) {
   const e2ePath = await ask("   e2e scripts path (empty if N/A)", "");
 
   const inferredKind = inferTrackerKind(d) ?? "github";
-  const devKind = await ask(
+  const devKind = await askTrackerKind(
+    ask,
     "5. Tracker hosting dev issues: github / jira / linear / gitlab",
-    inferredKind
+    inferredKind,
   );
   const devTracker = await askTrackerTarget(ask, devKind, "dev", d);
 
-  const releaseKind = await ask(
+  const releaseKind = await askTrackerKind(
+    ask,
     "6. Tracker hosting release umbrellas: github / jira / linear / gitlab (default: same as dev)",
-    devKind
+    devKind,
   );
   const releaseTracker = await askTrackerTarget(ask, releaseKind, "release", d, devTracker);
 
@@ -515,6 +517,38 @@ async function interview(rl, d, _bundleRef) {
     dataClasses,
     seedProductRules,
   };
+}
+
+/** The tracker kinds askTrackerTarget() knows how to ask questions for. */
+export const SUPPORTED_TRACKER_KINDS = Object.freeze(["github", "jira", "linear", "gitlab"]);
+
+/**
+ * Ask a tracker-kind question, normalise the answer (trim + lowercase),
+ * validate against SUPPORTED_TRACKER_KINDS, and re-prompt up to 3 times
+ * on invalid input before giving up and throwing. Bounding the retries
+ * matters for CI-style runs where stdin is closed early: without the
+ * bound, askRetry would spin forever on EOF.
+ *
+ * Typed out as its own helper (rather than inlined in interview()) so
+ * future tracker prompts (e.g. workspace-member trackers) get the same
+ * normalisation + validation without copy-paste.
+ */
+export async function askTrackerKind(ask, question, defaultValue) {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const rawAnswer = await ask(question, defaultValue);
+    const normalised = String(rawAnswer ?? "").trim().toLowerCase();
+    if (SUPPORTED_TRACKER_KINDS.includes(normalised)) {
+      return normalised;
+    }
+    process.stderr.write(
+      `bootstrap: '${rawAnswer}' is not a supported tracker kind (got attempt ${attempt}/${MAX_ATTEMPTS}). ` +
+      `Expected one of: ${SUPPORTED_TRACKER_KINDS.join(", ")}.\n`,
+    );
+  }
+  throw new Error(
+    `bootstrap: could not obtain a valid tracker kind after ${MAX_ATTEMPTS} attempts; re-run and enter one of ${SUPPORTED_TRACKER_KINDS.join(", ")}`,
+  );
 }
 
 /**

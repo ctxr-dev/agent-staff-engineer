@@ -203,12 +203,32 @@ if (!opsConfig) {
 // `github:` block that is no longer part of the schema. Hard-refuse to
 // continue so the user doesn't end up with a half-migrated config that
 // silently drops GitHub targets. Remediation is explicit: delete the
-// file and re-bootstrap. We write a timestamped backup so a repeat run
-// after the user aborts still preserves every intermediate snapshot
-// rather than clobbering a prior backup.
+// file and re-bootstrap. We write a backup so a repeat run after the
+// user aborts still preserves every intermediate snapshot rather than
+// clobbering a prior backup.
+//
+// Backup filename collisions: a plain `new Date().toISOString()` has
+// millisecond precision, so two install invocations landing inside the
+// same millisecond produce the same backup path. On POSIX rename()
+// would silently clobber the earlier backup; on Windows rename()
+// fails. Defensive uniqueness appends {pid} and, if that still
+// collides, a monotonic counter. The probability of a genuine
+// 3-process millisecond collision is negligible, but CI matrices that
+// parallelise install runs hit exactly this pattern often enough that
+// a regression here is quiet and hard to debug.
 if (opsConfig && "github" in opsConfig && !("trackers" in opsConfig)) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backupPath = `${opsConfigPath}.pre-trackers-${stamp}.bak`;
+  const basePrefix = `${opsConfigPath}.pre-trackers-${stamp}-pid${process.pid}`;
+  let backupPath = `${basePrefix}.bak`;
+  // existsSync keeps the check synchronous and avoids an extra
+  // dynamic import inside the hot path. The upper bound (1000
+  // attempts) is a guardrail against a pathological filesystem
+  // scenario where every candidate happens to already exist; in
+  // practice a single same-pid same-ms collision is the only
+  // realistic case, and we exit on the second iteration.
+  for (let attempt = 1; existsSync(backupPath) && attempt <= 1000; attempt += 1) {
+    backupPath = `${basePrefix}-${attempt}.bak`;
+  }
   try {
     await atomicWriteJson(backupPath, opsConfig);
   } catch (e) {
