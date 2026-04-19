@@ -546,4 +546,25 @@ describe("bootstrap.compose", () => {
       "github release tracker without repo must remain schema-valid",
     );
   });
+
+  // Round-5 T3: `depth` is central to the write-safety model and
+  // was previously optional. Now required across every tracker kind
+  // (see the required arrays on github/jira/linear/gitlab trackers
+  // in schemas/ops.config.schema.json). Lock it.
+  it("schema rejects a tracker target missing `depth`", async () => {
+    const schema = await loadSchemaOnce();
+    const { validate } = await import("../scripts/lib/schema.mjs");
+    for (const role of ["dev", "release"]) {
+      const cfg = composeFresh();
+      delete cfg.trackers[role].depth;
+      const v = validate(schema, cfg);
+      assert.equal(
+        v.ok,
+        false,
+        `trackers.${role} without depth must fail schema validation`,
+      );
+      const msg = JSON.stringify(v.errors ?? []);
+      assert.match(msg, /depth/, `error should mention 'depth' for role=${role}; got: ${msg}`);
+    }
+  });
 });

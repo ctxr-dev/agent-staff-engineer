@@ -119,9 +119,9 @@ Key groups:
 
 **adapt-system**: on user intent like "this is a PHI product now", produces a cascading diff across config, labels, templates, rules, seeds. Calls `tracker-sync` to propose label relabel plan if label taxonomy changes. Idempotent.
 
-**tracker-sync**: the only skill that writes to GitHub. Hosts: label reconcile, field reconcile, issue create/update, project item add/move, rollout-to-issues converter. Every other skill that needs GitHub state goes through `tracker-sync`.
+**tracker-sync**: the only skill that writes to the configured tracker kind (GitHub real; Jira / Linear / GitLab stubbed until their real backends land). Hosts: label reconcile, field reconcile, issue create/update, project item add/move, rollout-to-issues converter, review-iteration ops. Every other skill that needs tracker state goes through `tracker-sync`.
 
-**dev-loop**: owns the PR lifecycle from branch to `In review`. Calls `tracker-sync` to move the issue status and to comment on the PR. Calls `plan-keeper` to update the plan one-liner on gate crossings. Never merges, never sets Done.
+**dev-loop**: owns the PR / MR lifecycle from branch to `In review`. Calls `tracker-sync` to move the issue status and to comment on the PR. Calls `plan-keeper` to update the plan one-liner on gate crossings. Never merges, never sets Done.
 
 **release-tracker**: computes umbrella status from linked dev issues. Reads via `tracker-sync`. Auto-moves the Release umbrella status. Never touches dev issues.
 

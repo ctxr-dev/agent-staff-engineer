@@ -216,7 +216,14 @@ if (!opsConfig) {
 // 3-process millisecond collision is negligible, but CI matrices that
 // parallelise install runs hit exactly this pattern often enough that
 // a regression here is quiet and hard to debug.
-if (opsConfig && "github" in opsConfig && !("trackers" in opsConfig)) {
+// Any top-level `github` key is a legacy artefact, regardless of
+// whether `trackers` also exists. A partially-migrated config (both
+// keys present) would pass this gate under the older condition and
+// then fail schema validation downstream with an unactionable
+// "additional property 'github' is not allowed" error. Refuse on any
+// presence so the user is routed to the same backup-and-re-bootstrap
+// remediation either way.
+if (opsConfig && "github" in opsConfig) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const basePrefix = `${opsConfigPath}.pre-trackers-${stamp}-pid${process.pid}`;
   let backupPath = `${basePrefix}.bak`;

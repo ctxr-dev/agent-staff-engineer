@@ -78,7 +78,7 @@
         {
           "description": "When trackers.dev is a github target, `repo` must be set: dev issue / PR / branch operations need a concrete repo context. Release trackers legitimately span multiple repos in the same org so `repo` stays optional there.",
           "if": { "properties": { "dev": { "properties": { "kind": { "const": "github" } }, "required": ["kind"] } }, "required": ["dev"] },
-          "then": { "properties": { "dev": { "required": ["kind", "owner", "projects", "repo"] } } }
+          "then": { "properties": { "dev": { "required": ["kind", "owner", "depth", "projects", "repo"] } } }
         }
       ]
     },
@@ -702,7 +702,7 @@
 
     "githubTracker": {
       "type": "object",
-      "required": ["kind", "owner", "projects"],
+      "required": ["kind", "owner", "depth", "projects"],
       "additionalProperties": false,
       "description": "GitHub tracker target. One or more Projects v2 boards backing issues/PRs in a repo.",
       "properties": {
@@ -761,7 +761,7 @@
 
     "jiraTracker": {
       "type": "object",
-      "required": ["kind", "site", "project", "status_values"],
+      "required": ["kind", "site", "project", "depth", "status_values"],
       "additionalProperties": false,
       "description": "Atlassian Jira Cloud tracker target. Skills authenticate via the JIRA_API_TOKEN env var (or delegate to jira-cli if present).",
       "properties": {
@@ -788,7 +788,7 @@
 
     "linearTracker": {
       "type": "object",
-      "required": ["kind", "workspace", "team", "status_values"],
+      "required": ["kind", "workspace", "team", "depth", "status_values"],
       "additionalProperties": false,
       "description": "Linear tracker target. Skills authenticate via the LINEAR_API_KEY env var.",
       "properties": {
@@ -810,7 +810,7 @@
 
     "gitlabTracker": {
       "type": "object",
-      "required": ["kind", "host", "project_path", "status_values"],
+      "required": ["kind", "host", "project_path", "depth", "status_values"],
       "additionalProperties": false,
       "description": "GitLab tracker target (gitlab.com or self-hosted). Skills authenticate via the GITLAB_TOKEN env var (or delegate to glab if present).",
       "properties": {
