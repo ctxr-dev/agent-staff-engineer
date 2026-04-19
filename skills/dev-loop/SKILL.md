@@ -69,15 +69,8 @@ Hard rule baked in: **the dev-loop never merges a PR and never sets a dev issue 
 [release-tracker: recompute linked umbrella status]
       |
       v
-[hand off to skills/pr-iteration]
-   request external reviewer (Copilot on GitHub) via GraphQL,
-   poll for CI + review, triage threads, fix + push + resolve,
-   iterate until all three exit conditions hold on current HEAD.
-   Skipped when workflow.external_review.enabled is false, when
-   workflow.external_review.provider is "none" (or the dispatcher
-   otherwise resolves to kind "none"), or when the ReviewProvider
-   dispatcher returns the stub for this tracker kind
-   (Jira/Linear/GitLab today). See rules/pr-iteration.md.
+[address review comments loop]
+   each push keeps the issue at In review
       |
       v
 ***  HUMAN GATE 1: merge PR  ***

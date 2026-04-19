@@ -35,15 +35,8 @@ Every code change the agent drives follows the same state machine from branch cr
 [push; PR opened; reviewers requested; issue -> In review]
    |
    v
-[pr-iteration loop: request external reviewer (Copilot on GitHub),
- poll for CI + review, triage unresolved threads, fix + push +
- resolve, iterate until all three exit conditions hold on current
- HEAD. Governed by rules/pr-iteration.md.]
-   |  skipped when workflow.external_review.enabled is false, when
-   |  workflow.external_review.provider is "none" (or the dispatcher
-   |  otherwise resolves the provider kind to "none"), or when the
-   |  ReviewProvider dispatcher returns the stub for the configured
-   |  tracker kind (Jira/Linear/GitLab today).
+[address review comments]
+   |
    v
 ***  HUMAN GATE 1: PR merge  ***
    |
@@ -88,8 +81,7 @@ Every code change the agent drives follows the same state machine from branch cr
 ## Reviewer policy
 
 - Always request `project.principals.reviewers_default` plus whatever is declared in `workflow.pr.request_reviewers`.
-- External-reviewer orchestration (requesting Copilot, polling, thread triage) is governed by `rules/pr-iteration.md`. This rule names WHOM to request; `pr-iteration.md` drives HOW the request lifecycle plays out.
-- If Copilot is configured as a reviewer but is unavailable on the repo or org, `pr-iteration` surfaces the absence and falls back to the human reviewers. Never silently drop the request.
+- If Copilot is configured as a reviewer but is unavailable on the repo or org, fall back to the human reviewers and surface the absence.
 - Do not approve a PR the agent opened. Never.
 
 ## The two gates
