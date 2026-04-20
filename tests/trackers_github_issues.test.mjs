@@ -751,16 +751,20 @@ describe("github issues.createIssue", skipOpts, () => {
     assert.match(createCall, /body=rendered body for issue-bug\.md/);
   });
 
-  it("rejects templateName without a templateLoader in ctx", async () => {
+  it("rejects templateName without a templateLoader in ctx (fails BEFORE any gh call)", async () => {
     const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    // PR 9 R13 (Copilot): templateLoader validation used to run
+    // AFTER the dedupe search, burning a gh call on a caller bug.
+    // Now hoisted into the input-boundary block; the method throws
+    // before any network I/O. Asserting via a plain call (no
+    // withFakeGhSequence) — if the hoist regresses, the plain
+    // `gh` invocation will fail with a different error (auth or
+    // fixture-missing), not our targeted message.
     await assert.rejects(
-      withFakeGhSequence(
-        ["search_dedupe_miss"],
-        () => tracker.issues.createIssue({}, {
-          title: "x",
-          templateName: "issue.md",
-        }),
-      ),
+      tracker.issues.createIssue({}, {
+        title: "x",
+        templateName: "issue.md",
+      }),
       /templateLoader is not a function/,
     );
   });

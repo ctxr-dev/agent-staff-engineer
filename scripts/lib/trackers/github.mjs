@@ -1045,6 +1045,17 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
         `github issues.createIssue: templateName must be a non-empty string when supplied; got ${JSON.stringify(templateName)}`,
       );
     }
+    // Also validate ctx.templateLoader here at the input boundary
+    // (hoisted from the later "render body" block) so a caller
+    // supplying templateName without a loader fails fast — without
+    // first burning a dedupe search + repo-id lookup against the
+    // gh API. The call-site check is kept downstream as defence
+    // in depth but is now unreachable under normal flow.
+    if (typeof ctx?.templateLoader !== "function") {
+      throw new TypeError(
+        "github issues.createIssue: templateName was supplied but ctx.templateLoader is not a function",
+      );
+    }
     // Normalise to the trimmed value so the downstream
     // ctx.templateLoader call sees the canonical name. A caller's
     // "issue.md " would otherwise pass validation and fail the
