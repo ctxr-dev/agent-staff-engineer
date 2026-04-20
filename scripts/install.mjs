@@ -35,6 +35,8 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { stdin as processStdin, stdout as processStdout } from "node:process";
+import { waitForRequiredSkill } from "./lib/waitForSkill.mjs";
 import { preflight } from "./preflight.mjs";
 import { parseArgv, boolFlag } from "./lib/argv.mjs";
 import {
@@ -322,22 +324,110 @@ function psQuote(s) {
 // installer can proceed when ops.config declares the wiki as required. This
 // runs after bootstrap so a fresh install has a real opsConfig to read.
 // See rules/llm-wiki.md for the runtime contract this gate protects.
+//
+// Interactive mode (stdin IS a TTY, stdout IS a TTY, --yes is not
+// set, and the CI env var is unset / empty / "false"): the installer
+// WAITS for the user to install the skill, polling on each Enter key
+// until the skill appears. Commands the user can type at the prompt:
+// 'help' for troubleshooting, 'abort' to cancel. This is friendlier
+// than the previous "error and exit" behavior for humans sitting at
+// the terminal.
+//
+// Non-interactive mode (ANY of: stdin not a TTY, stdout not a TTY,
+// --yes passed, or CI env var set to any truthy value other than
+// "false" / ""): the installer preserves the previous error-and-exit
+// behavior so CI scripts and scripted installs fail fast with a
+// pointed remediation message. The stdout-TTY check catches the
+// `install.mjs > log` scenario where stdin is interactive but the
+// prompt would be invisible; the CI check catches pseudo-TTY CI
+// runners (GitHub Actions with `tty: true`, Buildkite) that would
+// otherwise trigger a prompt no human can answer.
 if (opsConfig.wiki?.required) {
   const provider = opsConfig.wiki.provider ?? "@ctxr/skill-llm-wiki";
-  const found = locateKitSkill(provider, TARGET);
-  if (!found) {
+  const found = await waitForRequiredSkillOrExit(provider, TARGET);
+  process.stdout.write(`wiki provider: ${provider} found at ${portableRef(found, TARGET)}\n`);
+}
+
+/**
+ * Decide interactive vs fail-fast based on TTY state and --yes, then
+ * dispatch to the extracted wait helper OR print the non-interactive
+ * error and exit. The helper (scripts/lib/waitForSkill.mjs) is
+ * factored out so it is unit-testable with injected streams;
+ * install.mjs keeps the TTY gate + kit-specific messaging.
+ */
+async function waitForRequiredSkillOrExit(provider, target) {
+  const candidates = kitSkillCandidatePaths(provider, target);
+
+  // Require BOTH stdin and stdout to be TTY before entering the wait
+  // loop. If stdout is redirected (e.g. `install.mjs --apply > log`),
+  // stdin may still be interactive but the prompt would be invisible
+  // and the script would look hung.
+  //
+  // Also treat CI environments as non-interactive even when they
+  // allocate a pseudo-TTY (GitHub Actions with `tty: true`, Buildkite,
+  // and others do this for tools that need colour output). A CI runner
+  // cannot actually interact with the prompt, so the wait would hang
+  // the job until timeout. The CI env var is the de-facto signal;
+  // treat empty string and a literal "false" as "not CI".
+  const runningInCi =
+    typeof process.env.CI === "string"
+      ? process.env.CI !== "" && process.env.CI.toLowerCase() !== "false"
+      : Boolean(process.env.CI);
+  const interactive =
+    Boolean(processStdin.isTTY) &&
+    Boolean(processStdout.isTTY) &&
+    !YES &&
+    !runningInCi;
+  if (!interactive) {
+    // First: the early-return fast path. If the skill is already
+    // installed, don't print any error; just return it.
+    const found = locateKitSkill(provider, target);
+    if (found) return found;
     process.stderr.write(
       `\nERROR: agent-staff-engineer requires the wiki provider skill '${provider}'.\n` +
-      `It was not found at either\n` +
-      `  ${kitSkillCandidatePaths(provider, TARGET).join("\n  ")}\n\n` +
+      `It was not found at any of\n` +
+      `  ${candidates.join("\n  ")}\n\n` +
       `Install it first:\n` +
       `  npx @ctxr/kit install ${provider}\n\n` +
       `Then re-run this installer. To opt out (you will manage .development/ manually),\n` +
-      `set 'wiki.required' to false in ops.config.json.\n`
+      `set 'wiki.required' to false in ops.config.json.\n`,
     );
     process.exit(1);
   }
-  process.stdout.write(`wiki provider: ${provider} found at ${portableRef(found, TARGET)}\n`);
+
+  // Build the rerun command with platform-aware shell quoting so a
+  // user whose target path contains spaces (macOS "Application
+  // Support", Windows "Program Files") can copy it verbatim. The
+  // helper falls back to a naive argv join when no pre-quoted value
+  // is supplied, but that breaks on whitespace; pre-quoting here is
+  // the robust path.
+  //
+  // Windows nuance: PowerShell treats a single-quoted executable
+  // path as a string literal, not a command. Copy-pasting
+  // `'C:\Program Files\nodejs\node.exe' script.mjs` gets you an
+  // "expression result discarded" error. The fix is to prefix the
+  // path with the call operator `&`, which tells PowerShell to
+  // invoke the quoted token as a command. POSIX shells don't
+  // require (or tolerate) the `&` prefix, so only the Windows branch
+  // emits it.
+  const onWindows = process.platform === "win32";
+  const quote = onWindows ? psQuote : shellQuote;
+  const argv = Array.isArray(process.argv) ? process.argv : [];
+  let rerunCommand;
+  if (argv.length >= 2) {
+    const quotedTokens = argv.map(quote);
+    rerunCommand = onWindows
+      ? `& ${quotedTokens.join(" ")}`
+      : quotedTokens.join(" ");
+  }
+
+  return waitForRequiredSkill({
+    provider,
+    target,
+    candidates,
+    locate: locateKitSkill,
+    rerunCommand,
+  });
 }
 
 const marker = opsConfig.paths.wrappers.marker;

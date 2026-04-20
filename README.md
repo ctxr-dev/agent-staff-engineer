@@ -3,9 +3,85 @@
 [![npm](https://img.shields.io/npm/v/@ctxr/agent-staff-engineer)](https://www.npmjs.com/package/@ctxr/agent-staff-engineer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A portable, adaptive Claude Code agent that acts as a staff engineer for any project. The configured issue tracker (GitHub, Jira, Linear, or GitLab) is the single source of truth. The agent drives the full dev loop (branch, code, local review, self-review, PR / MR open, reviewer requests, status sync up to In review) and reserves exactly two gates for you: **merge** and **dev-issue Done**.
+An AI staff engineer for your software project. It picks up tickets, writes code, reviews its own work, opens pull requests, responds to reviewer comments, and drives changes all the way up to the point of merge. It stops there and hands the decision to you. **GitHub is the only tracker with a working implementation today**; the config and bootstrap interview also accept Jira, Linear, and GitLab, but those backends are placeholders that throw `NotSupportedError` until their real implementations land (see the Current implementation status table below). It reads your project's config once so every action it takes is consistent with how your team already operates.
 
-## Quick start (via @ctxr/kit)
+## What it actually does for you
+
+**Sets itself up.** On first run it asks you a short set of questions (release cadence, team size, which tracker hosts your tickets, e2e setup, compliance context) and writes a single config file. Everything downstream reads from that file, so the agent behaves predictably across sessions.
+
+**Drives the full issue-to-PR loop.** You point it at an issue. It creates a branch, implements the change, runs the full local review chain (format, lint, type-check, unit, integration, e2e where applicable), delegates code review on its own work to [`@ctxr/skill-code-review`](https://github.com/ctxr-dev/skill-code-review), opens a PR with reviewers requested and the right template applied, moves the issue to "In review", and stops. You merge.
+
+**Iterates on review comments until the PR is green.** After the PR is open, it requests an external reviewer (e.g. GitHub Copilot), polls CI and review threads, classifies each unresolved comment as *stale*, *actionable*, or *suggestion*, fixes the actionable ones, commits, pushes, resolves what it addressed, re-requests review, and loops until three conditions hold: local review is still green, every thread is resolved, CI is green on the current commit.
+
+**Adapts when your project changes.** Tell it in plain English: "we handle PHI now", "we added a Chrome extension target", "we're migrating from Jira to Linear", "dropped the legacy analytics SDK". It produces a preview diff across your config, your label taxonomy, your issue templates, your internal rules, and its own memory. Nothing is written until you approve.
+
+**Keeps plan files honest.** Plan files under `.claude/plans/` get moved through `todo → in-progress → in-review → done` folders automatically, stay in the right checkbox format, and have their one-line status (the `[ ]` / `[x]` marker and the frontmatter) kept in sync with the linked tracker issue. If a plan says `[x]` but the tracker says "In progress", the local checkbox is rewritten to match the tracker. The plan body stays yours.
+
+**Tracks releases.** Release umbrella issues have their status computed automatically from their linked dev issues. The umbrella body gets a live summary (`2 Done / 1 In review / 3 In progress / 6 Backlog`) plus a blocker list. The agent auto-moves the umbrella through Backlog → In progress, but never to Done (that's you).
+
+**Triages regressions.** When you report a bug, it looks up historical closed issues by commit, file path, area label, or title keyword, and proposes: reopen the original, file a new linked bug, or investigate further. It writes a regression report with its reasoning so you can audit the decision.
+
+**Reconciles label taxonomy.** When your label set changes (you added a new `area/*` or renamed `priority/*`), it computes an add / edit / deprecate plan and applies it after you approve.
+
+## Two things it will never do
+
+These are non-negotiable, baked into every skill:
+
+1. **It never merges a PR.** Period.
+2. **It never sets a dev issue to `Done`.** Period.
+
+These two decisions are always yours.
+
+## Hard rules the agent always follows
+
+- **Your tracker is the single source of truth.** Configured in `trackers.*`. When a plan file's status marker conflicts with the tracker (e.g. plan says `[x]` but the tracker issue is "In progress"), the plan file's status line is rewritten to match the tracker. Scope of this rule, specifically: plan-file one-liners and frontmatter under `.claude/plans/`. It does NOT rewrite your source code, your README, your `CLAUDE.md`, your `ops.config.json`, the body of a plan file, your reports under `.development/shared/`, or anything the tracker itself holds. The rule stops at "status markers in local plan files".
+- **No em or en dashes** in anything the agent writes: issue bodies, PR descriptions, comments, plan files. Uses commas, colons, parentheses, or line breaks.
+- **Never runs destructive git commands.** No `reset --hard`, no `--force`, no discarding uncommitted changes.
+- **Never amends commits.** Every change is a new commit so history stays reviewable.
+- **Runs the full local review loop before pushing.** If any gate is red, it fixes and re-runs before it pushes.
+- **Halts and asks when state is ambiguous** (weird branch, orphan PR, contradictory status) rather than guessing.
+- **Never touches your project's `daily/` or `knowledge/` folders.** Those belong to your own tooling.
+- **Never writes above the managed block in your `CLAUDE.md`.** Your hand-written content is preserved byte-for-byte across agent updates.
+
+## Current implementation status
+
+The agent targets four tracker kinds; today only GitHub is backed by real implementations. Other kinds accept the config in the interview but surface a clean "not implemented yet" error on any operation.
+
+| Capability                             | GitHub                                | Jira / Linear / GitLab |
+| -------------------------------------- | ------------------------------------- | ---------------------- |
+| Open PRs, iterate on review comments   | **works**                             | stub (`NotSupportedError`) |
+| Status moves, comments, issue create   | partial (works via legacy path; the new unified API is being ported) | stub |
+| Label taxonomy reconcile               | partial                               | stub |
+| Release umbrella status                | **works**                             | stub |
+| Regression lookups                     | **works**                             | stub |
+| Bootstrap interview + config           | **works**                             | **works** (config is valid; write-ops throw until real backends land) |
+
+Real Jira / Linear / GitLab backends ship in follow-up releases. Today, the only **observed** (read-only) target kind the interview and runtime actually wire up is GitHub repos (for cross-repo lookups). The schema accepts observed Jira / Linear / GitLab entries, but every operation against them throws `NotSupportedError` because those backends are full stubs end-to-end: there's no path that reads from them either. Treat those kinds as "not implemented yet" full stop until the real backends land.
+
+## Things the interview does not ask (yet)
+
+A couple of things the bootstrap interview does NOT prompt for today, so you should know where the defaults come from and how to change them:
+
+- **Branch naming.** The agent uses these defaults for every project:
+
+  ```text
+  feat/{issue}-{slug}        refactor/{issue}-{slug}
+  fix/{issue}-{slug}         docs/{issue}-{slug}
+  chore/{issue}-{slug}
+  ```
+
+  `{issue}` is resolved per tracker kind (`123` on GitHub, `PROJ-123` on Jira, `TEAM-123` on Linear, `123` on GitLab). If you want a different convention (e.g. `meshin-dev/feat/widgets` or `release/2026-04`), ask the agent to run `adapt-system` with your intent, or edit `workflow.branch_patterns` in `ops.config.json` by hand.
+
+- **Release umbrellas are required in the schema today.** The interview asks you for `trackers.release`. If your team doesn't use umbrella issues for releases (e.g. you're a solo dev on a tag-based continuous deploy, or you use GitHub Milestones only), the closest workaround today is:
+  - Set `depth: "read-only"` on `trackers.release` so the release-tracker skill refuses to write anything there.
+  - Set `workflow.pr.link_release_umbrella: false` so dev-loop doesn't try to update umbrellas on PR open / close.
+
+  A cleaner "we don't use release umbrellas" toggle is planned for a follow-up release. The release models the interview-with-defaults is built for:
+  - **Per-wave / per-sprint** (the default; one umbrella per `intent` label value like `wave-1`, `wave-2`).
+  - **Per-version** (`initial`, `v1`, `v2`, ...). Pick `per-version` in the cadence question.
+  - **Continuous** (minimal: just `initial` and `post-launch`). Pick `continuous` in the cadence question.
+
+## Quick start
 
 ```bash
 # 1. Install the agent. Kit offers an interactive menu for the destination:
@@ -19,7 +95,7 @@ Then in Claude Code, ask Claude to run the agent, for example:
 Run the agent-staff-engineer and help me set it up for this project.
 ```
 
-On first run, the agent detects that `.claude/ops.config.json` is missing and self-bootstraps: it runs its own installer, launches an interactive interview (release cadence, team size + push principals, e2e setup, which tracker hosts dev issues and release umbrellas (GitHub / Jira / Linear / GitLab), observation depth, compliance context, project-specific rules to seed), writes `ops.config.json`, generates thin wrapper files at the canonical Claude Code locations, and hands control back.
+On first run, the agent detects that `.claude/ops.config.json` is missing and self-bootstraps: it runs its own installer, launches the interactive interview (eight topics covering release cadence, team size and push principals, e2e setup, which tracker hosts dev issues and release umbrellas (GitHub / Jira / Linear / GitLab) plus the target coordinates, additional repos to observe, observation depth, compliance context, optional project-specific rules to seed), writes `ops.config.json`, generates thin wrapper files at the canonical Claude Code locations, and hands control back.
 
 On every later invocation the agent acts on your request directly, guided by the configured rules.
 
@@ -35,7 +111,18 @@ On every later invocation the agent acts on your request directly, guided by the
   - **GitLab**: `GITLAB_TOKEN` env var (optionally `glab` if present).
   - Jira / Linear / GitLab backends are placeholders on this release; every op throws `NotSupportedError`. Real backends land in follow-up releases.
 
-## What you get
+## Required companion skill
+
+The agent requires [`@ctxr/skill-llm-wiki`](https://github.com/ctxr-dev/skill-llm-wiki) to be installed before it can apply its initial config. Every document under `.development/**` (reports, plans, runbooks) is managed as a semantically-routed LLM wiki by that skill, so the agent can navigate its own history without re-reading everything on every session.
+
+**What happens when it's missing:**
+
+- **Interactive install (you're sitting at a terminal):** the installer pauses, tells you which skill is missing, prints the exact command to run (`npx @ctxr/kit install @ctxr/skill-llm-wiki`), and waits for you. Run the install in another terminal, press Enter, and the agent rechecks and continues. At the prompt you can also type `help` (prints troubleshooting tips for common install failures, lets you ask the agent for help debugging) or `abort` (cancels cleanly). The installer never silently proceeds without the dependency.
+- **Non-interactive / scripted install (CI, `--yes`, piped stdin):** the installer prints the same "missing skill" message with the install command and exits non-zero so the pipeline fails fast. Install the skill and re-run.
+
+You can opt out entirely by setting `wiki.required: false` in `ops.config.json`, but then you own `.development/` yourself.
+
+## How it works under the hood
 
 - **Installable via kit.** One command places the bundle; one more (or just "run the agent") bootstraps it.
 - **Wrapper model**: canonical skills, rules, and memory seeds stay inside the bundle folder. The installer writes thin wrappers at `.claude/skills/agent-staff-engineer_<name>/SKILL.md`, `.claude/rules/agent-staff-engineer_<name>.md`, and `.claude/memory/seed-agent-staff-engineer_<name>.md`. The agent-name prefix is derived from `package.json -> name` so wrappers never collide with files shipped by other agents or skills. Each wrapper points at the canonical file and has a marker line; anything you add below the marker survives every update.
@@ -44,14 +131,6 @@ On every later invocation the agent acts on your request directly, guided by the
 - **Continuous adaptation**: the `adapt-system` skill takes free-form user intent ("we handle PHI now", "we added a Chrome extension target", "dropped the legacy analytics SDK") and produces cascading diffs across config, labels, templates, rules, and memory seeds. Idempotent, diff-previewed, never silent.
 - **Multi-tracker observation**: the config's `trackers` block binds a dev tracker, a release tracker, and zero or more read-only `observed` trackers (each independently kinded across github / jira / linear / gitlab). Every entry carries its own depth setting (`full`, `umbrella-only`, `assigned-to-principals`, `labeled:X`, `issues-only`, `read-only`). Multi-repo workspaces route per-member via the optional top-level `workspace.members[]` block.
 - **Code review default**: the `dev-loop` skill delegates self-review to [`@ctxr/skill-code-review`](https://github.com/ctxr-dev/skill-code-review) (up to 18 specialist reviewers, GO / CONDITIONAL / NO-GO verdict). Configurable; falls back to an internal template on projects that have not installed the external skill.
-
-## Hard rules the agent never breaks
-
-- The configured tracker(s) in `trackers.*` are the source of truth. Local files are projections.
-- The agent **never merges a PR / MR**. Merge belongs to you.
-- The agent **never sets a dev issue to Done**. Done belongs to you.
-- No em or en dashes in any Claude-authored text. Use commas, colons, parentheses, or line breaks.
-- The agent does not touch `daily/` or `knowledge/` folders. Those belong to the project's own hooks.
 
 ## Manual install (without kit)
 
@@ -65,12 +144,13 @@ The scripts self-locate via `import.meta.url`, so they work regardless of where 
 ## Structure
 
 - `AGENT.md`: Claude Code agent entry point with self-bootstrap instructions.
-- `skills/`: seven workflow skills (bootstrap-ops-config, adapt-system, tracker-sync, dev-loop, release-tracker, regression-handler, plan-keeper).
+- `bundle-index.md`: routing doc; the agent reads this first to jump to the relevant skill / rule rather than re-reading everything.
+- `skills/`: workflow skills (bootstrap-ops-config, adapt-system, tracker-sync, dev-loop, release-tracker, regression-handler, plan-keeper, pr-iteration).
 - `rules/`: portable process rules (tracker as source of truth, PR workflow, pr-iteration, ambiguity-halt, no dashes, plan management, review loop, memory hygiene, adaptation, llm-wiki).
-- `memory-seeds/`: eight starter memory entries, stack-tag filtered at install time.
-- `templates/`: ten issue / PR / report templates with `{{ placeholder }}` substitution.
+- `memory-seeds/`: starter memory entries, stack-tag filtered at install time.
+- `templates/`: issue / PR / report templates with `{{ placeholder }}` substitution.
 - `schemas/ops.config.schema.json`: strict JSON Schema validated on every install.
-- `scripts/`: Node.js ESM installer, bootstrap, adapt, seed installer, validator, preflight, update_self, plus shared helpers under `scripts/lib/` (agentName, fsx, gitignore, inject, schema, wrapper, diff, argv, ghExec).
+- `scripts/`: Node.js ESM installer, bootstrap, adapt, seed installer, validator, preflight, update_self, plus shared helpers under `scripts/lib/` (including `scripts/lib/trackers/` which holds the Tracker interface and per-kind implementations).
 - `examples/`: fully-populated fictitious example config.
 - `tests/`: `node:test` unit + E2E.
 - `design/`: MASTER-PLAN, DECISIONS, ARCHITECTURE, OPEN-QUESTIONS, RISKS.
