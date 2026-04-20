@@ -9,6 +9,7 @@ trigger_on:
 do_not_trigger_on:
   - Release projects whose `depth` is `read-only`.
   - Projects with zero release_projects configured.
+  - The project opted out of release umbrellas entirely (`trackers.release` absent from ops.config.json). The skill halts silently, neither reporting nor writing; any caller that invoked it explicitly receives a no-op result.
   - The recompute would flip an umbrella to Done while one or more linked dev issues are reopened OR their relation to the umbrella was broken between fetch and write. Follow `rules/ambiguity-halt.md` (halt, surface the mismatch and the specific issue numbers, ask whether to exclude, re-link, or wait); do not flip the umbrella status or mutate the body while the question is open.
 writes_to_github: yes, via tracker-sync, only on release umbrellas
 writes_to_filesystem: no

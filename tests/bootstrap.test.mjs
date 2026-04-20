@@ -9,6 +9,7 @@ import {
   defaultTrackerTarget,
   canAutoPopulate,
   isOnPath,
+  askBranchPattern,
   askTrackerKind,
   askTrackerTarget,
   SUPPORTED_TRACKER_KINDS,
@@ -701,6 +702,58 @@ describe("bootstrap.pickDefaults", () => {
   });
 });
 
+describe("bootstrap.askBranchPattern", () => {
+  // Minimal ask stub: drains a queue, returns each answer once.
+  const makeAsk = (answers) => {
+    const queue = [...answers];
+    return async () => {
+      if (queue.length === 0) throw new Error("ask stub exhausted");
+      return queue.shift();
+    };
+  };
+
+  it("returns the default when the user presses Enter", async () => {
+    const out = await askBranchPattern(makeAsk([""]), "feature", "feat/{issue}-{slug}");
+    assert.equal(out, "feat/{issue}-{slug}");
+  });
+
+  it("returns the user's custom pattern when both {issue} and {slug} are present", async () => {
+    const out = await askBranchPattern(
+      makeAsk(["{issue}/feature-{slug}"]),
+      "feature",
+      "feat/{issue}-{slug}",
+    );
+    assert.equal(out, "{issue}/feature-{slug}");
+  });
+
+  it("re-prompts on missing {issue} placeholder", async () => {
+    const out = await askBranchPattern(
+      makeAsk(["feat/{slug}", "feat/{issue}-{slug}"]),
+      "feature",
+      "feat/{issue}-{slug}",
+    );
+    assert.equal(out, "feat/{issue}-{slug}");
+  });
+
+  it("re-prompts on missing {slug} placeholder", async () => {
+    const out = await askBranchPattern(
+      makeAsk(["feat/{issue}", "release/{issue}-{slug}"]),
+      "feature",
+      "feat/{issue}-{slug}",
+    );
+    assert.equal(out, "release/{issue}-{slug}");
+  });
+
+  it("falls back to the default after 3 invalid attempts (does not throw)", async () => {
+    const out = await askBranchPattern(
+      makeAsk(["bad1", "bad2", "bad3"]),
+      "feature",
+      "feat/{issue}-{slug}",
+    );
+    assert.equal(out, "feat/{issue}-{slug}");
+  });
+});
+
 describe("bootstrap.compose", () => {
   const detection = {
     git: { remote: "git@github.com:acme/foo.git", defaultBranch: "main", ownerRepo: "acme/foo" },
@@ -821,5 +874,74 @@ describe("bootstrap.compose", () => {
       const msg = JSON.stringify(v.errors ?? []);
       assert.match(msg, /depth/, `error should mention 'depth' for role=${role}; got: ${msg}`);
     }
+  });
+
+  // PR 7: release umbrellas are now opt-in. When the user says "no" in
+  // the interview (the default), compose() must omit `trackers.release`
+  // entirely rather than emit an undefined value or an empty object.
+  // The consumer contract (release-tracker SKILL.md do_not_trigger_on,
+  // dev-loop's link-umbrella step) keys on the key being absent.
+  it("omits trackers.release when answers.releaseTracker is undefined", () => {
+    const answersNoRelease = { ...answers, releaseTracker: undefined };
+    const cfg = compose(detection, answersNoRelease, ".claude/agents/agent-staff-engineer");
+    assert.equal("release" in cfg.trackers, false, "trackers.release must be absent, not undefined");
+    assert.equal(cfg.trackers.dev.kind, "github", "dev tracker still composed");
+    assert.deepEqual(cfg.trackers.observed, [], "observed still composed as empty array");
+  });
+
+  // PR 7: when the release tracker is opted out, the PR-creation step
+  // must not try to link an umbrella either, even if a stale
+  // link_release_umbrella=true survived. Lock the contract that compose
+  // sets this to Boolean(a.releaseTracker), not the prior hard-coded
+  // true.
+  it("sets link_release_umbrella=false when answers.releaseTracker is undefined", () => {
+    const answersNoRelease = { ...answers, releaseTracker: undefined };
+    const cfg = compose(detection, answersNoRelease, ".claude/agents/agent-staff-engineer");
+    assert.equal(cfg.workflow.pr.link_release_umbrella, false);
+  });
+
+  it("keeps link_release_umbrella=true when answers.releaseTracker is present", () => {
+    const cfg = compose(detection, answers, ".claude/agents/agent-staff-engineer");
+    assert.equal(cfg.workflow.pr.link_release_umbrella, true);
+  });
+
+  // PR 7: schema now marks trackers.release as optional. A composed
+  // config without it must still validate end-to-end. Catches any
+  // future schema re-tightening that forgets to flip the `required`
+  // array back.
+  it("schema accepts a composed config without trackers.release", async () => {
+    const schema = await loadSchemaOnce();
+    const { validate } = await import("../scripts/lib/schema.mjs");
+    const answersNoRelease = { ...answers, releaseTracker: undefined };
+    const cfg = compose(detection, answersNoRelease, ".claude/agents/agent-staff-engineer");
+    const v = validate(schema, cfg);
+    assert.ok(v.ok, `composed config without release failed schema: ${JSON.stringify(v.errors ?? null)}`);
+  });
+
+  // PR 7: branch naming is interview-customisable. compose() must
+  // carry the answers' branchPatterns through when supplied, and fall
+  // back to the conventional defaults when absent (older callers that
+  // don't populate it).
+  it("uses answers.branchPatterns verbatim when provided", () => {
+    const custom = {
+      feature: "features/{issue}-{slug}",
+      fix: "fixes/{issue}-{slug}",
+      chore: "chores/{issue}-{slug}",
+      refactor: "refactors/{issue}-{slug}",
+      docs: "docs/{issue}-{slug}",
+    };
+    const answersCustom = { ...answers, branchPatterns: custom };
+    const cfg = compose(detection, answersCustom, ".claude/agents/agent-staff-engineer");
+    assert.deepEqual(cfg.workflow.branch_patterns, custom);
+  });
+
+  it("falls back to the conventional branch defaults when answers.branchPatterns is absent", () => {
+    const { branchPatterns: _omit, ...answersMinusBranch } = answers;
+    const cfg = compose(detection, answersMinusBranch, ".claude/agents/agent-staff-engineer");
+    assert.equal(cfg.workflow.branch_patterns.feature, "feat/{issue}-{slug}");
+    assert.equal(cfg.workflow.branch_patterns.fix, "fix/{issue}-{slug}");
+    assert.equal(cfg.workflow.branch_patterns.chore, "chore/{issue}-{slug}");
+    assert.equal(cfg.workflow.branch_patterns.refactor, "refactor/{issue}-{slug}");
+    assert.equal(cfg.workflow.branch_patterns.docs, "docs/{issue}-{slug}");
   });
 });
