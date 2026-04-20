@@ -58,28 +58,19 @@ The agent targets four tracker kinds; today only GitHub is backed by real implem
 
 Real Jira / Linear / GitLab backends ship in follow-up releases. Today, the only **observed** (read-only) target kind the interview and runtime actually wire up is GitHub repos (for cross-repo lookups). The schema accepts observed Jira / Linear / GitLab entries, but every operation against them throws `NotSupportedError` because those backends are full stubs end-to-end: there's no path that reads from them either. Treat those kinds as "not implemented yet" full stop until the real backends land.
 
+## Release models the interview supports
+
+The interview's cadence question picks which umbrella rhythm fits your project:
+
+- **Per-wave / per-sprint** (the default; one umbrella per `intent` label value like `wave-1`, `wave-2`).
+- **Per-version** (`initial`, `v1`, `v2`, ...). Pick `per-version` in the cadence question.
+- **Continuous** (minimal: just `initial` and `post-launch`). Pick `continuous` in the cadence question.
+
+Teams that don't coordinate releases with umbrella issues (solo dev on tag-based continuous deploy, milestone-only workflows) answer `no` to the release-umbrella question in the interview. The agent omits `trackers.release` from the generated config; `release-tracker` halts silently and `dev-loop` skips the link-umbrella step.
+
 ## Things the interview does not ask (yet)
 
-A couple of things the bootstrap interview does NOT prompt for today, so you should know where the defaults come from and how to change them:
-
-- **Branch naming.** The agent uses these defaults for every project:
-
-  ```text
-  feat/{issue}-{slug}        refactor/{issue}-{slug}
-  fix/{issue}-{slug}         docs/{issue}-{slug}
-  chore/{issue}-{slug}
-  ```
-
-  `{issue}` is resolved per tracker kind (`123` on GitHub, `PROJ-123` on Jira, `TEAM-123` on Linear, `123` on GitLab). If you want a different convention (e.g. `meshin-dev/feat/widgets` or `release/2026-04`), ask the agent to run `adapt-system` with your intent, or edit `workflow.branch_patterns` in `ops.config.json` by hand.
-
-- **Release umbrellas are required in the schema today.** The interview asks you for `trackers.release`. If your team doesn't use umbrella issues for releases (e.g. you're a solo dev on a tag-based continuous deploy, or you use GitHub Milestones only), the closest workaround today is:
-  - Set `depth: "read-only"` on `trackers.release` so the release-tracker skill refuses to write anything there.
-  - Set `workflow.pr.link_release_umbrella: false` so dev-loop doesn't try to update umbrellas on PR open / close.
-
-  A cleaner "we don't use release umbrellas" toggle is planned for a follow-up release. The release models the interview-with-defaults is built for:
-  - **Per-wave / per-sprint** (the default; one umbrella per `intent` label value like `wave-1`, `wave-2`).
-  - **Per-version** (`initial`, `v1`, `v2`, ...). Pick `per-version` in the cadence question.
-  - **Continuous** (minimal: just `initial` and `post-launch`). Pick `continuous` in the cadence question.
+- **Workspace multi-repo dispatch.** The schema reserves `workspace.members[]` for projects where siblings dirs have their own git repos with different trackers, but the bootstrap interview does not yet prompt for members, and the dispatcher routes everything through the top-level `trackers.*`. A follow-up release wires the per-member lookup. If you need multi-repo support today, add the `workspace.members[]` block by hand after bootstrap.
 
 ## Quick start
 
@@ -95,7 +86,7 @@ Then in Claude Code, ask Claude to run the agent, for example:
 Run the agent-staff-engineer and help me set it up for this project.
 ```
 
-On first run, the agent detects that `.claude/ops.config.json` is missing and self-bootstraps: it runs its own installer, launches the interactive interview (eight topics covering release cadence, team size and push principals, e2e setup, which tracker hosts dev issues and release umbrellas (GitHub / Jira / Linear / GitLab) plus the target coordinates, additional repos to observe, observation depth, compliance context, optional project-specific rules to seed), writes `ops.config.json`, generates thin wrapper files at the canonical Claude Code locations, and hands control back.
+On first run, the agent detects that `.claude/ops.config.json` is missing and self-bootstraps: it runs its own installer, launches the interactive interview (nine topics covering release cadence, team size and push principals, e2e setup, which tracker hosts dev issues (GitHub / Jira / Linear / GitLab) plus the target coordinates, whether you coordinate releases with umbrella issues (and if so, which tracker hosts them), whether to customise branch naming, additional repos to observe, observation depth, compliance context, optional project-specific rules to seed), writes `ops.config.json`, generates thin wrapper files at the canonical Claude Code locations, and hands control back.
 
 On every later invocation the agent acts on your request directly, guided by the configured rules.
 

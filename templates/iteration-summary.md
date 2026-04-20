@@ -6,7 +6,7 @@ stored at: {{ paths.reports }}/{{ iteration_end_date }}-iteration-{{ iteration_s
 ops.config keys read:
   - project.name
   - workflow.phase_term
-  - github.dev_projects
+  - trackers.dev.projects
   - paths.reports
   - labels.intent
   - labels.area

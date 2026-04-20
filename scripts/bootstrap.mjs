@@ -456,7 +456,7 @@ async function interview(rl, d, _bundleRef) {
     return s.split(",").map((x) => x.trim()).filter(Boolean);
   };
 
-  process.stdout.write("interview (8 topics). Enter accepts the default shown in brackets.\n");
+  process.stdout.write("interview (9 topics). Enter accepts the default shown in brackets.\n");
   process.stdout.write("Note: on GitHub, only the review namespace is implemented today (used by skills/pr-iteration); issues / projects / labels namespaces are stubbed. Jira / Linear / GitLab backends accept the config but EVERY op (read or write) throws NotSupportedError until their real impls land.\n\n");
 
   const cadence = await ask(
@@ -486,15 +486,47 @@ async function interview(rl, d, _bundleRef) {
   );
   const devTracker = await askTrackerTarget(ask, devKind, "dev", d);
 
-  const releaseKind = await askTrackerKind(
-    ask,
-    "5. Tracker hosting release umbrellas: github / jira / linear / gitlab (default: same as dev)",
-    devKind,
+  // Release umbrellas are optional. Teams that don't use one coordinating
+  // issue per release (solo, continuous deploy, milestone-based workflows)
+  // skip this block entirely. The schema treats `trackers.release` as
+  // optional; consumer skills (release-tracker, dev-loop's link-umbrella
+  // step) short-circuit when it's absent.
+  const usesReleaseUmbrellas = await askYesNo(
+    "5. Do you use release-umbrella issues (one coordinating issue per release)? If unsure, say no; you can add this later via adapt-system",
+    "no"
   );
-  const releaseTracker = await askTrackerTarget(ask, releaseKind, "release", d, devTracker);
+  let releaseTracker;
+  if (usesReleaseUmbrellas) {
+    const releaseKind = await askTrackerKind(
+      ask,
+      "   Tracker hosting release umbrellas: github / jira / linear / gitlab (default: same as dev)",
+      devKind,
+    );
+    releaseTracker = await askTrackerTarget(ask, releaseKind, "release", d, devTracker);
+  }
+
+  // Branch naming. Defaults work for most projects and match conventional
+  // commit prefixes (see module-level DEFAULT_BRANCH_PATTERNS). A user
+  // who wants something different can customise per-type here, or
+  // later via adapt-system.
+  const customiseBranchNaming = await askYesNo(
+    `6. Customise branch naming? Defaults: ${Object.values(DEFAULT_BRANCH_PATTERNS).join(", ")}. Placeholders {issue} and {slug} are required`,
+    "no"
+  );
+  let branchPatterns = { ...DEFAULT_BRANCH_PATTERNS };
+  if (customiseBranchNaming) {
+    branchPatterns = {};
+    for (const type of Object.keys(DEFAULT_BRANCH_PATTERNS)) {
+      branchPatterns[type] = await askBranchPattern(
+        ask,
+        `   ${type} branches`,
+        DEFAULT_BRANCH_PATTERNS[type],
+      );
+    }
+  }
 
   const observedReposStr = await ask(
-    "6. Additional observed GitHub repos (owner/name), comma-separated, blank for none",
+    "7. Additional observed GitHub repos (owner/name), comma-separated, blank for none",
     ""
   );
   const defaultDepth = await ask(
@@ -504,7 +536,7 @@ async function interview(rl, d, _bundleRef) {
   const observed = parseObservedGithubRepos(observedReposStr, defaultDepth);
 
   const regimes = await askCsv(
-    "7. Compliance regimes: gdpr,ccpa,soc2,pci,hipaa,mhmda,appi,pipa,lgpd or 'none'",
+    "8. Compliance regimes: gdpr,ccpa,soc2,pci,hipaa,mhmda,appi,pipa,lgpd or 'none'",
     "none"
   );
   const dataClasses = await askCsv(
@@ -512,7 +544,7 @@ async function interview(rl, d, _bundleRef) {
     "none"
   );
   const seedProductRules = await askYesNo(
-    "8. Seed any project-specific rules now? (you can add later via adapt-system)",
+    "9. Seed any project-specific rules now? (you can add later via adapt-system)",
     "no"
   );
 
@@ -525,6 +557,7 @@ async function interview(rl, d, _bundleRef) {
     e2ePath,
     devTracker,
     releaseTracker,
+    branchPatterns,
     observed,
     // defaultDepth lives as a local variable only: its single use is
     // parseObservedGithubRepos() above, which consumes it inline to
@@ -539,6 +572,34 @@ async function interview(rl, d, _bundleRef) {
 
 /** The tracker kinds askTrackerTarget() knows how to ask questions for. */
 export const SUPPORTED_TRACKER_KINDS = Object.freeze(["github", "jira", "linear", "gitlab"]);
+
+/**
+ * Canonical branch-pattern defaults for every workflow.branch_patterns.<type>.
+ * Single source of truth consumed in three places:
+ *   1. interview() shows these as the default in the "customise branch
+ *      naming?" question and as the per-type fallback when the user
+ *      chose yes but Enters through a row.
+ *   2. pickDefaults() emits this block in the non-interactive (--yes)
+ *      path so composed configs match what the interactive path would
+ *      produce when the user declines to customise.
+ *   3. compose() uses it as the `a.branchPatterns ?? ...` fallback for
+ *      older callers that don't populate `answers.branchPatterns`.
+ *
+ * Object.freeze + spreads at each consumer keep the constant
+ * immutable; consumers must `{ ...DEFAULT_BRANCH_PATTERNS }` if they
+ * need a mutable copy (e.g. interview's customise path builds the
+ * answers object incrementally).
+ *
+ * Exported so tests can assert on it directly rather than duplicating
+ * the literal in test fixtures.
+ */
+export const DEFAULT_BRANCH_PATTERNS = Object.freeze({
+  feature: "feat/{issue}-{slug}",
+  fix: "fix/{issue}-{slug}",
+  chore: "chore/{issue}-{slug}",
+  refactor: "refactor/{issue}-{slug}",
+  docs: "docs/{issue}-{slug}",
+});
 
 /**
  * Ask a prompt, normalise the answer (trim), optionally validate it
@@ -610,6 +671,43 @@ export async function askTrackerKind(ask, question, defaultValue) {
   throw new Error(
     `bootstrap: could not obtain a valid tracker kind after ${MAX_ATTEMPTS} attempts; re-run and enter one of ${SUPPORTED_TRACKER_KINDS.join(", ")}`,
   );
+}
+
+/**
+ * Ask for a branch-pattern template, validate that both `{issue}` and
+ * `{slug}` placeholders are present (the schema's pattern check enforces
+ * this downstream; catching it at prompt time gives a better error).
+ * Up to 3 attempts, then fall back to the default. The schema's
+ * workflow.branch_patterns.<type> pattern is
+ * `^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$` so the two tokens can appear
+ * in EITHER order (`{issue}-{slug}` and `{slug}-{issue}` are both
+ * valid) with prefix / suffix text. This prompt check (using
+ * `includes` for each token separately) intentionally matches the
+ * schema's order-independent contract, so any pattern accepted here
+ * validates against the schema at compose time.
+ */
+export async function askBranchPattern(ask, label, defaultValue) {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const raw = await ask(label, defaultValue);
+    const trimmed = String(raw ?? "").trim();
+    if (!trimmed) {
+      // Empty → accept the default silently; users who Enter through
+      // mean "keep the default".
+      return defaultValue;
+    }
+    if (trimmed.includes("{issue}") && trimmed.includes("{slug}")) {
+      return trimmed;
+    }
+    process.stderr.write(
+      `bootstrap: branch pattern '${trimmed}' is missing one of {issue} / {slug} (attempt ${attempt}/${MAX_ATTEMPTS}). ` +
+      `Example: 'feat/{issue}-{slug}'.\n`,
+    );
+  }
+  process.stderr.write(
+    `bootstrap: could not obtain a valid ${label} after ${MAX_ATTEMPTS} attempts; keeping the default '${defaultValue}'.\n`,
+  );
+  return defaultValue;
 }
 
 /**
@@ -880,6 +978,11 @@ export function pickDefaults(d) {
   const pushAllowed = [d.gh.login, "claude"].filter(Boolean);
   const reviewers = [d.gh.login, "copilot"].filter(Boolean);
   const devTracker = defaultTrackerTarget(kind, "dev", d);
+  // --yes installs keep the legacy "always emit a release tracker" shape
+  // so existing non-interactive pipelines don't break. Interactive
+  // users decide via the bootstrap interview question. Teams that want
+  // --yes to skip umbrellas can follow up with adapt-system or delete
+  // `trackers.release` by hand.
   const releaseTracker = defaultTrackerTarget(kind, "release", d);
   return {
     cadence: "per-wave",
@@ -890,6 +993,12 @@ export function pickDefaults(d) {
     e2ePath: "",
     devTracker,
     releaseTracker,
+    // Copy the canonical defaults so downstream compose() emits the
+    // same patterns it did before the interactive branch-naming
+    // question existed. Spread (vs referencing DEFAULT_BRANCH_PATTERNS
+    // directly) hands callers a mutable plain object, matching what
+    // the interactive path produces.
+    branchPatterns: { ...DEFAULT_BRANCH_PATTERNS },
     observed: [],
     regimes: ["none"],
     dataClasses: ["none"],
@@ -1040,9 +1149,16 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
         reviewers_default: a.reviewers,
       },
     },
+    // trackers.release is omitted entirely when the user said "no" to
+    // the release-umbrella question (a.releaseTracker is undefined).
+    // The schema treats `release` as optional; consumers short-circuit
+    // on absence. Gate on `=== undefined` (not truthiness) so bad
+    // inputs like null / 0 / "" still propagate through and fail
+    // schema validation downstream — silently dropping them would hide
+    // bugs in callers that construct an answers object programmatically.
     trackers: {
       dev: a.devTracker,
-      release: a.releaseTracker,
+      ...(a.releaseTracker === undefined ? {} : { release: a.releaseTracker }),
       observed: a.observed ?? [],
     },
     labels: {
@@ -1067,12 +1183,30 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
     },
     workflow: {
       phase_term: a.cadence === "per-wave" ? "wave" : a.cadence === "per-version" ? "version" : "track",
+      // Merge DEFAULT_BRANCH_PATTERNS under a.branchPatterns so:
+      //   (a) the composed object is always a fresh mutable copy,
+      //       never a direct reference to answers or the frozen
+      //       module-level constant;
+      //   (b) callers that supply a PARTIAL branchPatterns (e.g. a
+      //       migration script that only overrides `feature`) get the
+      //       remaining keys filled in from the canonical defaults,
+      //       rather than a schema-invalid config missing required
+      //       keys. The full key set is `required` on the schema, so
+      //       never letting partials through preserves that contract;
+      //   (c) only schema-known keys survive. The schema declares
+      //       `additionalProperties: false` on workflow.branch_patterns,
+      //       so a caller with a typo ("fixes" instead of "fix") would
+      //       otherwise produce a schema-invalid config. Whitelist
+      //       against `DEFAULT_BRANCH_PATTERNS` (the single source of
+      //       truth for valid keys) so typos are silently dropped in
+      //       favour of the default rather than poisoning the output.
       branch_patterns: {
-        feature: "feat/{issue}-{slug}",
-        fix: "fix/{issue}-{slug}",
-        chore: "chore/{issue}-{slug}",
-        refactor: "refactor/{issue}-{slug}",
-        docs: "docs/{issue}-{slug}",
+        ...DEFAULT_BRANCH_PATTERNS,
+        ...Object.fromEntries(
+          Object.entries(a.branchPatterns ?? {}).filter(
+            ([key]) => Object.prototype.hasOwnProperty.call(DEFAULT_BRANCH_PATTERNS, key),
+          ),
+        ),
       },
       commits: {
         style: "conventional",
@@ -1087,7 +1221,12 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
         tests_required: ["unit", "integration"],
         e2e_required_on: a.e2eSetup === "none" ? [] : ["ux"],
         self_review_required: true,
-        link_release_umbrella: true,
+        // link_release_umbrella is set to true ONLY when the user
+        // configured a release tracker. When `a.releaseTracker` is
+        // undefined we emit false so downstream dev-loop's
+        // "update the linked umbrella" step never fires even if a
+        // future release-tracker appears in the config mid-session.
+        link_release_umbrella: Boolean(a.releaseTracker),
         update_plan_oneliner: true,
       },
       release: {

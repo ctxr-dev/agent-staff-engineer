@@ -8,7 +8,8 @@ trigger_on:
   - After adapt-system changes the intent label taxonomy (new or removed intent values).
 do_not_trigger_on:
   - Release projects whose `depth` is `read-only`.
-  - Projects with zero release_projects configured.
+  - Projects with zero entries in `trackers.release.projects[]`.
+  - The project opted out of release umbrellas entirely (`trackers.release` absent from `.claude/ops.config.json`). The skill halts silently, neither reporting nor writing; any caller that invoked it explicitly receives a no-op result.
   - The recompute would flip an umbrella to Done while one or more linked dev issues are reopened OR their relation to the umbrella was broken between fetch and write. Follow `rules/ambiguity-halt.md` (halt, surface the mismatch and the specific issue numbers, ask whether to exclude, re-link, or wait); do not flip the umbrella status or mutate the body while the question is open.
 writes_to_github: yes, via tracker-sync, only on release umbrellas
 writes_to_filesystem: no
@@ -41,7 +42,7 @@ Owns release umbrella state. Never touches dev issues. Never moves a dev issue t
 For each umbrella:
 
 ```text
-linked = issues linked to the umbrella via the release project's "Linked Dev Issues" relation
+linked = issues linked to the umbrella via the release tracker's "Linked Dev Issues" relation
          or carrying the umbrella's intent label
 
 statuses = { backlog, ready, in_progress, in_review, done } counts across linked
@@ -65,8 +66,8 @@ A recompute against the same underlying state is a no-op write (the skill compar
 ## Guardrails
 
 - Refuses to move any dev issue. The skill's surface has no "update dev status" entry point.
-- Refuses to touch umbrellas in a `depth: read-only` release_project.
-- `depth: umbrella-only` is the natural fit for release projects; the skill works correctly under `full` or `umbrella-only`.
+- Refuses to touch umbrellas when `trackers.release.depth` is `read-only`.
+- `depth: umbrella-only` is the natural fit for release trackers; the skill works correctly under `full` or `umbrella-only`.
 
 ## Failure modes
 
@@ -82,13 +83,13 @@ A recompute against the same underlying state is a no-op write (the skill compar
 
 ## Release umbrella creation
 
-Umbrellas are created by `tracker-sync.create_release_umbrella` when a new `labels.intent` value exists without a corresponding umbrella on any configured `release_project`. Title template from `workflow.release.umbrella_title`. `release-tracker` verifies one umbrella exists per intent value and asks `tracker-sync` to create missing ones on approval.
+Umbrellas are created by `tracker-sync.create_release_umbrella` when a new `labels.intent` value exists without a corresponding umbrella on any configured `trackers.release.projects[]` entry. Title template from `workflow.release.umbrella_title`. `release-tracker` verifies one umbrella exists per intent value and asks `tracker-sync` to create missing ones on approval.
 
 ## Project contract
 
 - `project.name` (for summary printing).
-- `github.release_projects[]` (owner, number, role, depth, status_field, status_values, fields).
-- `github.dev_projects[]` (only to read linked-issue statuses).
+- `trackers.release` (optional; per-kind target with its own `projects[]` when `kind` is GitHub: `{owner, number, role, depth, status_field, status_values, fields}`). Skill halts silently when absent.
+- `trackers.dev.projects[]` (only to read linked-issue statuses).
 - `labels.intent` (one umbrella per value).
 - `labels.state_modifiers` (to compute blocker count).
 - `workflow.release.umbrella_title`.

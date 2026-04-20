@@ -61,9 +61,9 @@
 
     "trackers": {
       "type": "object",
-      "required": ["dev", "release"],
+      "required": ["dev"],
       "additionalProperties": false,
-      "description": "Issue / PR / project trackers the agent operates against. `dev` hosts day-to-day issues and code review; `release` hosts release umbrellas; `observed` is a read-only array for cross-tracker lookups (e.g. during a migration or for shared libs on a different tracker). Each entry is a tracker target discriminated by the required `kind` field (github, jira, linear, gitlab).",
+      "description": "Issue / PR / project trackers the agent operates against. `dev` hosts day-to-day issues and code review; `release` hosts release umbrellas (optional; when absent, release-tracker is effectively disabled and `workflow.pr.link_release_umbrella` behaves as if false regardless of its setting); `observed` is a read-only array for cross-tracker lookups (e.g. during a migration or for shared libs on a different tracker). Each entry is a tracker target discriminated by the required `kind` field (github, jira, linear, gitlab). Teams who don't use umbrella issues for coordinating releases (solo / continuous deploy / milestone-based workflows) should omit `release` entirely.",
       "properties": {
         "dev": { "$ref": "#/definitions/trackerTarget" },
         "release": { "$ref": "#/definitions/trackerTarget" },
@@ -221,13 +221,13 @@
           "type": "object",
           "required": ["feature", "fix", "chore", "refactor", "docs"],
           "additionalProperties": false,
-          "description": "Branch name templates per type. Placeholders: {issue}, {slug}.",
+          "description": "Branch name templates per type. Placeholders: {issue}, {slug}. Both must appear; either order is accepted (e.g. 'feat/{issue}-{slug}' and 'feat/{slug}-{issue}' both validate).",
           "properties": {
-            "feature":  { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
-            "fix":      { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
-            "chore":    { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
-            "refactor": { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
-            "docs":     { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" }
+            "feature":  { "type": "string", "pattern": "^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$" },
+            "fix":      { "type": "string", "pattern": "^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$" },
+            "chore":    { "type": "string", "pattern": "^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$" },
+            "refactor": { "type": "string", "pattern": "^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$" },
+            "docs":     { "type": "string", "pattern": "^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$" }
           }
         },
         "commits": {
@@ -299,7 +299,7 @@
             },
             "link_release_umbrella": {
               "type": "boolean",
-              "description": "If true, the agent updates the linked release umbrella when a PR opens or closes.",
+              "description": "If true, the agent updates the linked release umbrella when a PR opens or closes. Effectively ignored (treated as false) when `trackers.release` is absent — the consumers (dev-loop, release-tracker) short-circuit on the missing tracker first.",
               "default": true
             },
             "update_plan_oneliner": {

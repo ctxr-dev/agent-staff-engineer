@@ -81,6 +81,28 @@ export function pickReviewProvider(cfg) {
 }
 
 /**
+ * Cheap probe: does the config declare a release tracker? The `release`
+ * key is optional on `trackers:` — teams that don't use release
+ * umbrellas (solo / continuous deploy / milestone-based workflows)
+ * omit it and the release-tracker + dev-loop consumers short-circuit
+ * on absence. This helper lets callers check the presence without
+ * having to catch pickTracker's "missing trackers.release" throw.
+ *
+ * @param {object} cfg parsed ops.config.json
+ * @returns {boolean} true if `trackers.release` is a non-null object with a `kind`.
+ */
+export function hasReleaseTracker(cfg) {
+  const target = cfg?.trackers?.release;
+  return (
+    Boolean(target) &&
+    typeof target === "object" &&
+    !Array.isArray(target) &&
+    typeof target.kind === "string" &&
+    target.kind.length > 0
+  );
+}
+
+/**
  * Return the tracker kind for the named role without constructing a
  * Tracker. Used by callers that only need the kind string (logging,
  * branch naming, skill routing decisions). Performs the same config

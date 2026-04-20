@@ -31,7 +31,7 @@ Hard rule baked in: **the dev-loop never merges a PR and never sets a dev issue 
 - A self-review artefact under `workflow.code_review.report_dir` (default `.development/shared/reports/`).
 - An open PR rendered from `templates/pr.md` with `workflow.pr.link_issue_with` referencing the issue.
 - The dev issue updated to `In review` (via `tracker-sync`).
-- Linked Release umbrella updated (via `release-tracker` triggered by `tracker-sync`).
+- Linked Release umbrella updated (via `release-tracker` triggered by `tracker-sync`). This step is skipped entirely when the project opted out of release umbrellas (`trackers.release` absent from `.claude/ops.config.json`): the `release-tracker` skill halts silently per its own `do_not_trigger_on` contract, and `workflow.pr.link_release_umbrella` is treated as false regardless of its configured value.
 - Plan one-liner updated (via `plan-keeper`) when `workflow.pr.update_plan_oneliner` is true.
 
 ## State machine
@@ -67,7 +67,9 @@ Hard rule baked in: **the dev-loop never merges a PR and never sets a dev issue 
 [tracker-sync: review.requestReview per project.principals.reviewers_default]
 [tracker-sync: issues.updateIssueStatus -> In review]
 [plan-keeper: flip plan one-liner to [x]]
-[release-tracker: recompute linked umbrella status]
+[release-tracker: recompute linked umbrella status]   (skipped when
+                                                       trackers.release
+                                                       is absent)
       |
       v
 [hand off to skills/pr-iteration]
@@ -136,7 +138,7 @@ The ctxr-skill-code-review default is the recommended path. Projects opt out via
 ## Project contract
 
 - `project.default_branch`, `project.principals.push_allowed`, `project.principals.reviewers_default`.
-- `github.dev_projects[]` (needs depth that allows writes for the chosen target).
+- `trackers.dev` (needs `depth` that allows writes for the chosen target; project bindings live under `trackers.dev.projects[]` when `kind` is GitHub).
 - `labels.type`, `labels.area`, `labels.priority`, `labels.size`, `labels.state_modifiers`.
 - `workflow.branch_patterns.*`.
 - `workflow.commits.style`, `workflow.commits.signed`, `workflow.commits.scope_source`.
