@@ -743,7 +743,13 @@ async function githubListIssues(trackerTarget, ctx, payload = {}) {
   }
   const HARD_CAP = 1000;
   const effectiveLimit = Math.min(limit, HARD_CAP);
-  const statesArg = state === "ALL" ? "" : `, states: [${state}]`;
+  // Map "ALL" to an explicit both-states list. GitHub's
+  // Repository.issues connection defaults to [OPEN], so omitting
+  // the arg entirely (our earlier impl) meant "ALL" behaved
+  // identically to "OPEN" and never returned closed issues.
+  const statesArg = state === "ALL"
+    ? ", states: [OPEN, CLOSED]"
+    : `, states: [${state}]`;
   const query = `
     query($owner: String!, $name: String!, $after: String) {
       repository(owner: $owner, name: $name) {
@@ -1139,16 +1145,28 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
   }
   const statusField = rawStatusField ?? "Status";
   // statusField flows through an ops.config.json string that the
-  // user (or adapt-system) supplies. Validate it as a simple field
-  // identifier (letters, digits, space, underscore, dash) before
-  // it touches the query text. This closes a GraphQL-injection /
-  // query-corruption footgun: a name with `"` or newlines would
-  // otherwise break the query silently. GitHub field names in the
-  // wild are all short human-readable strings, so a conservative
-  // allow-list catches every legitimate case.
-  if (!/^[A-Za-z0-9 _-]{1,64}$/.test(statusField)) {
+  // user (or adapt-system) supplies, and is interpolated into the
+  // GraphQL query as a double-quoted string literal via
+  // JSON.stringify below. The quoting is injection-safe for any
+  // Unicode string, so the runtime validation only needs to reject
+  // genuinely dangerous inputs: control characters (which the
+  // GraphQL server rejects as malformed), NUL (which truncates in
+  // some transports), and overly long strings (DoS guard). This is
+  // the smallest rule that matches the schema's `type: "string"`
+  // contract without silently refusing otherwise-valid GitHub
+  // Project v2 field names (which can include punctuation, emoji,
+  // etc.). A stricter rule would diverge from the schema and make
+  // otherwise-valid configs fail at runtime.
+  if (typeof statusField !== "string" || statusField.length === 0 || statusField.length > 256) {
     throw new Error(
-      `github issues.updateIssueStatus: unsafe status_field '${statusField}'; expected letters/digits/space/_/-`,
+      `github issues.updateIssueStatus: unsafe status_field (must be 1-256 chars); got length ${statusField?.length}`,
+    );
+  }
+  // Reject NUL and any C0 control character (0x00-0x1F + 0x7F).
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(statusField)) {
+    throw new Error(
+      `github issues.updateIssueStatus: unsafe status_field contains control characters`,
     );
   }
   const projectNumber = project.number;

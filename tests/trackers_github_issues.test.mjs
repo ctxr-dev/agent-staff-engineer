@@ -351,6 +351,19 @@ describe("github issues.listIssues", skipOpts, () => {
     );
   });
 
+  // PR 9 R7 (Copilot): state:"ALL" previously emitted no `states:`
+  // arg, so the GraphQL server applied its default (OPEN), meaning
+  // "ALL" behaved identically to "OPEN". Now ALL maps to
+  // [OPEN, CLOSED] explicitly.
+  it("passes states:[OPEN,CLOSED] when state is 'ALL'", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    const { log } = await withFakeGhSequence(
+      ["list_one_page"],
+      () => tracker.issues.listIssues({}, { state: "ALL" }),
+    );
+    assert.match(log, /states:\s*\[OPEN,\s*CLOSED\]/);
+  });
+
   // PR 9 R1 (Copilot): listIssues previously assumed repository is
   // non-null. When the repo doesn't exist or the caller lacks
   // access, GraphQL returns repository=null, which used to throw
@@ -851,7 +864,13 @@ describe("github issues.updateIssueStatus", skipOpts, () => {
   // would silently corrupt the GraphQL query. Now validated against
   // a safe allow-list (letters / digits / space / _ / -) before
   // being inlined (via JSON.stringify for quoting safety).
-  it("rejects an unsafe status_field value before running the query", async () => {
+  it("rejects an unsafe status_field value containing control chars before running the query", async () => {
+    // Prior iterations used a strict allow-list regex; R7 loosened
+    // that (JSON.stringify already makes inline injection safe) so
+    // punctuation / emoji pass through. The runtime now rejects
+    // only genuinely dangerous inputs: control chars (GraphQL
+    // rejects malformed) and length > 256. Use a NUL byte here so
+    // the test exercises the remaining guard.
     const badTarget = {
       kind: "github",
       owner: "acme",
@@ -860,15 +879,47 @@ describe("github issues.updateIssueStatus", skipOpts, () => {
       projects: [{
         owner: "acme",
         number: 3,
-        status_field: 'Status") { id } dangerous {',
+        status_field: "Status\u0000injection",
         status_values: { backlog: "B", in_progress: "P", done: "D" },
       }],
     };
     const tracker = makeGithubTracker(badTarget);
     await assert.rejects(
       tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
-      /unsafe status_field/,
+      /unsafe status_field.*control characters/,
     );
+  });
+
+  // PR 9 R7 (Copilot): the runtime previously hard-rejected any
+  // character outside `[A-Za-z0-9 _-]`, diverging from the schema's
+  // `type: "string"`. Now unusual-but-safe names (punctuation,
+  // emoji) flow through via JSON.stringify, matching the schema.
+  // Assert by running the full happy path with such a name: if
+  // validation were still strict, the call would throw early on
+  // the status_field guard; instead it reaches the field query
+  // and (with the same fixture as the happy path) succeeds.
+  it("accepts unusual but safe status_field names (punctuation, emoji)", async () => {
+    const tracker = makeGithubTracker({
+      kind: "github",
+      owner: "acme",
+      repo: "widgets",
+      depth: "full",
+      projects: [{
+        owner: "acme",
+        number: 3,
+        status_field: "Status / Stage \uD83D\uDE80",
+        status_values: { backlog: "Backlog", in_progress: "In progress", done: "Done" },
+      }],
+    });
+    // Same fixture stack as the happy-path move test: the field
+    // query fixture carries canonical option names, so the full
+    // flow works regardless of what status_field is (the field
+    // name is passed inline but the fixture doesn't interpolate).
+    const { result } = await withFakeGhSequence(
+      ["status_field_query", "status_items_current_backlog", "update_field_ok"],
+      () => tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
+    );
+    assert.equal(result.changed, true, "emoji / punctuation status_field must not trip the guard");
   });
 
   // PR 9 R4 (Copilot): the earlier `status_field || "Status"` form
