@@ -766,7 +766,7 @@ async function githubListIssues(trackerTarget, ctx, payload = {}) {
     throw new TypeError(`github issues.listIssues: state must be "OPEN", "CLOSED", or "ALL"; got ${JSON.stringify(state)}`);
   }
   if (!Number.isInteger(limit) || limit <= 0) {
-    throw new TypeError(`github issues.listIssues: limit must be a positive integer`);
+    throw new TypeError(`github issues.listIssues: limit must be a positive integer; got ${JSON.stringify(limit)}`);
   }
   // Validate `labels` shape at the boundary. Non-array values used
   // to be silently ignored (Array.isArray guard below); now throw
