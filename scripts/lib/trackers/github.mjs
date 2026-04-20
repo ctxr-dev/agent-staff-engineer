@@ -561,6 +561,33 @@ async function fetchIssueNodeId(owner, repo, issueNumber) {
 }
 
 /**
+ * Lightweight variant: fetch only the issue's GraphQL node ID (plus
+ * the id/number/title/state echo) WITHOUT paginating labels. Used
+ * by methods that don't need the label set (`comment`). Saves N
+ * extra GraphQL calls on heavily-labeled issues.
+ *
+ * Same repo-null vs issue-null distinction as `fetchIssueNodeId`.
+ * Returns `null` when the issue doesn't exist on a real repo;
+ * throws on repo-absent / inaccessible.
+ */
+async function fetchIssueIdOnly(owner, repo, issueNumber) {
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        issue(number: $number) { id number title state }
+      }
+    }
+  `;
+  const data = await ghGraphqlQuery(query, { owner, name: repo, number: issueNumber });
+  if (!data?.repository) {
+    throw new Error(
+      `github issues.fetchIssueIdOnly: repository ${owner}/${repo} not found or inaccessible`,
+    );
+  }
+  return data.repository.issue ?? null;
+}
+
+/**
  * Resolve an array of label names to their GraphQL node IDs within a
  * given repo. Returns a Map of name -> id for the labels that exist;
  * any unknown label name is collected into `missing[]` for the caller
@@ -624,7 +651,11 @@ async function githubComment(trackerTarget, ctx, payload) {
   if (typeof body !== "string" || body.length === 0) {
     throw new TypeError("github issues.comment: body must be a non-empty string");
   }
-  const issue = await fetchIssueNodeId(owner, repo, issueNumber);
+  // Use the lightweight id-only fetch: posting a comment only
+  // needs the issue node id, so paginating the full label set
+  // (as fetchIssueNodeId does) would burn up to 20 extra
+  // GraphQL pages on a heavily-labeled issue for no gain.
+  const issue = await fetchIssueIdOnly(owner, repo, issueNumber);
   if (!issue) {
     throw new Error(`github issues.comment: issue #${issueNumber} not found in ${owner}/${repo}`);
   }
@@ -999,6 +1030,12 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
   if (typeof title !== "string" || title.trim().length === 0) {
     throw new TypeError("github issues.createIssue: title must be a non-empty string");
   }
+  // Normalise to the trimmed form so dedupe (n.title === title) and
+  // the createIssue mutation both operate on the canonical value.
+  // Without this, an input of " my title " would pass validation
+  // but then mismatch any existing " my title" dedupe target, and
+  // the created issue would carry the leading/trailing whitespace.
+  title = title.trim();
   // body is optional; empty string is fine. A non-string value
   // (number, boolean, object) used to flow into the GraphQL mutation
   // via `-F body=<value>`, which gh silently typed as number/boolean
@@ -1174,7 +1211,13 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
         add: labels,
       });
     } catch (e) {
-      labelError = e;
+      // Capture as a plain object so JSON.stringify surfaces the
+      // message (Error instances stringify to `{}` otherwise,
+      // losing the context a caller needs to retry / debug).
+      labelError = {
+        name: e?.name ?? "Error",
+        message: e?.message ?? String(e),
+      };
     }
   }
   // Assignees + milestone: left as future work; the payload guard
@@ -1232,12 +1275,18 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
       `github issues.updateIssueStatus: tracker target projects[0].number must be a positive integer; got ${JSON.stringify(project.number)}`,
     );
   }
-  const nativeStatusName = project.status_values?.[status];
-  if (typeof nativeStatusName !== "string" || nativeStatusName.length === 0) {
+  const rawNativeStatusName = project.status_values?.[status];
+  if (typeof rawNativeStatusName !== "string" || rawNativeStatusName.trim().length === 0) {
     throw new Error(
       `github issues.updateIssueStatus: status '${status}' has no native mapping in projects[0].status_values`,
     );
   }
+  // Normalise the mapped option name so the `field.options.find`
+  // below sees the canonical form. A config like
+  // `status_values: { in_progress: "In progress " }` would pass
+  // the schema's minLength check but then fail the option-name
+  // equality here with a misleading "option not found".
+  const nativeStatusName = rawNativeStatusName.trim();
   // statusField: default to "Status" only when project.status_field
   // is nullish (undefined / null), treating that as an absent
   // value. A present-but-empty / non-string value is a schema
