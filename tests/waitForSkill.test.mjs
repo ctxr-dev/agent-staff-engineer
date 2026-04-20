@@ -199,7 +199,7 @@ describe("waitForRequiredSkill: help command", () => {
     );
     assert.match(
       out,
-      /consult '@example\/some-other-wiki''s README/,
+      /consult the README for '@example\/some-other-wiki'/,
       "custom providers get a README-pointer tip instead",
     );
   });

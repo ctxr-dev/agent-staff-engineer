@@ -12,10 +12,12 @@
 //
 // The caller owns the decision of whether to enter the wait at all;
 // this module does not inspect TTY state. install.mjs gates the call
-// behind `processStdin.isTTY && processStdout.isTTY && !YES &&
-// !process.env.CI` so that pseudo-TTYs in CI environments (GitHub
-// Actions with `tty: true`, Buildkite, etc.) don't trigger a prompt
-// the runner can't answer.
+// behind two isTTY checks (stdin + stdout), !YES, and a `runningInCi`
+// predicate that treats both `CI=""` and `CI="false"` as "not CI" (so
+// a locally-unset or explicitly-disabled CI env var doesn't force the
+// CI branch). Together these stop pseudo-TTYs in CI environments
+// (GitHub Actions with `tty: true`, Buildkite, etc.) from triggering
+// a prompt the runner can't answer.
 
 import { createInterface } from "node:readline/promises";
 
@@ -191,8 +193,8 @@ export async function waitForRequiredSkill({
             `       git clone https://github.com/ctxr-dev/skill-llm-wiki.git \\\n` +
             `         ~/.claude/skills/ctxr-skill-llm-wiki\n` +
             `     and re-run this installer.\n\n`
-          : `  6. If kit itself is misbehaving, consult '${provider}''s README for manual install\n` +
-            `     guidance (usually a git clone into ~/.claude/skills/) and re-run this installer.\n\n`;
+          : `  6. If kit itself is misbehaving, consult the README for '${provider}' (usually\n` +
+            `     a git clone into ~/.claude/skills/) and re-run this installer.\n\n`;
         stdout.write(
           `\nTroubleshooting tips for 'npx @ctxr/kit install ${provider}':\n` +
           `  1. 'npx: command not found' -> install Node.js + npm from nodejs.org. The agent needs\n` +
