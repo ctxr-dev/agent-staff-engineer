@@ -163,6 +163,76 @@ describe("waitForRequiredSkill: help command", () => {
     assert.match(stdout.text(), /proxy/, "help text must mention the proxy troubleshooting line");
     assert.match(stdout.text(), /copy the full message and paste it into/, "tool-neutral paste-into-assistant guidance must appear");
   });
+
+  // Round-8 T1: the manual git-clone URL is only correct for the
+  // default provider. For custom providers we must not hardcode a
+  // URL that might not exist; instead we tell the user to consult
+  // that provider's README.
+  it("hides the default-provider git URL when a custom provider is configured", async () => {
+    const stdout = makeWriteStub();
+    const stderr = makeWriteStub();
+    const exitStub = makeExitStub();
+
+    let probe = 0;
+    const locate = () => {
+      probe += 1;
+      return probe >= 3 ? "/found" : null;
+    };
+
+    await waitForRequiredSkill({
+      provider: "@example/some-other-wiki",
+      target: "/tmp/test",
+      candidates: ["~/.claude/skills/example-some-other-wiki"],
+      locate,
+      stdout,
+      stderr,
+      exit: exitStub.exit,
+      on: () => {},
+      off: () => {},
+      makeReadline: () => makeReadlineStub(["help", "", ""]),
+    });
+    const out = stdout.text();
+    assert.doesNotMatch(
+      out,
+      /github\.com\/ctxr-dev\/skill-llm-wiki/,
+      "custom providers must not surface the default provider's git URL",
+    );
+    assert.match(
+      out,
+      /consult '@example\/some-other-wiki''s README/,
+      "custom providers get a README-pointer tip instead",
+    );
+  });
+
+  it("shows the default-provider git URL when provider matches the default", async () => {
+    const stdout = makeWriteStub();
+    const stderr = makeWriteStub();
+    const exitStub = makeExitStub();
+
+    let probe = 0;
+    const locate = () => {
+      probe += 1;
+      return probe >= 3 ? "/found" : null;
+    };
+
+    await waitForRequiredSkill({
+      provider: "@ctxr/skill-llm-wiki",
+      target: "/tmp/test",
+      candidates: ["~/.claude/skills/ctxr-skill-llm-wiki"],
+      locate,
+      stdout,
+      stderr,
+      exit: exitStub.exit,
+      on: () => {},
+      off: () => {},
+      makeReadline: () => makeReadlineStub(["help", "", ""]),
+    });
+    assert.match(
+      stdout.text(),
+      /git clone https:\/\/github\.com\/ctxr-dev\/skill-llm-wiki\.git/,
+      "default provider should keep its concrete clone URL",
+    );
+  });
 });
 
 describe("waitForRequiredSkill: abort command", () => {

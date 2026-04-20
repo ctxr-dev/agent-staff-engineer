@@ -179,6 +179,20 @@ export async function waitForRequiredSkill({
       }
 
       if (answer === "help") {
+        // The "manual clone" tip is only useful for the default
+        // provider because its git URL is stable. Configurable
+        // providers could live anywhere; printing a hardcoded URL
+        // would mislead the user. Show the manual tip only when the
+        // provider matches the default; otherwise point at its own
+        // source repo by name so the user knows what to look up.
+        const DEFAULT_PROVIDER = "@ctxr/skill-llm-wiki";
+        const manualHint = provider === DEFAULT_PROVIDER
+          ? `  6. If kit itself is misbehaving, you can alternatively clone the skill manually:\n` +
+            `       git clone https://github.com/ctxr-dev/skill-llm-wiki.git \\\n` +
+            `         ~/.claude/skills/ctxr-skill-llm-wiki\n` +
+            `     and re-run this installer.\n\n`
+          : `  6. If kit itself is misbehaving, consult '${provider}''s README for manual install\n` +
+            `     guidance (usually a git clone into ~/.claude/skills/) and re-run this installer.\n\n`;
         stdout.write(
           `\nTroubleshooting tips for 'npx @ctxr/kit install ${provider}':\n` +
           `  1. 'npx: command not found' -> install Node.js + npm from nodejs.org. The agent needs\n` +
@@ -192,10 +206,7 @@ export async function waitForRequiredSkill({
           `  5. Already installed somewhere unusual? I check these locations (in order):\n` +
           `       ${candidates.join("\n       ")}\n` +
           `     If your skill landed elsewhere, reinstall via kit so it goes to one of these.\n` +
-          `  6. If kit itself is misbehaving, you can alternatively clone the skill manually:\n` +
-          `       git clone https://github.com/ctxr-dev/skill-llm-wiki.git \\\n` +
-          `         ~/.claude/skills/ctxr-skill-llm-wiki\n` +
-          `     and re-run this installer.\n\n` +
+          manualHint +
           `If you still get an error, copy the full message and paste it into Claude, ChatGPT, or your\n` +
           `preferred support channel for help troubleshooting.\n`,
         );
