@@ -431,6 +431,14 @@ describe("normaliseMemberPath: the canonical path normaliser", () => {
     assert.throws(() => normaliseMemberPath("D:/bar", "x"), /drive/);
   });
 
+  // PR 8 R8 (Copilot): drive-relative form `C:foo` (no separator
+  // after the colon) is still drive-qualified on Windows and must
+  // also be rejected; the earlier guard only matched `[A-Za-z]:[\\/]`.
+  it("rejects Windows drive-relative paths (no separator after colon)", () => {
+    assert.throws(() => normaliseMemberPath("C:foo", "x"), /drive/);
+    assert.throws(() => normaliseMemberPath("Z:bar/baz", "x"), /drive/);
+  });
+
   it("rejects '..' segments", () => {
     assert.throws(() => normaliseMemberPath("../escape", "x"), /'\.\.'/);
     assert.throws(() => normaliseMemberPath("libs/../escape", "x"), /'\.\.'/);

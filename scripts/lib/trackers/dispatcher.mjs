@@ -143,17 +143,20 @@ function makeTracker(kind, target) {
 
 /**
  * Build a Tracker for a specific workspace member + role. Callers pass
- * a member `name` (as recorded in `cfg.workspace.members[].name`); when
- * `memberName === null` or `cfg.workspace` is absent, the call falls
- * through to the project-level `pickTracker(cfg, role)` so single-repo
- * projects do not need to change their call sites.
+ * a member `name` (as recorded in `cfg.workspace.members[].name`); the
+ * call falls through to the project-level `pickTracker(cfg, role)` ONLY
+ * when `memberName === null` or `memberName === undefined`, so
+ * single-repo call sites pass `null` and keep working unchanged.
+ * Passing a non-null `memberName` on a config with no workspace is an
+ * error, not a silent fallback: the caller asked for a specific member
+ * that the config does not declare, and returning the root tracker
+ * would mask a real bug.
  *
- * A member whose `trackers.<role>` is missing is an error, not a
- * silent fallback to the project-level tracker: the member declared
- * itself in the workspace but did not bind a tracker for this role,
- * which is almost always a bootstrap bug the user should see. If you
- * truly want a member to inherit the top-level tracker, omit it from
- * `workspace.members[]` entirely.
+ * A member whose `trackers.<role>` is missing is likewise an error:
+ * the member declared itself in the workspace but did not bind a
+ * tracker for this role, which is almost always a bootstrap bug the
+ * user should see. If you truly want a member to inherit the top-level
+ * tracker, omit it from `workspace.members[]` entirely.
  *
  * @param {object} cfg          parsed ops.config.json
  * @param {string|null} memberName  workspace member name, or null for root
@@ -320,11 +323,16 @@ export function normaliseMemberPath(input, label, opts = {}) {
   if (typeof input !== "string" || input.length === 0) {
     throw new Error(`normaliseMemberPath: ${label} must be a non-empty string`);
   }
-  // Reject Windows drive prefixes up front so the later "no leading /"
-  // check doesn't accidentally let `C:\foo` through (the backslash
-  // conversion would turn it into `C:/foo`, which has no leading
-  // slash but still resolves to an absolute drive path on Windows).
-  if (/^[A-Za-z]:[\\/]/.test(input)) {
+  // Reject Windows drive-qualified prefixes up front so the later
+  // "no leading /" check doesn't accidentally let any of
+  //   `C:\foo`   (backslash -> forward slash; still drive-qualified),
+  //   `C:/foo`   (already absolute on Windows),
+  //   `C:foo`    (drive-relative: uses the current directory on
+  //               drive C, which is not project-relative)
+  // through. All three escape "project-relative" on Windows even
+  // though only the first two have an explicit separator after
+  // the colon; broaden the guard to any `^[A-Za-z]:` prefix.
+  if (/^[A-Za-z]:/.test(input)) {
     throw new Error(`normaliseMemberPath: ${label} must be project-relative (got drive path '${input}')`);
   }
   // Normalise separators first so the rest of the checks are
