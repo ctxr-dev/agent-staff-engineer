@@ -261,7 +261,63 @@ describe("waitForRequiredSkill: abort command", () => {
   });
 });
 
-describe("waitForRequiredSkill: SIGINT handler wiring", () => {
+describe("waitForRequiredSkill: SIGINT handling", () => {
+  it("closes readline, writes 'interrupted' to stderr, and rejects the wait Promise when SIGINT fires", async () => {
+    // Round-6 T1: without this, a SIGINT with a non-terminating exit
+    // stub would leave rl.question() pending forever (and, in
+    // production, leave the terminal in a half-raw state). The handler
+    // must close rl first AND the wait loop must throw so the Promise
+    // rejects and `finally` runs.
+    const stdout = makeWriteStub();
+    const stderr = makeWriteStub();
+    const exitStub = makeExitStub();
+    let capturedHandler = null;
+    const offCalls = [];
+
+    // Custom readline stub whose `question()` rejects when close() is
+    // called mid-flight (mirrors the real readline behavior). We
+    // kick SIGINT asynchronously after the question starts waiting.
+    function makeSigintRl() {
+      let rejectQ;
+      const rl = {
+        question: () => new Promise((_, reject) => { rejectQ = reject; }),
+        close: () => {
+          if (rejectQ) rejectQ(new Error("readline closed"));
+        },
+      };
+      return rl;
+    }
+
+    const waitPromise = waitForRequiredSkill({
+      provider: "@ctxr/skill-llm-wiki",
+      target: "/tmp/test",
+      candidates: ["~/.claude/skills/ctxr-skill-llm-wiki"],
+      locate: () => null,
+      stdout,
+      stderr,
+      exit: exitStub.exit,
+      on: (sig, h) => { if (sig === "SIGINT") capturedHandler = h; },
+      off: (sig, h) => offCalls.push({ sig, h }),
+      makeReadline: makeSigintRl,
+    });
+
+    // Fire SIGINT on the next tick, after the wait loop has called
+    // rl.question() and is awaiting.
+    setImmediate(() => {
+      assert.ok(capturedHandler, "SIGINT handler must be registered before SIGINT fires");
+      capturedHandler();
+    });
+
+    await assert.rejects(
+      () => waitPromise,
+      (err) => err instanceof Error && /SIGINT/.test(err.message),
+    );
+    assert.match(stderr.text(), /install: interrupted/);
+    assert.deepEqual(exitStub.calls, [130], "SIGINT must call exit(130)");
+    assert.equal(offCalls.length, 1, "SIGINT handler must be removed once (via finally)");
+    assert.equal(offCalls[0].sig, "SIGINT");
+  });
+
   it("registers a SIGINT handler while waiting and removes it on normal exit", async () => {
     const stdout = makeWriteStub();
     const stderr = makeWriteStub();

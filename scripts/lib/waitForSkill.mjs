@@ -105,23 +105,44 @@ export async function waitForRequiredSkill({
     ? makeReadline()
     : createInterface({ input: stdin, output: stdout });
 
-  // Handle Ctrl+C while rl.question() is waiting. Without this, a
-  // SIGINT would leave the readline interface open and potentially
-  // corrupt the terminal state. Exit 130 is the POSIX convention for
-  // "terminated by SIGINT". Cleanup (rl.close + off) happens once in
-  // the `finally` block below so it's not duplicated on every branch.
+  // Handle Ctrl+C while rl.question() is waiting. The readline interface
+  // must be closed BEFORE exit so the pending question is aborted and the
+  // terminal is restored to cooked mode; otherwise the shell inherits a
+  // half-raw terminal. Exit 130 is the POSIX convention for "terminated
+  // by SIGINT".
+  //
+  // If `exit` returns (test stub; hypothetical future reuse where the
+  // caller wants to keep the process alive), we stash the SIGINT error
+  // and re-throw from the pending rl.question() so the async wait loop
+  // rejects and the shared `finally` cleanup still runs deterministically.
+  // Without this, a SIGINT with a non-terminating exit would leave the
+  // Promise hanging forever.
+  let sigintError = null;
   const onSigint = () => {
     stderr.write("\ninstall: interrupted\n");
+    sigintError = new Error("Install interrupted by SIGINT");
+    rl.close();
     exit(130);
   };
   on("SIGINT", onSigint);
 
   try {
     for (;;) {
-      const raw = await rl.question(
-        `\nWhen '${provider}' is installed, press Enter to continue. ` +
-        `Type 'help' for troubleshooting, or 'abort' to cancel: `,
-      );
+      let raw;
+      try {
+        raw = await rl.question(
+          `\nWhen '${provider}' is installed, press Enter to continue. ` +
+          `Type 'help' for troubleshooting, or 'abort' to cancel: `,
+        );
+      } catch (err) {
+        // rl.question() rejects when rl.close() runs mid-flight, which
+        // is what happens on SIGINT. Surface the SIGINT error if we
+        // have one; otherwise rethrow whatever the readline layer gave
+        // us (unexpected, but don't swallow).
+        if (sigintError) throw sigintError;
+        throw err;
+      }
+      if (sigintError) throw sigintError;
       const answer = String(raw ?? "").trim().toLowerCase();
 
       if (answer === "abort") {

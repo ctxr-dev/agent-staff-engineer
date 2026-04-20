@@ -353,8 +353,23 @@ async function waitForRequiredSkillOrExit(provider, target) {
   // Require BOTH stdin and stdout to be TTY before entering the wait
   // loop. If stdout is redirected (e.g. `install.mjs --apply > log`),
   // stdin may still be interactive but the prompt would be invisible
-  // and the script would look hung. Fail fast in that case.
-  const interactive = Boolean(processStdin.isTTY) && Boolean(processStdout.isTTY) && !YES;
+  // and the script would look hung.
+  //
+  // Also treat CI environments as non-interactive even when they
+  // allocate a pseudo-TTY (GitHub Actions with `tty: true`, Buildkite,
+  // and others do this for tools that need colour output). A CI runner
+  // cannot actually interact with the prompt, so the wait would hang
+  // the job until timeout. The CI env var is the de-facto signal;
+  // treat empty string and a literal "false" as "not CI".
+  const runningInCi =
+    typeof process.env.CI === "string"
+      ? process.env.CI !== "" && process.env.CI.toLowerCase() !== "false"
+      : Boolean(process.env.CI);
+  const interactive =
+    Boolean(processStdin.isTTY) &&
+    Boolean(processStdout.isTTY) &&
+    !YES &&
+    !runningInCi;
   if (!interactive) {
     // First: the early-return fast path. If the skill is already
     // installed, don't print any error; just return it.
