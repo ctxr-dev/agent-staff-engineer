@@ -437,20 +437,34 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
       continue;
     }
     seenPaths.set(normalisedRel, memberIdx);
+    // Validate member.name BEFORE the duplicate check. A
+    // missing/empty/non-string name is a schema violation the
+    // schema would catch, but install.mjs does not re-validate an
+    // existing ops.config.json, so a hand-edit that strips a name
+    // would otherwise be silently skipped by both
+    // resolveMemberFromPath (guards on `typeof m.name === "string"`)
+    // and pickTrackerForMember (looks up by name equality). Fail
+    // preflight with a pointed error instead.
+    if (typeof member.name !== "string" || member.name.length === 0) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `workspace.members[${memberIdx}].name must be a non-empty string`,
+      });
+      continue;
+    }
     // Duplicate-name check. Same rationale as path: first-match
     // dispatch would silently pick whichever entry came first.
-    if (typeof member.name === "string" && member.name.length > 0) {
-      if (seenNames.has(member.name)) {
-        const firstIdx = seenNames.get(member.name);
-        invalid.push({
-          name: member.name,
-          path: member.path,
-          reason: `name '${member.name}' duplicates members[${firstIdx}]; every workspace member must have a unique name`,
-        });
-        continue;
-      }
-      seenNames.set(member.name, memberIdx);
+    if (seenNames.has(member.name)) {
+      const firstIdx = seenNames.get(member.name);
+      invalid.push({
+        name: member.name,
+        path: member.path,
+        reason: `name '${member.name}' duplicates members[${firstIdx}]; every workspace member must have a unique name`,
+      });
+      continue;
     }
+    seenNames.set(member.name, memberIdx);
     // After normalisation, resolve under TARGET. Defence-in-depth:
     // recompute the absolute path with `resolve` and assert it
     // stays under TARGET. Use `path.relative` for the containment

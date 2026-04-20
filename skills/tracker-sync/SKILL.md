@@ -24,7 +24,7 @@ Centralises every tracker API call. Other skills describe what they want; `track
 
 ## Inputs
 
-- Role (`dev` or `release`) plus an optional `memberName` string when `workspace.members[]` is configured. The skill resolves these to a tracker target via `scripts/lib/trackers/dispatcher.mjs#pickTrackerForMember` (falls back to `pickTracker` when `memberName === null` or the config has no workspace). Callers who need to derive `memberName` from a file path use `resolveMemberFromPath(cfg, filePath)` from the same module, which walks `workspace.members[]` deepest-first.
+- Role (`dev` or `release`) plus an optional `memberName` string when `workspace.members[]` is configured. The skill resolves these to a tracker target via `scripts/lib/trackers/dispatcher.mjs#pickTrackerForMember`. The fallback to `pickTracker(cfg, role)` fires ONLY when `memberName` is `null` or `undefined`; supplying a non-null `memberName` on a single-repo config (`workspace.members[]` absent) is an error, not a silent fallback, and `pickTrackerForMember` throws with a pointed message. Callers who need to derive `memberName` from a file path use `resolveMemberFromPath(cfg, filePath)` from the same module, which walks `workspace.members[]` deepest-first and returns `null` when no member contains the file (safe to pass back into `pickTrackerForMember` as-is).
 - Operation name (enum, see "Operations" below).
 - Operation-specific payload (issue title, label list, field-value map, thread ID, etc.).
 - Approval mode (`dry-run` default, `--apply` to write).
