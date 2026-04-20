@@ -72,8 +72,12 @@ export class InstallAbortedByUserError extends Error {
  *                                      Signal registrar (injected for tests).
  * @param {(sig: string, handler: () => void) => void} [opts.off=process.off.bind(process)]
  *                                      Signal deregistrar (injected for tests).
- * @param {() => readline.Interface} [opts.makeReadline]
+ * @param {() => import("node:readline/promises").Interface} [opts.makeReadline]
  *                                      Factory for the readline interface (injected for tests).
+ *                                      Must return an object whose `question(prompt)` returns a
+ *                                      Promise<string> and whose `close()` aborts that pending
+ *                                      promise; the helper uses `node:readline/promises`, not the
+ *                                      callback-based `node:readline` surface.
  *
  * @returns {Promise<string>} the absolute path returned by `locate()` when the skill appears.
  *                            Throws InstallAbortedByUserError on abort when `exit` is a
