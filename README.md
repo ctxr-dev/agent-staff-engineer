@@ -56,7 +56,7 @@ The agent targets four tracker kinds; today only GitHub is backed by real implem
 | Regression lookups                     | **works**                             | stub |
 | Bootstrap interview + config           | **works**                             | **works** (config is valid; write-ops throw until real backends land) |
 
-Real Jira / Linear / GitLab backends ship in follow-up releases. You can still use those trackers as **observed** targets (read-only, for cross-tracker lookups) from day one.
+Real Jira / Linear / GitLab backends ship in follow-up releases. Today, the only **observed** (read-only) target kind the interview and runtime actually wire up is GitHub repos (for cross-repo lookups). The schema accepts observed Jira / Linear / GitLab entries, but every operation against them throws `NotSupportedError` because those backends are full stubs end-to-end: there's no path that reads from them either. Treat those kinds as "not implemented yet" full stop until the real backends land.
 
 ## Things the interview does not ask (yet)
 

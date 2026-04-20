@@ -378,6 +378,17 @@ async function waitForRequiredSkill(provider, target) {
   );
 
   const rl = createInterface({ input: processStdin, output: processStdout });
+  // Handle Ctrl+C while rl.question() is waiting. Without this, a
+  // SIGINT would leave the readline interface open and potentially
+  // corrupt the terminal state (mirrors bootstrap.mjs' pattern).
+  // Exit 130 is the POSIX convention for "terminated by SIGINT".
+  const onSigint = () => {
+    rl.close();
+    process.stderr.write("\ninstall: interrupted\n");
+    process.exit(130);
+  };
+  process.on("SIGINT", onSigint);
+
   try {
     for (;;) {
       const raw = await rl.question(
@@ -387,9 +398,15 @@ async function waitForRequiredSkill(provider, target) {
       const answer = raw.trim().toLowerCase();
 
       if (answer === "abort") {
+        // Close readline BEFORE exiting so the finally block's cleanup
+        // runs predictably and the terminal is left in a good state.
+        // process.exit() in a try/finally would otherwise skip finally
+        // in some Node versions.
         process.stderr.write(
           `\nInstall aborted at your request. Re-run 'install.mjs --apply' when the skill is ready.\n`,
         );
+        rl.close();
+        process.off("SIGINT", onSigint);
         process.exit(1);
       }
 
@@ -411,7 +428,8 @@ async function waitForRequiredSkill(provider, target) {
           `       git clone https://github.com/ctxr-dev/skill-llm-wiki.git \\\n` +
           `         ~/.claude/skills/ctxr-skill-llm-wiki\n` +
           `     and re-run this installer.\n\n` +
-          `Ask me any question about the error you are seeing; I can read it and help.\n`,
+          `If you still get an error, copy the full message and paste it into Claude, ChatGPT, or your\n` +
+          `preferred support channel for help troubleshooting.\n`,
         );
         continue;
       }
@@ -430,6 +448,7 @@ async function waitForRequiredSkill(provider, target) {
     }
   } finally {
     rl.close();
+    process.off("SIGINT", onSigint);
   }
 }
 
