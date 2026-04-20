@@ -633,6 +633,24 @@ export async function askNonEmpty(ask, question, defaultValue, humanLabel, optio
  * future tracker prompts (e.g. workspace-member trackers) get the same
  * normalisation + validation without copy-paste.
  */
+export async function askTrackerKind(ask, question, defaultValue) {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const rawAnswer = await ask(question, defaultValue);
+    const normalised = String(rawAnswer ?? "").trim().toLowerCase();
+    if (SUPPORTED_TRACKER_KINDS.includes(normalised)) {
+      return normalised;
+    }
+    process.stderr.write(
+      `bootstrap: '${rawAnswer}' is not a supported tracker kind (got attempt ${attempt}/${MAX_ATTEMPTS}). ` +
+      `Expected one of: ${SUPPORTED_TRACKER_KINDS.join(", ")}.\n`,
+    );
+  }
+  throw new Error(
+    `bootstrap: could not obtain a valid tracker kind after ${MAX_ATTEMPTS} attempts; re-run and enter one of ${SUPPORTED_TRACKER_KINDS.join(", ")}`,
+  );
+}
+
 /**
  * Ask for a branch-pattern template, validate that both `{issue}` and
  * `{slug}` placeholders are present (the schema's pattern check enforces
@@ -668,24 +686,6 @@ export async function askBranchPattern(ask, label, defaultValue) {
     `bootstrap: could not obtain a valid ${label} after ${MAX_ATTEMPTS} attempts; keeping the default '${defaultValue}'.\n`,
   );
   return defaultValue;
-}
-
-export async function askTrackerKind(ask, question, defaultValue) {
-  const MAX_ATTEMPTS = 3;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    const rawAnswer = await ask(question, defaultValue);
-    const normalised = String(rawAnswer ?? "").trim().toLowerCase();
-    if (SUPPORTED_TRACKER_KINDS.includes(normalised)) {
-      return normalised;
-    }
-    process.stderr.write(
-      `bootstrap: '${rawAnswer}' is not a supported tracker kind (got attempt ${attempt}/${MAX_ATTEMPTS}). ` +
-      `Expected one of: ${SUPPORTED_TRACKER_KINDS.join(", ")}.\n`,
-    );
-  }
-  throw new Error(
-    `bootstrap: could not obtain a valid tracker kind after ${MAX_ATTEMPTS} attempts; re-run and enter one of ${SUPPORTED_TRACKER_KINDS.join(", ")}`,
-  );
 }
 
 /**
