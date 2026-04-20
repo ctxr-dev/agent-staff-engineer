@@ -30,7 +30,7 @@
 //
 
 import { readFile, readdir, rm } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -401,6 +401,30 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
     }
     if (!existsSync(absolute)) {
       missing.push({ name: member.name ?? "<unnamed>", path: member.path, absolute });
+      continue;
+    }
+    // The workspace contract treats members as directory subtrees
+    // (resolveMemberFromPath walks file-path prefixes against
+    // member.path). A plain file at the member path would pass the
+    // exists check but produce garbage at runtime when the agent
+    // tries to resolve files "under" it. Assert directory-shape
+    // here; treat a non-directory as invalid rather than missing so
+    // the error message is unambiguous.
+    let isDir = false;
+    try {
+      isDir = statSync(absolute).isDirectory();
+    } catch {
+      // Race between existsSync and statSync (deleted during
+      // install). Treat as missing rather than invalid.
+      missing.push({ name: member.name ?? "<unnamed>", path: member.path, absolute });
+      continue;
+    }
+    if (!isDir) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `resolved path '${absolute}' exists but is not a directory (workspace members must be directory subtrees)`,
+      });
     }
   }
   if (invalid.length > 0) {

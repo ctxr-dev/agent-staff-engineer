@@ -3,7 +3,7 @@
 // Interactive interview backing the bootstrap-ops-config skill.
 // Two phases:
 //   1) Detection (silent reads): git, gh, codebase heuristics.
-//   2) Interview (8 topics): user input wins over heuristics when they conflict.
+//   2) Interview (10 topics): user input wins over heuristics when they conflict.
 // Produces:
 //   <target>/.claude/ops.config.json
 //   <target>/.claude/.bootstrap-answers.json
