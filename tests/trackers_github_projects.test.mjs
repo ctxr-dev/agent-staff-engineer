@@ -284,6 +284,40 @@ describe("github projects.listProjectItems", skipOpts, () => {
     assert.equal(log.trim().split("\n").length, 2, "two gh calls for pagination");
   });
 
+  it("returns accurate endCursor when limit < first so a resume fetches the next item", async () => {
+    // Regression: mid-page truncation must never return an endCursor
+    // for an item the caller didn't receive. Implementation caps
+    // per-request `first` to the remaining budget, so the server
+    // returns at most `limit` items per call and endCursor always
+    // points at the last returned node.
+    const tracker = makeGithubTracker(makeTarget());
+    const { result: firstResult } = await withFakeGhSequence(
+      ["list_items_page1"],
+      () => tracker.projects.listProjectItems({}, { projectNumber: 3, first: 100, limit: 1 }),
+    );
+    assert.equal(firstResult.items.length, 1);
+    assert.equal(firstResult.hasNextPage, true);
+    assert.ok(firstResult.endCursor, "first page should expose an endCursor for resuming");
+    assert.equal(firstResult.items[0].id, "PVTI_1");
+
+    const { result: secondResult } = await withFakeGhSequence(
+      ["list_items_page2"],
+      () => tracker.projects.listProjectItems({}, {
+        projectNumber: 3,
+        first: 100,
+        limit: 1,
+        after: firstResult.endCursor,
+      }),
+    );
+    assert.equal(secondResult.items.length, 1);
+    assert.equal(secondResult.items[0].id, "PVTI_2");
+    assert.notDeepEqual(
+      secondResult.items[0],
+      firstResult.items[0],
+      "resuming with after:endCursor should return the next item, not repeat the first",
+    );
+  });
+
   it("throws when project is not found", async () => {
     const tracker = makeGithubTracker(makeTarget());
     await assert.rejects(

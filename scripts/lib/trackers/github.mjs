@@ -501,10 +501,16 @@ function resolveRepoCoords(ctx, trackerTarget) {
   return { owner, repo };
 }
 
-/** Validate an integer issue number at the input boundary. */
-function requirePositiveInt(value, label) {
+/**
+ * Validate an integer id/number at the input boundary.
+ * `prefix` names the caller surface in the error (eg
+ * "github issues.getIssue", "github projects.listProjectItems").
+ * Defaults to "github issues" for backwards compatibility with
+ * existing call sites.
+ */
+function requirePositiveInt(value, label, prefix = "github issues") {
   if (!Number.isInteger(value) || value <= 0) {
-    throw new TypeError(`github issues: ${label} must be a positive integer; got ${JSON.stringify(value)}`);
+    throw new TypeError(`${prefix}: ${label} must be a positive integer; got ${JSON.stringify(value)}`);
   }
 }
 
@@ -2006,7 +2012,7 @@ async function resolveProjectNodeId(owner, projectNumber) {
 async function githubListProjectItems(trackerTarget, ctx, payload) {
   const { owner } = resolveOwnerOnly(ctx, trackerTarget, "projects.listProjectItems");
   const { projectNumber, projectOwner, first = 100, after = null, limit = 500 } = payload ?? {};
-  requirePositiveInt(projectNumber, "projectNumber");
+  requirePositiveInt(projectNumber, "projectNumber", "github projects.listProjectItems");
   if (!Number.isInteger(first) || first <= 0 || first > 100) {
     throw new TypeError(
       `github projects.listProjectItems: first must be an integer 1-100; got ${JSON.stringify(first)}`,
@@ -2017,7 +2023,20 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
       `github projects.listProjectItems: limit must be a positive integer; got ${JSON.stringify(limit)}`,
     );
   }
-  const ownerLogin = projectOwner ?? owner;
+  // Trim + canonicalise projectOwner at the boundary (mirrors
+  // updateProjectField + reconcileProjectFields) so "acme " and
+  // "acme" are treated identically and callers get a pointed
+  // empty-string error instead of a regex-mismatch message.
+  let ownerLogin;
+  if (projectOwner === undefined || projectOwner === null) {
+    ownerLogin = owner;
+  } else if (typeof projectOwner !== "string" || projectOwner.trim().length === 0) {
+    throw new TypeError(
+      `github projects.listProjectItems: projectOwner must be a non-empty string when supplied; got ${JSON.stringify(projectOwner)}`,
+    );
+  } else {
+    ownerLogin = projectOwner.trim();
+  }
   if (!GITHUB_OWNER_RE.test(ownerLogin)) {
     throw new TypeError(
       `github projects.listProjectItems: projectOwner must match GitHub owner rules; got ${JSON.stringify(ownerLogin)}`,
@@ -2077,7 +2096,16 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
         `github projects.listProjectItems: exceeded ${MAX_PAGES} pages for project #${projectNumber}; raise the cap or tighten the query`,
       );
     }
-    const data = await ghGraphqlQuery(query, { owner: ownerLogin, number: projectNumber, first, after: cursor });
+    // Cap per-request `first` to the remaining budget so the server
+    // never returns more items than we'll consume. Without this, a
+    // mid-page truncation (eg `first: 100, limit: 150` — 100 on page
+    // 1, then 50 out of 100 on page 2) returns `pageInfo.endCursor`
+    // for the *last server-returned node* (position 100 on page 2),
+    // not the last node the caller keeps (position 50). A caller
+    // resuming with `after: endCursor` would then miss 50 items.
+    const remaining = effectiveLimit - out.length;
+    const perPage = Math.min(first, remaining);
+    const data = await ghGraphqlQuery(query, { owner: ownerLogin, number: projectNumber, first: perPage, after: cursor });
     const project = data?.repositoryOwner?.projectV2;
     if (!project) {
       throw new Error(
@@ -2085,14 +2113,17 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
       );
     }
     const conn = project.items;
-    for (const n of conn.nodes) {
+    // `conn.nodes` can legally be null in GraphQL connections when
+    // the server returns a partial response; coalesce to an empty
+    // array so the loop below doesn't throw on iteration.
+    for (const n of (conn?.nodes ?? [])) {
       if (n.fieldValues?.pageInfo?.hasNextPage) {
         throw new Error(
           `github projects.listProjectItems: item ${n.id} has more than 50 field values; refusing to return truncated data`,
         );
       }
       const fieldMap = {};
-      for (const fv of n.fieldValues.nodes) {
+      for (const fv of (n.fieldValues?.nodes ?? [])) {
         const fname = fv.field?.name;
         if (!fname) continue;
         if ("text" in fv) fieldMap[fname] = fv.text;
@@ -2107,10 +2138,12 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
         content: n.content,
         fieldValues: fieldMap,
       });
-      if (out.length >= effectiveLimit) break;
+      // No mid-page `break` needed: `perPage` is already capped at
+      // `remaining`, so the server returns at most `remaining`
+      // items. If it returns fewer, fine — we loop again.
     }
-    finalHasNext = Boolean(conn.pageInfo?.hasNextPage);
-    finalCursor = conn.pageInfo?.endCursor ?? null;
+    finalHasNext = Boolean(conn?.pageInfo?.hasNextPage);
+    finalCursor = conn?.pageInfo?.endCursor ?? null;
     if (!finalHasNext) break;
     cursor = finalCursor;
   }
@@ -2151,7 +2184,7 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
 async function githubUpdateProjectField(trackerTarget, ctx, payload) {
   const { owner } = resolveOwnerOnly(ctx, trackerTarget, "projects.updateProjectField");
   const { projectNumber, projectOwner, itemId, field, value, apply = false } = payload ?? {};
-  requirePositiveInt(projectNumber, "projectNumber");
+  requirePositiveInt(projectNumber, "projectNumber", "github projects.updateProjectField");
   if (typeof itemId !== "string" || itemId.trim().length === 0) {
     throw new TypeError(
       `github projects.updateProjectField: itemId must be a non-empty string; got ${JSON.stringify(itemId)}`,
@@ -2199,8 +2232,14 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
   // Status is always implicitly managed via updateIssueStatus; allow
   // it without requiring it in `fields`. Any OTHER field must be in
   // `fields`. Compare on the canonicalised (trimmed) field name so
-  // " Status " and "Status" match the declared entry.
-  const implicitFields = new Set([declared.status_field ?? "Status"]);
+  // " Status " and "Status" match the declared entry. Trim
+  // `declared.status_field` too: a config with `"Status "` must
+  // still recognise writes to "Status" as implicit.
+  const canonicalStatusField =
+    typeof declared.status_field === "string" && declared.status_field.trim().length > 0
+      ? declared.status_field.trim()
+      : "Status";
+  const implicitFields = new Set([canonicalStatusField]);
   const declaredFieldsSet = new Set(
     declaredFields.map((n) => (typeof n === "string" ? n.trim() : n)),
   );
@@ -2234,9 +2273,12 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
       throw new TypeError("github projects.updateProjectField: value.date must be an ISO date (YYYY-MM-DD)");
     }
   } else if (kind === "singleSelect") {
-    if (typeof value.singleSelect !== "string" || value.singleSelect.length === 0) {
+    if (typeof value.singleSelect !== "string" || value.singleSelect.trim().length === 0) {
       throw new TypeError("github projects.updateProjectField: value.singleSelect must be a non-empty string (option name)");
     }
+    // Canonicalise so " P0 " and "P0" both resolve against the
+    // project's option list. Mirrors the field-name trim above.
+    value.singleSelect = value.singleSelect.trim();
   } else {
     throw new TypeError(
       `github projects.updateProjectField: unknown value kind '${kind}'; expected text / number / date / singleSelect`,
@@ -2328,7 +2370,7 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
 async function githubReconcileProjectFields(trackerTarget, ctx, payload) {
   const { owner } = resolveOwnerOnly(ctx, trackerTarget, "projects.reconcileProjectFields");
   const { projectNumber, projectOwner, declared, apply = false } = payload ?? {};
-  requirePositiveInt(projectNumber, "projectNumber");
+  requirePositiveInt(projectNumber, "projectNumber", "github projects.reconcileProjectFields");
   if (!Array.isArray(declared)) {
     throw new TypeError(
       "github projects.reconcileProjectFields: declared must be an array of field names (strings)",
