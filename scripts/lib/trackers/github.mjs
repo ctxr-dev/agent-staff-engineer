@@ -1,13 +1,15 @@
 // lib/trackers/github.mjs
-// GitHub implementation of the Tracker contract. The review namespace
-// is fully implemented against `gh api graphql` mutations captured in
-// skills/pr-iteration/runbook.md (requestReviews, reviewThreads,
-// resolveReviewThread, statusCheckRollup). The issues / projects /
-// labels namespaces are currently stubbed; the github-sync contract
-// (skills/tracker-sync/SKILL.md on this branch, formerly github-sync)
-// still governs those operations at the agent-runtime level. They
-// will move onto this Tracker surface as the skill's prose operations
-// get wired into code.
+// GitHub implementation of the Tracker contract. Two namespaces
+// are fully implemented:
+//   - review.*  against the `requestReviews`, `reviewThreads`,
+//     `resolveReviewThread`, `statusCheckRollup` GraphQL mutations
+//     captured in skills/pr-iteration/runbook.md (backs skills/pr-iteration).
+//   - issues.*  six methods (create, update-status, comment, relabel,
+//     get, list) backing every bundle skill that consumes
+//     tracker-sync.issues.* at runtime (dev-loop, regression-handler,
+//     adapt-system, release-tracker's downstream flows).
+// The remaining two namespaces, projects.* and labels.*, are stubbed
+// and throw NotSupportedError; PR 10 wires them onto this file.
 //
 // Why GraphQL and not REST for review: the runbook's step 4 documents
 // that the REST `POST /repos/.../requested_reviewers` endpoint silently
@@ -408,13 +410,15 @@ async function countUnresolvedBeyondFirstPage({ owner, repo, prNumber }, startCu
  * fields, since every `issues.*` method needs them.
  */
 function resolveRepoCoords(ctx, trackerTarget) {
-  // Explicit-invalid detection: a caller who passes `ctx.owner = ""`
-  // (or any non-string) is almost always expressing a bug in their
-  // own code, not asking for the tracker default. Raise here so the
-  // failure surfaces at the call site. The `||` shortcut would
-  // silently fall through to target.owner and send the mutation
-  // somewhere the caller didn't intend.
-  const validString = (v) => typeof v === "string" && v.length > 0;
+  // Explicit-invalid detection: a caller who passes
+  //   ctx.owner = ""  or  ctx.owner = "   "
+  // is almost always expressing a bug in their own code, not asking
+  // for the tracker default. Raise here so the failure surfaces at
+  // the call site. The `||` shortcut would silently fall through to
+  // target.owner and send the mutation somewhere the caller didn't
+  // intend. Whitespace-only values are treated the same as empty:
+  // trim before the length check.
+  const validString = (v) => typeof v === "string" && v.trim().length > 0;
   const assertIfPresent = (key, v) => {
     if (v === undefined || v === null) return; // permit fallthrough
     if (!validString(v)) {
@@ -428,15 +432,19 @@ function resolveRepoCoords(ctx, trackerTarget) {
   // Nullish-coalesce so ctx.owner/repo wins when set (already
   // validated above), else the target's value wins. Only when
   // both are absent does the final check below throw.
-  const owner = ctx?.owner ?? trackerTarget?.owner;
-  const repo = ctx?.repo ?? trackerTarget?.repo;
-  if (!validString(owner)) {
+  const rawOwner = ctx?.owner ?? trackerTarget?.owner;
+  const rawRepo = ctx?.repo ?? trackerTarget?.repo;
+  if (!validString(rawOwner)) {
     throw new TypeError("github issues: ctx.owner (or target.owner) is required");
   }
-  if (!validString(repo)) {
+  if (!validString(rawRepo)) {
     throw new TypeError("github issues: ctx.repo (or target.repo) is required");
   }
-  return { owner, repo };
+  // Trim so downstream query text and URL construction sees the
+  // canonical value. ops.config.json-derived targets are usually
+  // already trimmed by bootstrap, but a caller-supplied ctx may
+  // carry accidental padding.
+  return { owner: rawOwner.trim(), repo: rawRepo.trim() };
 }
 
 /** Validate an integer issue number at the input boundary. */
@@ -697,6 +705,41 @@ async function githubListIssues(trackerTarget, ctx, payload = {}) {
   }
   if (!Number.isInteger(limit) || limit <= 0) {
     throw new TypeError(`github issues.listIssues: limit must be a positive integer`);
+  }
+  // Validate `labels` shape at the boundary. Non-array values used
+  // to be silently ignored (Array.isArray guard below); now throw
+  // so a caller passing a wrong type (string, object) sees the bug
+  // immediately instead of getting unfiltered results. Empty array
+  // is allowed and treated as "no label filter".
+  if (labels !== null && labels !== undefined) {
+    if (!Array.isArray(labels)) {
+      throw new TypeError(
+        `github issues.listIssues: labels must be an array of non-empty strings when provided; got ${typeof labels}`,
+      );
+    }
+    for (const l of labels) {
+      if (typeof l !== "string" || l.trim().length === 0) {
+        throw new TypeError(
+          `github issues.listIssues: every labels[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
+        );
+      }
+    }
+  }
+  // Validate `milestone`. `null`/`undefined` means "no filter";
+  // otherwise it must be an object with a positive-integer `number`.
+  // The prior `typeof milestone.number === "number"` guard let
+  // NaN / Infinity through, which quietly filtered out everything.
+  if (milestone !== null && milestone !== undefined) {
+    if (typeof milestone !== "object" || Array.isArray(milestone)) {
+      throw new TypeError(
+        `github issues.listIssues: milestone must be null or an object with a positive integer 'number'; got ${typeof milestone}`,
+      );
+    }
+    if (!Number.isInteger(milestone.number) || milestone.number <= 0) {
+      throw new TypeError(
+        `github issues.listIssues: milestone.number must be a positive integer; got ${JSON.stringify(milestone.number)}`,
+      );
+    }
   }
   const HARD_CAP = 1000;
   const effectiveLimit = Math.min(limit, HARD_CAP);
@@ -1050,12 +1093,13 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
       `github issues.updateIssueStatus: status '${status}' has no native mapping in projects[0].status_values`,
     );
   }
-  // statusField: default to "Status" ONLY when project.status_field
-  // is nullish (absent). A present-but-empty / non-string value is
-  // a schema violation that the runtime should surface, not
-  // silently coerce to the default — the earlier `|| "Status"`
-  // form would mask misconfigurations like `status_field: ""` or
-  // `status_field: null` and then update the wrong field.
+  // statusField: default to "Status" only when project.status_field
+  // is nullish (undefined / null), treating that as an absent
+  // value. A present-but-empty / non-string value is a schema
+  // violation that the runtime should surface, not silently coerce
+  // to the default — the earlier `|| "Status"` form would mask
+  // misconfigurations like `status_field: ""`, `status_field: 0`,
+  // or `status_field: false` and then update the wrong field.
   const rawStatusField = project.status_field;
   if (rawStatusField !== undefined && rawStatusField !== null) {
     if (typeof rawStatusField !== "string" || rawStatusField.trim().length === 0) {

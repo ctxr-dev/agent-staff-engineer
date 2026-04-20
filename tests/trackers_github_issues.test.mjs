@@ -386,6 +386,68 @@ describe("github issues.listIssues", skipOpts, () => {
     );
   });
 
+  // PR 9 R5 (Copilot): whitespace-only values previously passed the
+  // length check and then failed later with less-actionable errors.
+  // Now treated the same as empty.
+  it("rejects whitespace-only ctx.owner / ctx.repo", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({ owner: "   " }, {}),
+      /ctx\.owner must be a non-empty string when supplied/,
+    );
+    await assert.rejects(
+      tracker.issues.listIssues({ repo: "\t" }, {}),
+      /ctx\.repo must be a non-empty string when supplied/,
+    );
+  });
+
+  // PR 9 R5 (Copilot): listIssues silently ignored non-array labels
+  // and accepted NaN/Infinity milestone.number, which filtered out
+  // everything without surfacing the caller bug.
+  it("rejects non-array labels at the boundary", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({}, { labels: "bug" }),
+      /labels must be an array of non-empty strings/,
+    );
+  });
+
+  it("rejects whitespace-only or non-string entries in labels", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({}, { labels: ["bug", "  "] }),
+      /every labels\[\] entry must be a non-empty string/,
+    );
+    await assert.rejects(
+      tracker.issues.listIssues({}, { labels: ["bug", 42] }),
+      /every labels\[\] entry must be a non-empty string/,
+    );
+  });
+
+  it("rejects milestone with non-positive-integer number (NaN, Infinity, 0)", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({}, { milestone: { number: NaN } }),
+      /milestone\.number must be a positive integer/,
+    );
+    await assert.rejects(
+      tracker.issues.listIssues({}, { milestone: { number: 0 } }),
+      /milestone\.number must be a positive integer/,
+    );
+    await assert.rejects(
+      tracker.issues.listIssues({}, { milestone: { number: 1.5 } }),
+      /milestone\.number must be a positive integer/,
+    );
+  });
+
+  it("rejects milestone that isn't an object", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({}, { milestone: 3 }),
+      /milestone must be null or an object/,
+    );
+  });
+
   // PR 9 R1 (Copilot): labels were fetched with first:20; an issue
   // with >20 labels would silently return a truncated list,
   // breaking client-side label filters. Now fail loud when the
