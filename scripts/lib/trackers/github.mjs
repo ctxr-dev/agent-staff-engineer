@@ -409,6 +409,16 @@ async function countUnresolvedBeyondFirstPage({ owner, repo, prNumber }, startCu
  * this provider was constructed with. Throws if neither source has both
  * fields, since every `issues.*` method needs them.
  */
+// GitHub owner/repo name regexes. Owner is 1-39 chars, alphanumeric
+// and single hyphens (GitHub's documented constraint). Repo is 1-100
+// chars, alphanumeric + `-` + `_` + `.` (observed + docs; the server
+// has additional rules we don't reproduce). These are stricter than
+// "any non-empty string" and close the Windows shell-injection
+// surface (ghExec currently uses `shell: true` on some platforms);
+// no legitimate caller ever needs a character outside the allow-list.
+const GITHUB_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+const GITHUB_REPO_RE  = /^[A-Za-z0-9._-]{1,100}$/;
+
 function resolveRepoCoords(ctx, trackerTarget) {
   // Explicit-invalid detection: a caller who passes
   //   ctx.owner = ""  or  ctx.owner = "   "
@@ -440,11 +450,25 @@ function resolveRepoCoords(ctx, trackerTarget) {
   if (!validString(rawRepo)) {
     throw new TypeError("github issues: ctx.repo (or target.repo) is required");
   }
-  // Trim so downstream query text and URL construction sees the
-  // canonical value. ops.config.json-derived targets are usually
-  // already trimmed by bootstrap, but a caller-supplied ctx may
-  // carry accidental padding.
-  return { owner: rawOwner.trim(), repo: rawRepo.trim() };
+  // Trim first, then validate against GitHub's name constraints.
+  // This both canonicalises whitespace-padded config and closes
+  // the shell-injection surface on platforms where ghExec uses
+  // shell: true (Windows). An unusable repo name would have
+  // failed at the GraphQL layer anyway; reject here with a
+  // clearer error and no side effects.
+  const owner = rawOwner.trim();
+  const repo = rawRepo.trim();
+  if (!GITHUB_OWNER_RE.test(owner)) {
+    throw new TypeError(
+      `github issues: owner must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(owner)}`,
+    );
+  }
+  if (!GITHUB_REPO_RE.test(repo)) {
+    throw new TypeError(
+      `github issues: repo must match GitHub's repo-name rules (1-100 chars, alphanumeric + '.' + '-' + '_'); got ${JSON.stringify(repo)}`,
+    );
+  }
+  return { owner, repo };
 }
 
 /** Validate an integer issue number at the input boundary. */
@@ -713,19 +737,25 @@ async function githubListIssues(trackerTarget, ctx, payload = {}) {
   // so a caller passing a wrong type (string, object) sees the bug
   // immediately instead of getting unfiltered results. Empty array
   // is allowed and treated as "no label filter".
+  // Also normalise to the trimmed value so downstream equality
+  // comparisons use the canonical form. A caller-supplied "bug "
+  // would otherwise pass validation and then never match "bug"
+  // labels on the fetched issues.
+  let normalisedLabels = labels;
   if (labels !== null && labels !== undefined) {
     if (!Array.isArray(labels)) {
       throw new TypeError(
         `github issues.listIssues: labels must be an array of non-empty strings when provided; got ${typeof labels}`,
       );
     }
-    for (const l of labels) {
+    normalisedLabels = labels.map((l) => {
       if (typeof l !== "string" || l.trim().length === 0) {
         throw new TypeError(
           `github issues.listIssues: every labels[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
         );
       }
-    }
+      return l.trim();
+    });
   }
   // Validate `milestone`. `null`/`undefined` means "no filter";
   // otherwise it must be an object with a positive-integer `number`.
@@ -803,9 +833,11 @@ async function githubListIssues(trackerTarget, ctx, payload = {}) {
       }
       // Client-side filters. Label filter means "has every name in the
       // filter array"; milestone means "same milestone number".
+      // Use the trimmed, canonical label array normalised above so
+      // whitespace in a caller input doesn't silently miss matches.
       const nodeLabels = new Set(n.labels.nodes.map((l) => l.name));
-      if (Array.isArray(labels) && labels.length > 0) {
-        if (!labels.every((l) => nodeLabels.has(l))) continue;
+      if (Array.isArray(normalisedLabels) && normalisedLabels.length > 0) {
+        if (!normalisedLabels.every((l) => nodeLabels.has(l))) continue;
       }
       if (milestone && typeof milestone.number === "number") {
         if (!n.milestone || n.milestone.number !== milestone.number) continue;
@@ -847,24 +879,26 @@ async function githubRelabelIssue(trackerTarget, ctx, payload) {
   // Validate every label-name entry at the boundary so non-string /
   // whitespace-only inputs surface as a clear input error rather
   // than a misleading "labels not found" further down when
-  // resolveLabelIds can't match them.
-  const validateLabelArray = (arr, key) => {
-    for (const l of arr) {
-      if (typeof l !== "string" || l.trim().length === 0) {
-        throw new TypeError(
-          `github issues.relabelIssue: every ${key}[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
-        );
-      }
+  // resolveLabelIds can't match them. Normalise to the trimmed
+  // value so downstream dedupe / overlap checks and label lookup
+  // operate on the canonical form (a caller's "bug " would
+  // otherwise defeat the delta semantics against existing labels).
+  const normaliseLabelArray = (arr, key) => arr.map((l) => {
+    if (typeof l !== "string" || l.trim().length === 0) {
+      throw new TypeError(
+        `github issues.relabelIssue: every ${key}[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
+      );
     }
-  };
-  validateLabelArray(rawAdd, "add");
-  validateLabelArray(rawRemove, "remove");
+    return l.trim();
+  });
+  const normalisedAdd = normaliseLabelArray(rawAdd, "add");
+  const normalisedRemove = normaliseLabelArray(rawRemove, "remove");
   // Dedupe within each side. Duplicates in the caller array would
   // produce duplicate label IDs in the GraphQL mutation input, which
   // GitHub accepts but is redundant work at best; at worst a future
   // API change could make it an error.
-  const add = [...new Set(rawAdd)];
-  const remove = [...new Set(rawRemove)];
+  const add = [...new Set(normalisedAdd)];
+  const remove = [...new Set(normalisedRemove)];
   // Reject a name appearing in BOTH add and remove: the caller's
   // intent is contradictory. Silently resolving in one direction
   // would mask a bug in the caller's plan; fail loud instead.
@@ -951,7 +985,7 @@ async function githubRelabelIssue(trackerTarget, ctx, payload) {
  */
 async function githubCreateIssue(trackerTarget, ctx, payload) {
   const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
-  const {
+  let {
     title,
     body = "",
     labels = [],
@@ -976,14 +1010,18 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
   // Validate each label entry here so the failure points at the
   // createIssue call rather than surfacing later through the
   // relabelIssue delegation with a less-actionable "labels not
-  // found" message.
-  for (const l of labels) {
+  // found" message. Normalise to the trimmed value and reassign
+  // labels so the downstream relabelIssue delegation applies the
+  // canonical names; otherwise "bug " would pass here and fail
+  // there.
+  labels = labels.map((l) => {
     if (typeof l !== "string" || l.trim().length === 0) {
       throw new TypeError(
         `github issues.createIssue: every labels[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
       );
     }
-  }
+    return l.trim();
+  });
   // Catch callers still passing the old fields: silent drop would
   // produce an issue without the requested assignee / milestone and
   // leave the caller wondering why the bind didn't happen.
@@ -1002,6 +1040,11 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
         `github issues.createIssue: templateName must be a non-empty string when supplied; got ${JSON.stringify(templateName)}`,
       );
     }
+    // Normalise to the trimmed value so the downstream
+    // ctx.templateLoader call sees the canonical name. A caller's
+    // "issue.md " would otherwise pass validation and fail the
+    // template lookup with a less-actionable filesystem error.
+    templateName = templateName.trim();
   }
   // Dedupe: search open issues by exact title. GitHub's search is
   // ranked + substring-based, so an exact match may not appear on
@@ -1018,7 +1061,22 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
       }
     }
   `;
-  const q = `is:issue is:open repo:${owner}/${repo} in:title "${title.replace(/"/g, '\\"')}"`;
+  // Escape before embedding into the GitHub search phrase. Earlier
+  // impl only escaped `"`, but a title containing backslashes or
+  // control chars can still break the phrase and produce a failed
+  // dedupe. Normalise control chars (C0 + DEL) to spaces, escape
+  // backslash then quote (order matters), and collapse runs of
+  // whitespace so the search still matches the user-visible title
+  // up to GitHub's tokeniser. The client-side strict-equality
+  // filter (`n.title === title`) stays as the authoritative match.
+  // eslint-disable-next-line no-control-regex
+  const searchPhrase = String(title)
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\s+/g, " ")
+    .trim();
+  const q = `is:issue is:open repo:${owner}/${repo} in:title "${searchPhrase}"`;
   const DEDUPE_MAX_RESULTS = 500;
   let dedupeScanned = 0;
   let dedupeAfter = null;
@@ -1172,14 +1230,20 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
   // misconfigurations like `status_field: ""`, `status_field: 0`,
   // or `status_field: false` and then update the wrong field.
   const rawStatusField = project.status_field;
+  let normalisedStatusField;
   if (rawStatusField !== undefined && rawStatusField !== null) {
     if (typeof rawStatusField !== "string" || rawStatusField.trim().length === 0) {
       throw new Error(
         `github issues.updateIssueStatus: projects[0].status_field must be a non-empty string when provided; got ${JSON.stringify(rawStatusField)}`,
       );
     }
+    // Normalise to the trimmed form so the GraphQL query sees the
+    // canonical field name. A config with `status_field: "Status "`
+    // would otherwise pass validation and then fail with a
+    // misleading "field not found".
+    normalisedStatusField = rawStatusField.trim();
   }
-  const statusField = rawStatusField ?? "Status";
+  const statusField = normalisedStatusField ?? "Status";
   // statusField flows through an ops.config.json string that the
   // user (or adapt-system) supplies, and is interpolated into the
   // GraphQL query as a double-quoted string literal via
@@ -1206,12 +1270,26 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
     );
   }
   const projectNumber = project.number;
-  // Nullish-coalesce rather than `||` so an explicit empty string
-  // in `project.owner` (hand-edited config) surfaces downstream
-  // instead of silently routing to the repo's owner. Matches the
-  // resolveRepoCoords pattern that fixed the equivalent footgun
-  // on ctx.owner/repo earlier in this PR.
-  const projectOwner = project.owner ?? owner;
+  // project.owner is optional; when present, validate the same way
+  // ctx.owner/repo are validated: non-empty string, trimmed, passes
+  // GitHub's owner-name allow-list. Nullish fallthrough uses the
+  // parent tracker's owner (already validated by resolveRepoCoords
+  // above).
+  let projectOwner = owner;
+  if (project.owner !== undefined && project.owner !== null) {
+    if (typeof project.owner !== "string" || project.owner.trim().length === 0) {
+      throw new TypeError(
+        `github issues.updateIssueStatus: projects[0].owner must be a non-empty string when provided; got ${JSON.stringify(project.owner)}`,
+      );
+    }
+    const candidate = project.owner.trim();
+    if (!GITHUB_OWNER_RE.test(candidate)) {
+      throw new TypeError(
+        `github issues.updateIssueStatus: projects[0].owner must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(project.owner)}`,
+      );
+    }
+    projectOwner = candidate;
+  }
   // Multi-step resolve, NOT a single compound round trip: first
   // look up the project's Status field id + options once; then
   // paginate the issue's projectItems to find the one bound to

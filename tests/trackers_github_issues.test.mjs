@@ -414,6 +414,22 @@ describe("github issues.listIssues", skipOpts, () => {
     );
   });
 
+  // PR 9 R11 (Copilot): owner/repo values outside GitHub's
+  // documented name rules used to flow unchecked into the GraphQL
+  // layer (and through gh's shell:true branch on Windows). Now
+  // rejected at the boundary via an allow-list regex.
+  it("rejects owner/repo values outside GitHub's name rules (allow-list)", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({ owner: "acme; rm -rf /" }, {}),
+      /owner must match GitHub's owner-name rules/,
+    );
+    await assert.rejects(
+      tracker.issues.listIssues({ repo: "widgets/../../../etc/passwd" }, {}),
+      /repo must match GitHub's repo-name rules/,
+    );
+  });
+
   // PR 9 R5 (Copilot): listIssues silently ignored non-array labels
   // and accepted NaN/Infinity milestone.number, which filtered out
   // everything without surfacing the caller bug.
@@ -717,6 +733,35 @@ describe("github issues.createIssue", skipOpts, () => {
       tracker.issues.createIssue({}, { title: "x", labels: ["   "] }),
       /every labels\[\] entry must be a non-empty string/,
     );
+  });
+
+  // PR 9 R11 (Copilot): whitespace-padded labels used to pass the
+  // trim-check but be used untrimmed downstream, defeating the
+  // delta semantics ("bug " doesn't match "bug" in the issue's
+  // current labels). Now normalises to the trimmed value.
+  it("normalises whitespace-padded label entries on createIssue", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    const { log } = await withFakeGhSequence(
+      [
+        "search_dedupe_miss",
+        "repo_node_id",
+        "create_issue_ok",
+        "issue_node_id",
+        "labels_all_found",
+        "add_labels_ok",
+      ],
+      () => tracker.issues.createIssue({}, {
+        title: "brand new",
+        labels: ["  priority/high  "],
+      }),
+    );
+    const calls = log.trim().split("\n");
+    // The addLabelsToLabelable call (index 5) must carry the
+    // canonical label id "L_new" (from the labels_all_found
+    // fixture, which maps "priority/high" -> "L_new"). If the
+    // method had used the untrimmed form, resolveLabelIds would
+    // have returned "missing" and the method would have thrown.
+    assert.match(calls[5], /L_new/, "trimmed label must resolve to the canonical id");
   });
 
   // PR 9 R9 (Copilot): non-string body used to flow into the
