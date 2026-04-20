@@ -506,23 +506,17 @@ async function interview(rl, d, _bundleRef) {
   }
 
   // Branch naming. Defaults work for most projects and match conventional
-  // commit prefixes. A user who wants something different can customise
-  // per-type here, or later via adapt-system.
-  const DEFAULT_BRANCH_PATTERNS = {
-    feature: "feat/{issue}-{slug}",
-    fix: "fix/{issue}-{slug}",
-    chore: "chore/{issue}-{slug}",
-    refactor: "refactor/{issue}-{slug}",
-    docs: "docs/{issue}-{slug}",
-  };
+  // commit prefixes (see module-level DEFAULT_BRANCH_PATTERNS). A user
+  // who wants something different can customise per-type here, or
+  // later via adapt-system.
   const customiseBranchNaming = await askYesNo(
-    `6. Customise branch naming? Defaults: feat/{issue}-{slug}, fix/{issue}-{slug}, chore/{issue}-{slug}, refactor/{issue}-{slug}, docs/{issue}-{slug}. Placeholders {issue} and {slug} are required`,
+    `6. Customise branch naming? Defaults: ${Object.values(DEFAULT_BRANCH_PATTERNS).join(", ")}. Placeholders {issue} and {slug} are required`,
     "no"
   );
-  let branchPatterns = DEFAULT_BRANCH_PATTERNS;
+  let branchPatterns = { ...DEFAULT_BRANCH_PATTERNS };
   if (customiseBranchNaming) {
     branchPatterns = {};
-    for (const type of ["feature", "fix", "chore", "refactor", "docs"]) {
+    for (const type of Object.keys(DEFAULT_BRANCH_PATTERNS)) {
       branchPatterns[type] = await askBranchPattern(
         ask,
         `   ${type} branches`,
@@ -578,6 +572,34 @@ async function interview(rl, d, _bundleRef) {
 
 /** The tracker kinds askTrackerTarget() knows how to ask questions for. */
 export const SUPPORTED_TRACKER_KINDS = Object.freeze(["github", "jira", "linear", "gitlab"]);
+
+/**
+ * Canonical branch-pattern defaults for every workflow.branch_patterns.<type>.
+ * Single source of truth consumed in three places:
+ *   1. interview() shows these as the default in the "customise branch
+ *      naming?" question and as the per-type fallback when the user
+ *      chose yes but Enters through a row.
+ *   2. pickDefaults() emits this block in the non-interactive (--yes)
+ *      path so composed configs match what the interactive path would
+ *      produce when the user declines to customise.
+ *   3. compose() uses it as the `a.branchPatterns ?? ...` fallback for
+ *      older callers that don't populate `answers.branchPatterns`.
+ *
+ * Object.freeze + spreads at each consumer keep the constant
+ * immutable; consumers must `{ ...DEFAULT_BRANCH_PATTERNS }` if they
+ * need a mutable copy (e.g. interview's customise path builds the
+ * answers object incrementally).
+ *
+ * Exported so tests can assert on it directly rather than duplicating
+ * the literal in test fixtures.
+ */
+export const DEFAULT_BRANCH_PATTERNS = Object.freeze({
+  feature: "feat/{issue}-{slug}",
+  fix: "fix/{issue}-{slug}",
+  chore: "chore/{issue}-{slug}",
+  refactor: "refactor/{issue}-{slug}",
+  docs: "docs/{issue}-{slug}",
+});
 
 /**
  * Ask a prompt, normalise the answer (trim), optionally validate it
@@ -971,16 +993,12 @@ export function pickDefaults(d) {
     e2ePath: "",
     devTracker,
     releaseTracker,
-    // Match the schema default so downstream compose() emits the same
-    // patterns it did before the interactive branch-naming question
-    // existed.
-    branchPatterns: {
-      feature: "feat/{issue}-{slug}",
-      fix: "fix/{issue}-{slug}",
-      chore: "chore/{issue}-{slug}",
-      refactor: "refactor/{issue}-{slug}",
-      docs: "docs/{issue}-{slug}",
-    },
+    // Copy the canonical defaults so downstream compose() emits the
+    // same patterns it did before the interactive branch-naming
+    // question existed. Spread (vs referencing DEFAULT_BRANCH_PATTERNS
+    // directly) hands callers a mutable plain object, matching what
+    // the interactive path produces.
+    branchPatterns: { ...DEFAULT_BRANCH_PATTERNS },
     observed: [],
     regimes: ["none"],
     dataClasses: ["none"],
@@ -1165,15 +1183,10 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
       phase_term: a.cadence === "per-wave" ? "wave" : a.cadence === "per-version" ? "version" : "track",
       // Prefer the answers' branchPatterns (from the customise-yes path
       // in the interview or from pickDefaults' default block); fall
-      // back to the conventional defaults if an older caller doesn't
-      // supply them.
-      branch_patterns: a.branchPatterns ?? {
-        feature: "feat/{issue}-{slug}",
-        fix: "fix/{issue}-{slug}",
-        chore: "chore/{issue}-{slug}",
-        refactor: "refactor/{issue}-{slug}",
-        docs: "docs/{issue}-{slug}",
-      },
+      // back to the canonical DEFAULT_BRANCH_PATTERNS if an older
+      // caller doesn't supply them. Spread to hand compose's consumers
+      // a mutable plain object (matches the interactive path's shape).
+      branch_patterns: a.branchPatterns ?? { ...DEFAULT_BRANCH_PATTERNS },
       commits: {
         style: "conventional",
         signed: false,

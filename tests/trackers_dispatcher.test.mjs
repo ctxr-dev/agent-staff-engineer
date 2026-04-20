@@ -9,6 +9,7 @@ import {
   pickTracker,
   pickReviewProvider,
   resolveTrackerKind,
+  hasReleaseTracker,
 } from "../scripts/lib/trackers/dispatcher.mjs";
 import {
   NotSupportedError,
@@ -147,5 +148,48 @@ describe("resolveTrackerKind", () => {
 
   it("propagates pickTracker's errors on malformed config", () => {
     assert.throws(() => resolveTrackerKind({}, "dev"), /trackers\.dev/);
+  });
+});
+
+// PR 7 R3 (Copilot): hasReleaseTracker is the new cheap probe consumers
+// use to short-circuit on the "team opted out of release umbrellas"
+// path without having to catch pickTracker's "missing trackers.release"
+// throw. Lock the probe semantics: true only for a non-null object with
+// a non-empty string `kind`; everything else (missing, null, array,
+// primitive, empty kind) is false. This prevents regressions where a
+// future change loosens the check and consumers unintentionally try to
+// construct a tracker from a garbage value.
+describe("hasReleaseTracker", () => {
+  it("returns true when trackers.release is a valid kind-discriminator object", () => {
+    assert.equal(hasReleaseTracker(GITHUB_DEV), true);
+    assert.equal(hasReleaseTracker(JIRA_DEV), true);
+  });
+
+  it("returns false when trackers.release is absent", () => {
+    assert.equal(hasReleaseTracker({ trackers: { dev: { kind: "github" } } }), false);
+  });
+
+  it("returns false when trackers block itself is missing", () => {
+    assert.equal(hasReleaseTracker({}), false);
+    assert.equal(hasReleaseTracker({ project: {} }), false);
+  });
+
+  it("returns false when cfg is null or undefined", () => {
+    assert.equal(hasReleaseTracker(null), false);
+    assert.equal(hasReleaseTracker(undefined), false);
+  });
+
+  it("returns false when trackers.release is null", () => {
+    assert.equal(hasReleaseTracker({ trackers: { release: null } }), false);
+  });
+
+  it("returns false when trackers.release is an array (not a plain object)", () => {
+    assert.equal(hasReleaseTracker({ trackers: { release: [{ kind: "github" }] } }), false);
+  });
+
+  it("returns false when trackers.release has no `kind` string", () => {
+    assert.equal(hasReleaseTracker({ trackers: { release: {} } }), false);
+    assert.equal(hasReleaseTracker({ trackers: { release: { kind: "" } } }), false);
+    assert.equal(hasReleaseTracker({ trackers: { release: { kind: 42 } } }), false);
   });
 });
