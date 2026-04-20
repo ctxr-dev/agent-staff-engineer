@@ -24,6 +24,7 @@
 // a prompt the runner can't answer.
 
 import { createInterface } from "node:readline/promises";
+import { MIN_NODE_MAJOR } from "../preflight.mjs";
 
 /**
  * Signalled by the wait loop when the user types `abort`. The helper
@@ -206,7 +207,7 @@ export async function waitForRequiredSkill({
         stdout.write(
           `\nTroubleshooting tips for 'npx @ctxr/kit install ${provider}':\n` +
           `  1. 'npx: command not found' -> install Node.js + npm from nodejs.org. The agent needs\n` +
-          `     Node 20 or newer.\n` +
+          `     Node ${MIN_NODE_MAJOR} or newer.\n` +
           `  2. 'Not found in registry' -> double-check the package name: '${provider}'. A typo is the\n` +
           `     most common cause.\n` +
           `  3. Permission / EACCES errors -> retry the install with a different destination; kit's\n` +
