@@ -56,7 +56,13 @@ export class InstallAbortedByUserError extends Error {
  * @param {NodeJS.ReadableStream} [opts.stdin=process.stdin]   Input stream for the prompt.
  * @param {NodeJS.WritableStream} [opts.stdout=process.stdout] Where prompts + help go.
  * @param {NodeJS.WritableStream} [opts.stderr=process.stderr] Where abort / SIGINT messages go.
- * @param {(code: number) => never} [opts.exit=process.exit]   Process-exit function.
+ * @param {(code: number) => void} [opts.exit=process.exit]    Process-exit function.
+ *                                      Real process.exit() never returns, but the helper
+ *                                      is also callable with a non-terminating stub (tests
+ *                                      pass one that returns); abort then throws
+ *                                      InstallAbortedByUserError so the Promise<string>
+ *                                      contract holds. Type is `void` rather than `never`
+ *                                      so editor inference doesn't flag the post-exit line.
  * @param {(sig: string, handler: () => void) => void} [opts.on=process.on.bind(process)]
  *                                      Signal registrar (injected for tests).
  * @param {(sig: string, handler: () => void) => void} [opts.off=process.off.bind(process)]

@@ -378,12 +378,25 @@ async function waitForRequiredSkillOrExit(provider, target) {
   // helper falls back to a naive argv join when no pre-quoted value
   // is supplied, but that breaks on whitespace; pre-quoting here is
   // the robust path.
+  //
+  // Windows nuance: PowerShell treats a single-quoted executable
+  // path as a string literal, not a command. Copy-pasting
+  // `'C:\Program Files\nodejs\node.exe' script.mjs` gets you an
+  // "expression result discarded" error. The fix is to prefix the
+  // path with the call operator `&`, which tells PowerShell to
+  // invoke the quoted token as a command. POSIX shells don't
+  // require (or tolerate) the `&` prefix, so only the Windows branch
+  // emits it.
   const onWindows = process.platform === "win32";
   const quote = onWindows ? psQuote : shellQuote;
   const argv = Array.isArray(process.argv) ? process.argv : [];
-  const rerunCommand = argv.length >= 2
-    ? [argv[0], ...argv.slice(1)].map(quote).join(" ")
-    : undefined;
+  let rerunCommand;
+  if (argv.length >= 2) {
+    const quotedTokens = argv.map(quote);
+    rerunCommand = onWindows
+      ? `& ${quotedTokens.join(" ")}`
+      : quotedTokens.join(" ");
+  }
 
   return waitForRequiredSkill({
     provider,
