@@ -369,9 +369,47 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
   // originals without having to re-scan the array.
   const seenNames = new Map();
   const seenPaths = new Map();
+  // Compute TARGET's realpath once up front rather than per member.
+  // Besides saving syscalls, this also means any error reporting
+  // the user sees about TARGET (e.g. "TARGET realpath failed") is
+  // identical across members. A realpath failure on TARGET aborts
+  // the preflight entirely since every subsequent containment check
+  // would have no safe baseline to compare against.
+  const resolvedTargetOnce = resolve(TARGET);
+  let realTargetOnce;
+  try {
+    realTargetOnce = realpathSync(resolvedTargetOnce);
+  } catch (e) {
+    process.stderr.write(
+      `\nERROR: cannot realpath install TARGET '${resolvedTargetOnce}': ${e?.message ?? e}. Fix the target path or re-run with --target pointing at an accessible directory.\n`,
+    );
+    process.exit(1);
+  }
   for (let memberIdx = 0; memberIdx < opsConfig.workspace.members.length; memberIdx += 1) {
     const member = opsConfig.workspace.members[memberIdx];
-    if (!member || typeof member.path !== "string") continue;
+    // Malformed entries (null, non-object, or missing/non-string
+    // path) would otherwise silently skip the validation phase and
+    // land at dispatch time as a vague "not a tracker" throw. Treat
+    // them as invalid up-front with a pointed message so the user
+    // sees exactly which index is broken. install.mjs does not
+    // schema-validate an existing ops.config.json, so this is the
+    // only guard against a bad hand-edit slipping through.
+    if (!member || typeof member !== "object" || Array.isArray(member)) {
+      invalid.push({
+        name: "<missing>",
+        path: "<missing>",
+        reason: `workspace.members[${memberIdx}] is not an object (got ${member === null ? "null" : Array.isArray(member) ? "array" : typeof member})`,
+      });
+      continue;
+    }
+    if (typeof member.path !== "string" || member.path.length === 0) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: typeof member.path === "string" ? member.path : `<${typeof member.path}>`,
+        reason: `workspace.members[${memberIdx}].path must be a non-empty string`,
+      });
+      continue;
+    }
     // Run member.path through the canonical normaliser so absolute
     // paths, Windows drive prefixes, and `..` traversal are rejected
     // up front. `join(TARGET, absPath)` would let an absolute path
@@ -423,16 +461,18 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
     // valid multi-repo install. Cross-platform rule: the relative
     // path from resolvedTarget to absolute must be either empty
     // (same dir) OR not absolute AND not start with a ".." segment.
+    // Reuse the hoisted `resolvedTargetOnce` instead of re-computing
+    // `resolve(TARGET)` per member; the value is constant over the
+    // loop so the redundant syscalls were pure overhead.
     const absolute = resolve(TARGET, normalisedRel);
-    const resolvedTarget = resolve(TARGET);
-    const rel = relative(resolvedTarget, absolute);
+    const rel = relative(resolvedTargetOnce, absolute);
     const escapes =
       isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`) || rel.startsWith("../");
     if (escapes) {
       invalid.push({
         name: member.name ?? "<unnamed>",
         path: member.path,
-        reason: `resolved path '${absolute}' escapes target '${resolvedTarget}'`,
+        reason: `resolved path '${absolute}' escapes target '${resolvedTargetOnce}'`,
       });
       continue;
     }
@@ -468,17 +508,16 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
     // catches 'libs/../..' and absolute paths, but a symlink at the
     // resolved location can still point outside TARGET. Resolve the
     // actual filesystem location via realpath and re-check
-    // containment on the real paths. The resolvedTarget side is
-    // realpath'd up front so a TARGET that itself sits behind a
-    // symlink (common on macOS: /var is a symlink to /private/var)
-    // is compared apples-to-apples. realpath failures are treated
+    // containment on the real paths. `realTargetOnce` was computed
+    // before the loop (TARGET itself may sit behind a symlink, as
+    // on macOS where /var -> /private/var, so the comparison has to
+    // happen apples-to-apples) so only the member's realpath is
+    // computed per iteration. Member realpath failures are treated
     // as "cannot verify safety" and surface as invalid rather than
     // silently trusting the lexical check.
     let realAbs;
-    let realTarget;
     try {
       realAbs = realpathSync(absolute);
-      realTarget = realpathSync(resolvedTarget);
     } catch (e) {
       invalid.push({
         name: member.name ?? "<unnamed>",
@@ -487,14 +526,14 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
       });
       continue;
     }
-    const realRel = relative(realTarget, realAbs);
+    const realRel = relative(realTargetOnce, realAbs);
     const realEscapes =
       isAbsolute(realRel) || realRel === ".." || realRel.startsWith(`..${sep}`) || realRel.startsWith("../");
     if (realEscapes) {
       invalid.push({
         name: member.name ?? "<unnamed>",
         path: member.path,
-        reason: `member path resolves to '${realAbs}' which is outside '${realTarget}' (symlink escape)`,
+        reason: `member path resolves to '${realAbs}' which is outside '${realTargetOnce}' (symlink escape)`,
       });
     }
   }

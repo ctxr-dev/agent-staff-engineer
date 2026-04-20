@@ -775,9 +775,12 @@ export async function interviewWorkspaceMembers(ask, askYesNo, d) {
       }
     }
     if (path === null) break;
-    // Members must have distinct names too, since `pickTrackerForMember`
-    // does a first-match lookup on the name. Reject duplicates with up
-    // to 3 retries; fall back to the loop-exit on exhausting retries.
+    // Members must have distinct names too. Runtime dispatch is keyed
+    // by member name and `pickTrackerForMember` hard-refuses on
+    // duplicate matches (after PR 8 R5), so catching duplicates here
+    // at prompt time gives users a clean error rather than a
+    // dispatch-time throw on some later invocation. Up to 3 retries;
+    // fall back to the loop-exit on exhausting retries.
     let name = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const candidate = await askNonEmpty(
