@@ -75,8 +75,9 @@ Every layer only reads down. Skills read templates and rules. Scripts read the s
 Key groups:
 
 - `project`: name, org, repo, default_branch, principals.
-- `github.dev_projects[]`: owner, number, status_values, fields.
-- `github.release_projects[]`: same shape as dev_projects[].
+- `trackers.dev`: kind (github / jira / linear / gitlab) + kind-specific coordinates; when `kind` is github, includes `projects[]` with owner, number, status_values, fields.
+- `trackers.release` (optional; absent when the project opted out of release umbrellas): same shape as `trackers.dev` per kind.
+- `trackers.observed[]`: read-only targets for cross-repo lookups; each entry is its own per-kind target.
 - `labels`: type, area, priority, intent, size, automation, state_modifiers.
 - `workflow`: phase_term, branch_patterns, commits, pr, release.
 - `paths`: plans_root, plan_states, done_pattern, dev_working_dir (default `.development`) with three subtrees set by `dev_working_{shared,local,cache}_subdir` (defaults `shared`/`local`/`cache`; `local/` and `cache/` are gitignored by default, `shared/` commits), templates, reports (default `.development/shared/reports`), runbooks (default `.development/shared/runbooks`). No keys touch `daily/` or `knowledge/`.
@@ -567,17 +568,17 @@ Update never overwrites `ops.config.json`, project rules, below-marker wrapper c
 
 Content updates that do not change the set of canonical files (the common case) need no `install.mjs --update` run at all: `git pull` inside the bundle is sufficient, because wrappers reference in-bundle paths and pick up the new content on the next Claude session. Re-running `--update` becomes necessary only when (a) the bundle's canonical file set changes, (b) the schema grows required keys, or (c) the user wants the wrapper headers refreshed.
 
-## Multi-target GitHub observation
+## Multi-target tracker observation
 
-The agent reads and writes GitHub according to a list of observed targets declared in `ops.config.json`. Each entry carries a depth setting that controls what the agent is allowed to do there.
+The agent reads and writes trackers according to the targets declared in `ops.config.json` under `trackers.*`. Each target carries a `depth` setting that controls what the agent is allowed to do there; observed entries default to `read-only`.
 
 ```text
 +-------------------------+
 |   ops.config.json       |
-|   github:               |
-|     dev_projects: [...] |
-|     release_projects:   |
-|     observed_repos:     |
+|   trackers:             |
+|     dev: {kind, ...}    |
+|     release: {...} opt. |
+|     observed: [...]     |
 +------------+------------+
              |
              v

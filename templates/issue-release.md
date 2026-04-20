@@ -7,7 +7,7 @@ ops.config keys read:
   - labels.intent                  (this umbrella represents one intent value)
   - workflow.phase_term
   - workflow.release.umbrella_title
-  - github.release_projects[].fields   (e.g. "Target Date", "Scope Tag", "Linked Dev Issues")
+  - trackers.release.projects[].fields   (e.g. "Target Date", "Scope Tag", "Linked Dev Issues")
 scalar placeholders:
   {{ project.name }}
   {{ intent_label_pretty }}        e.g. "Wave 1" derived from intent label "wave-1"

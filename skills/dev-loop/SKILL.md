@@ -138,7 +138,7 @@ The ctxr-skill-code-review default is the recommended path. Projects opt out via
 ## Project contract
 
 - `project.default_branch`, `project.principals.push_allowed`, `project.principals.reviewers_default`.
-- `github.dev_projects[]` (needs depth that allows writes for the chosen target).
+- `trackers.dev` (needs `depth` that allows writes for the chosen target; project bindings live under `trackers.dev.projects[]` when `kind` is GitHub).
 - `labels.type`, `labels.area`, `labels.priority`, `labels.size`, `labels.state_modifiers`.
 - `workflow.branch_patterns.*`.
 - `workflow.commits.style`, `workflow.commits.signed`, `workflow.commits.scope_source`.

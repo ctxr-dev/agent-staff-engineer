@@ -9,7 +9,7 @@ ops.config keys read:
   - workflow.pr.e2e_required_on
   - workflow.pr.tests_required
   - labels.intent
-  - github.release_projects
+  - trackers.release.projects
   - paths.reports
 scalar placeholders:
   {{ date }}

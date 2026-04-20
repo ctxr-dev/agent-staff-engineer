@@ -9,8 +9,8 @@ ops.config keys read:
   - labels.priority
   - labels.automation           (applies auto-regression label)
   - area_keywords
-  - github.dev_projects
-  - github.observed_repos
+  - trackers.dev.projects
+  - trackers.observed
 scalar placeholders:
   {{ date }}
   {{ bug_issue_number }}

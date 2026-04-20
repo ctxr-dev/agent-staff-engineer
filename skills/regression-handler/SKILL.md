@@ -80,7 +80,7 @@ Running `regression-handler` twice on the same input produces the same report an
 ## Project contract
 
 - `project.name`, `project.repo`.
-- `github.dev_projects[]`, `github.release_projects[]`, `github.observed_repos[]` (to scope the lookup).
+- `trackers.dev.projects[]` (when `kind` is GitHub), `trackers.release.projects[]` (optional; absent when the project opted out of release umbrellas), `trackers.observed[]` (each with its own kind + coordinates): all scope the lookup.
 - `labels.type` (picks `bug`), `labels.priority`, `labels.area`, `labels.automation` (applies `auto-regression` when present).
 - `labels.state_modifiers` (to mark the report with blocked/deferred where relevant).
 - `area_keywords` (primary lookup input).

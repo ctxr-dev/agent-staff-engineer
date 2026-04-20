@@ -57,7 +57,7 @@ Turns a fresh clone into a configured target. Two-phase: silent detection, then 
 
 - **gh not authed**: print `gh auth login` guidance with the required scopes (`repo, project, read:org, workflow`) and halt.
 - **No git remote**: halt with a clear message; ask the user to configure the remote first.
-- **Zero GitHub Projects discovered**: the interview still runs; the skill records an empty `dev_projects` and `release_projects` and warns that skills needing those lists will halt until the user points at real projects.
+- **Zero GitHub Projects discovered**: the interview still runs; the skill records empty `trackers.dev.projects[]` and (when the user opted into release umbrellas) `trackers.release.projects[]`, and warns that skills needing those lists will halt until the user points at real projects.
 - **Schema validation fails after user confirmation**: halt and surface the failing path. Do not write a malformed config.
 - **User declines to answer a required topic**: halt; the skill refuses to write a config with unresolved required keys.
 
@@ -76,12 +76,12 @@ Running `bootstrap-ops-config` on a project that already has a valid `ops.config
 Reads (via the schema):
 
 - `schemas/ops.config.schema.json` to validate its own output.
-- Writes every top-level key of `ops.config.json`: `project`, `github`, `labels`, `workflow`, `paths`, `stack`, `area_keywords`, `compliance`.
+- Writes every top-level key of `ops.config.json`: `project`, `trackers`, `labels`, `workflow`, `paths`, `stack`, `area_keywords`, `compliance`.
 
 Specific keys the interview asks the user about:
 
 - `project.name`, `project.org`, `project.repo`, `project.default_branch`, `project.principals.push_allowed`, `project.principals.reviewers_default`
-- `github.auth_login`, `github.dev_projects[]`, `github.release_projects[]`, `github.observed_repos[]`
+- `trackers.dev` (kind + kind-specific coordinates + projects/fields when GitHub), `trackers.release` (optional; omitted entirely when the user declines the release-umbrella question), `trackers.observed[]`
 - `labels.type`, `labels.area`, `labels.priority`, `labels.intent`, `labels.size`, `labels.automation`, `labels.state_modifiers`
 - `workflow.phase_term`, `workflow.pr.e2e_required_on`, `workflow.release.umbrella_title`, `workflow.code_review.provider`
 - `paths.plans_root`, `paths.dev_working_dir`, `paths.reports`, `paths.runbooks`, `paths.templates`
