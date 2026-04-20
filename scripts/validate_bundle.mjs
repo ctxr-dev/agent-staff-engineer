@@ -46,6 +46,13 @@
 //      which downstream consumers (Claude Code runtime) parse as
 //      garbage. Failure classes: `frontmatter-parse:` (hard YAML
 //      error), `frontmatter-type:` (list entry is not a string).
+//  14. No stale references to the pre-trackers names:
+//      - `github-sync` (renamed to `tracker-sync`)
+//      - `github-source-of-truth` (renamed to `tracker-source-of-truth`)
+//      Catches a future PR that re-introduces the old name in a
+//      skill, rule, doc, or template before it lands. The canonical
+//      tracker lib's historical comments under scripts/lib/trackers/
+//      are exempt: they explain the rename for future readers.
 //
 
 import { readFile, stat } from "node:fs/promises";
@@ -479,6 +486,94 @@ async function checkFrontmatterParses() {
   }
 }
 
+// ---- 14. No stale legacy tracker names -------------------------------
+// After the github-sync -> tracker-sync + github-source-of-truth ->
+// tracker-source-of-truth rename, no bundle-shipped skill / rule /
+// template / doc should reference the retired names. The rename is a
+// hard break; a drive-by PR that introduces the old name in a new doc
+// would silently point readers at paths that don't exist. This gate
+// catches it.
+//
+// scripts/lib/trackers/ is deliberately exempt: those files keep
+// historical "formerly github-sync" comments so readers discover the
+// old name on code-spelunking. The comments live in a single subtree,
+// so a path-prefix exemption is precise enough.
+async function checkNoLegacyNames() {
+  const legacyNeedles = [
+    // Plain substring check is intentional. Any occurrence of
+    // `github-sync`, including path fragments like `lib/github-sync`
+    // or `skills/github-sync/`, should be treated as a legacy
+    // reference. A regex with word-boundary semantics would MISS
+    // those forms because `-` is a word boundary on its own and
+    // `\bgithub-sync\b` would not match "lib/github-sync" in a way
+    // that catches the actual bug class (accidental path-based
+    // references) that the gate exists to catch.
+    { needle: "github-sync", class: "legacy-skill-name" },
+    { needle: "github-source-of-truth", class: "legacy-rule-name" },
+  ];
+  const scanRoots = [
+    "skills",
+    "rules",
+    "memory-seeds",
+    "templates",
+    "design",
+    "examples",
+    "schemas",
+    // scripts/ added after round-1 T1: re-introducing `github-sync`
+    // in scripts/install.mjs or scripts/adapt.mjs would otherwise
+    // escape the gate. Exemptions below cover the files that MUST
+    // legitimately mention the legacy name (validate_bundle.mjs itself
+    // declares the needle; scripts/lib/trackers/ keeps historical
+    // "formerly github-sync" comments for code-spelunkers).
+    "scripts",
+  ];
+  const topLevelDocs = [
+    "AGENT.md",
+    "README.md",
+    "INSTALL.md",
+    "CONTRIBUTING.md",
+    "bundle-index.md",
+  ];
+  const exemptPrefixes = [
+    "scripts/lib/trackers/",
+    // validate_bundle.mjs is the one file that MUST contain the literal
+    // strings (both in the check's legend and as the search needles);
+    // exempt by exact relative path so a future `scripts/validate-foo.mjs`
+    // is still scanned.
+    "scripts/validate_bundle.mjs",
+  ];
+
+  const fpsToScan = [];
+  for (const root of scanRoots) {
+    for await (const fp of walkFiles(join(BUNDLE_ROOT, root))) {
+      if (fp.endsWith(".md") || fp.endsWith(".json") || fp.endsWith(".mjs")) {
+        fpsToScan.push(fp);
+      }
+    }
+  }
+  for (const top of topLevelDocs) {
+    const fp = join(BUNDLE_ROOT, top);
+    try {
+      await stat(fp);
+      fpsToScan.push(fp);
+    } catch {
+      // file absent is fine; the list is an allow-list of known docs.
+    }
+  }
+
+  for (const fp of fpsToScan) {
+    const rel = relative(BUNDLE_ROOT, fp).split(/[\\/]+/).join("/");
+    if (exemptPrefixes.some((p) => rel.startsWith(p))) continue;
+    const text = await readTextOrNull(fp);
+    if (text == null) continue;
+    for (const { needle, class: cls } of legacyNeedles) {
+      if (text.includes(needle)) {
+        err(`${cls}: ${rel} still references '${needle}' (renamed; update to the tracker-* form)`);
+      }
+    }
+  }
+}
+
 await checkLiterals();
 await checkDashes();
 await checkSkillStructure();
@@ -491,6 +586,7 @@ await checkNoRawHomePaths();
 await checkWikiRuleReferences();
 await checkBundleIndex();
 await checkFrontmatterParses();
+await checkNoLegacyNames();
 
 const summary = `validate_bundle: ${errors.length} error(s), ${warnings.length} warning(s)`;
 if (errors.length === 0 && warnings.length === 0) {

@@ -69,5 +69,5 @@ A sign something is wrong: the loop fails, the agent fixes, the next loop fails 
 ## Related rules
 
 - [pr-workflow.md](pr-workflow.md)
-- [github-source-of-truth.md](github-source-of-truth.md)
+- [tracker-source-of-truth.md](tracker-source-of-truth.md)
 - The `testing-discipline.md` memory seed reinforces this on a per-project basis.

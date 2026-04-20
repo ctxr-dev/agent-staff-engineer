@@ -119,11 +119,11 @@ The frontmatter sits in `README.md`. Lifecycle moves apply to the folder as a wh
 ## How this plays with rotation
 
 - The agent follows `dev-loop` gate crossings to flip a plan's one-liner from `[ ]` to `[x]`, only when `ops.config.json -> workflow.pr.update_plan_oneliner` is true.
-- The one-liner's checkbox state follows the issue status returned by `github-sync`. If the issue is Done, the checkbox is `[x]`. If the issue reopened, the checkbox is `[ ]` again.
+- The one-liner's checkbox state follows the issue status returned by `tracker-sync`. If the issue is Done, the checkbox is `[x]`. If the issue reopened, the checkbox is `[ ]` again.
 - A plan moves to `done/` only on the user's explicit say-so. The agent never infers "done" from a count of checked boxes.
 
 ## Related rules
 
-- [github-source-of-truth.md](github-source-of-truth.md): plans are projections.
+- [tracker-source-of-truth.md](tracker-source-of-truth.md): plans are projections.
 - [pr-workflow.md](pr-workflow.md): the dev-loop that triggers one-liner flips.
 - [no-dashes.md](no-dashes.md): applies to the prose inside plan files.

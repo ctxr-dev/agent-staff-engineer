@@ -27,7 +27,7 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [skills/dev-loop/SKILL.md](skills/dev-loop/SKILL.md): the state machine (branch, edits, local review, self-review, push, PR open, issue -> In review, hand off to pr-iteration).
 - [rules/pr-workflow.md](rules/pr-workflow.md): the hard rules (two human gates; never merge; never Done).
 - [rules/review-loop.md](rules/review-loop.md): pre-push local stages.
-- [rules/github-source-of-truth.md](rules/github-source-of-truth.md): where state lives.
+- [rules/tracker-source-of-truth.md](rules/tracker-source-of-truth.md): where state lives.
 - [rules/no-dashes.md](rules/no-dashes.md): authoring rule for issue/PR bodies.
 - [templates/pr.md](templates/pr.md): PR body template dev-loop renders.
 - [templates/code-review-report.md](templates/code-review-report.md): self-review artefact (fallback; primary provider is `ctxr-skill-code-review`).
@@ -61,10 +61,10 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [templates/release-readiness-checklist.md](templates/release-readiness-checklist.md): readiness artefact.
 - [templates/iteration-summary.md](templates/iteration-summary.md): iteration-closing summary.
 
-### Reconciling labels, projects, PRs (the only GitHub writer path)
+### Reconciling labels, projects, PRs / MRs (the only tracker writer path)
 
-- [skills/github-sync/SKILL.md](skills/github-sync/SKILL.md): label reconcile, project v2 fields, issue CRUD, PR ops.
-- [rules/github-source-of-truth.md](rules/github-source-of-truth.md): the governing rule.
+- [skills/tracker-sync/SKILL.md](skills/tracker-sync/SKILL.md): label reconcile, project fields, issue CRUD, PR / MR ops across github / jira / linear / gitlab.
+- [rules/tracker-source-of-truth.md](rules/tracker-source-of-truth.md): the governing rule.
 
 ### Bootstrap + config changes
 
@@ -117,7 +117,7 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [skills/adapt-system/SKILL.md](skills/adapt-system/SKILL.md): reshape config/labels/templates/rules/seeds on project-intent changes.
 - [skills/bootstrap-ops-config/SKILL.md](skills/bootstrap-ops-config/SKILL.md): interactive first-install interview.
 - [skills/dev-loop/SKILL.md](skills/dev-loop/SKILL.md): issue -> branch -> local review -> PR open -> In review.
-- [skills/github-sync/SKILL.md](skills/github-sync/SKILL.md): sole GitHub writer; depth-gated per tracker target.
+- [skills/tracker-sync/SKILL.md](skills/tracker-sync/SKILL.md): sole tracker writer (github / jira / linear / gitlab); depth-gated per tracker target.
 - [skills/plan-keeper/SKILL.md](skills/plan-keeper/SKILL.md): plan folder / frontmatter / lifecycle.
 - [skills/pr-iteration/SKILL.md](skills/pr-iteration/SKILL.md): post-push loop until exit conditions hold.
 - [skills/regression-handler/SKILL.md](skills/regression-handler/SKILL.md): bug triage + linked-issue proposal.
@@ -127,7 +127,7 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 
 - [rules/adaptation.md](rules/adaptation.md): when to invoke adapt-system.
 - [rules/ambiguity-halt.md](rules/ambiguity-halt.md): halt-and-ask when state is weird.
-- [rules/github-source-of-truth.md](rules/github-source-of-truth.md): GitHub is the source of truth.
+- [rules/tracker-source-of-truth.md](rules/tracker-source-of-truth.md): the configured tracker(s) own state; local files are projections.
 - [rules/llm-wiki.md](rules/llm-wiki.md): project-side wiki read/write contract.
 - [rules/memory-hygiene.md](rules/memory-hygiene.md): project memory boundaries.
 - [rules/no-dashes.md](rules/no-dashes.md): no em/en dashes in authored text.

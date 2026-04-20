@@ -8,8 +8,8 @@ do_not_trigger_on:
   - Issues in `Done` or closed without merge.
   - Targets where the dev_project has `depth` set to `read-only`.
   - Without a valid ops.config.json (halt and point at bootstrap-ops-config).
-  - The dev issue already has an open PR whose branch is unknown locally, or two open PRs reference the same issue, or `github-sync` reports a status that contradicts local git state. Follow `rules/ambiguity-halt.md` (halt, surface the observation, ask); do not push, open, edit, close, or relabel anything while the question is open.
-writes_to_github: yes, via github-sync only (branch push, PR open, reviewer requests, status updates to In review, comments)
+  - The dev issue already has an open PR whose branch is unknown locally, or two open PRs reference the same issue, or `tracker-sync` reports a status that contradicts local git state. Follow `rules/ambiguity-halt.md` (halt, surface the observation, ask); do not push, open, edit, close, or relabel anything while the question is open.
+writes_to_github: yes, via tracker-sync only (branch push, PR open, reviewer requests, status updates to In review, comments)
 writes_to_filesystem: yes, code edits plus a self-review report under paths.reports
 ---
 
@@ -30,8 +30,8 @@ Hard rule baked in: **the dev-loop never merges a PR and never sets a dev issue 
 - Commits following `workflow.commits.style`, with scope derived per `workflow.commits.scope_source`.
 - A self-review artefact under `workflow.code_review.report_dir` (default `.development/shared/reports/`).
 - An open PR rendered from `templates/pr.md` with `workflow.pr.link_issue_with` referencing the issue.
-- The dev issue updated to `In review` (via `github-sync`).
-- Linked Release umbrella updated (via `release-tracker` triggered by `github-sync`).
+- The dev issue updated to `In review` (via `tracker-sync`).
+- Linked Release umbrella updated (via `release-tracker` triggered by `tracker-sync`).
 - Plan one-liner updated (via `plan-keeper`) when `workflow.pr.update_plan_oneliner` is true.
 
 ## State machine
@@ -63,9 +63,9 @@ Hard rule baked in: **the dev-loop never merges a PR and never sets a dev issue 
 [git push branch]
       |
       v
-[github-sync: open_pr using templates/pr.md]
-[github-sync: request_review per project.principals.reviewers_default]
-[github-sync: update_issue_status -> In review]
+[tracker-sync: open_pr using templates/pr.md]
+[tracker-sync: review.requestReview per project.principals.reviewers_default]
+[tracker-sync: issues.updateIssueStatus -> In review]
 [plan-keeper: flip plan one-liner to [x]]
 [release-tracker: recompute linked umbrella status]
       |
@@ -128,8 +128,8 @@ The ctxr-skill-code-review default is the recommended path. Projects opt out via
 
 ## Cross-skill handoffs
 
-- `github-sync`: open PR, request review, update issue status, post comments on the PR.
-- `release-tracker`: triggered by `github-sync` side-effects when a dev issue moves or links change.
+- `tracker-sync`: open PR, request review, update issue status, post comments on the PR.
+- `release-tracker`: triggered by `tracker-sync` side-effects when a dev issue moves or links change.
 - `plan-keeper`: flip plan one-liner on gate crossings if `workflow.pr.update_plan_oneliner` is true.
 - External skill `ctxr-skill-code-review`: invoked as the default self-review step.
 

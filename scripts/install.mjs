@@ -199,6 +199,125 @@ if (!opsConfig) {
   }
 }
 
+// Legacy config shape check: the pre-trackers shape had a top-level
+// `github:` block that is no longer part of the schema. Hard-refuse to
+// continue so the user doesn't end up with a half-migrated config that
+// silently drops GitHub targets. Remediation is explicit: delete the
+// file and re-bootstrap. We write a backup so a repeat run after the
+// user aborts still preserves every intermediate snapshot rather than
+// clobbering a prior backup.
+//
+// Backup filename collisions: a plain `new Date().toISOString()` has
+// millisecond precision, so two install invocations landing inside the
+// same millisecond produce the same backup path. On POSIX rename()
+// would silently clobber the earlier backup; on Windows rename()
+// fails. Defensive uniqueness appends {pid} and, if that still
+// collides, a monotonic counter. The probability of a genuine
+// 3-process millisecond collision is negligible, but CI matrices that
+// parallelise install runs hit exactly this pattern often enough that
+// a regression here is quiet and hard to debug.
+// Any top-level `github` key is a legacy artefact, regardless of
+// whether `trackers` also exists. A partially-migrated config (both
+// keys present) would pass this gate under the older condition and
+// then fail schema validation downstream with an unactionable
+// "additional property 'github' is not allowed" error. Refuse on any
+// presence so the user is routed to the same backup-and-re-bootstrap
+// remediation either way.
+if (opsConfig && "github" in opsConfig) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const basePrefix = `${opsConfigPath}.pre-trackers-${stamp}-pid${process.pid}`;
+  let backupPath = `${basePrefix}.bak`;
+  // existsSync keeps the check synchronous and avoids an extra
+  // dynamic import inside the hot path. The upper bound (1000
+  // attempts) is a guardrail against a pathological filesystem
+  // scenario where every candidate happens to already exist; in
+  // practice a single same-pid same-ms collision is the only
+  // realistic case, and we exit on the second iteration.
+  for (let attempt = 1; existsSync(backupPath) && attempt <= 1000; attempt += 1) {
+    backupPath = `${basePrefix}-${attempt}.bak`;
+  }
+  // After 1000 candidates the filesystem is either full of stale
+  // backups the user needs to clean up OR has something weird going on
+  // (e.g. a directory with our exact name). Rather than silently
+  // clobbering existing state via atomicWriteJson's rename, exit with
+  // a clear message so the user investigates.
+  if (existsSync(backupPath)) {
+    process.stderr.write(
+      `ops.config.json uses the legacy 'github:' shape, but no unique backup path could be found after 1000 attempts starting from ${basePrefix}.bak.\n` +
+      `Move existing .pre-trackers-*.bak files aside manually and re-run install.\n`,
+    );
+    process.exit(1);
+  }
+  try {
+    await atomicWriteJson(backupPath, opsConfig);
+  } catch (e) {
+    process.stderr.write(
+      `ops.config.json uses the legacy 'github:' shape; wanted to back it up to ${backupPath} but write failed: ${e?.message ?? e}.\n` +
+      `Move the current file aside manually and re-run install.\n`,
+    );
+    process.exit(1);
+  }
+  // Build the exact re-run command including `node`, the full bundle
+  // script path, and --target so the remediation is copy-paste-able.
+  // A naked `install.mjs --apply` is what we said before, but it
+  // relies on the user remembering the bundle location AND that
+  // install.mjs is a Node script, not an executable on PATH.
+  //
+  // Platform-aware quoting: POSIX shells (bash/zsh/sh on mac/linux)
+  // use single-quote escaping with the `'"'"'` dance; PowerShell
+  // uses single-quote escaping by doubling the quote, and uses
+  // Remove-Item instead of rm. cmd.exe doesn't support single quotes
+  // at all, so the Windows branch targets PowerShell (the default
+  // modern Windows shell).
+  const installScriptPath = join(BUNDLE_ABS, "scripts", "install.mjs");
+  const onWindows = process.platform === "win32";
+  const quote = onWindows ? psQuote : shellQuote;
+  const deleteCmd = onWindows
+    ? `Remove-Item -LiteralPath ${quote(opsConfigPath)}`
+    : `rm ${quote(opsConfigPath)}`;
+  const rerunCommand =
+    `node ${quote(installScriptPath)} --target ${quote(TARGET)} --apply`;
+  process.stderr.write(
+    `ops.config.json uses the legacy 'github:' shape which this release no longer supports.\n` +
+    `A backup of the existing file was written to ${backupPath}.\n` +
+    `Delete ${opsConfigPath} and re-run install to regenerate it via the new bootstrap interview (writes a 'trackers:' block).\n` +
+    `  ${deleteCmd}\n` +
+    `  ${rerunCommand}\n`,
+  );
+  process.exit(1);
+}
+
+/**
+ * Quote a string for POSIX shell consumption. Wraps in single quotes
+ * and escapes any embedded `'` via the classic `'"'"'` dance. Safe
+ * against spaces, tabs, `$`, backticks, and every other metacharacter;
+ * single-quoted strings in POSIX shells are literal.
+ */
+function shellQuote(s) {
+  const str = String(s);
+  // If the string is already safe (alphanumerics, slashes, dots,
+  // dashes, underscores), return it as-is to keep the output readable
+  // on common cases. Otherwise single-quote with the escape dance.
+  if (/^[A-Za-z0-9_./+\-@:=]+$/.test(str)) return str;
+  return `'${str.replace(/'/g, "'\"'\"'")}'`;
+}
+
+/**
+ * Quote a string for PowerShell (the default modern Windows shell).
+ * Single-quoted strings in PowerShell are literal; an embedded single
+ * quote is escaped by doubling it. This is NOT compatible with
+ * cmd.exe (which treats ' as a literal character, not a quote), but
+ * PowerShell is the Windows default on every currently-supported
+ * Windows release and is what `node` + `gh` users will invoke.
+ */
+function psQuote(s) {
+  const str = String(s);
+  // Same readable-fast-path as POSIX, plus backslash which is common
+  // in Windows paths and safe inside a single-quoted PowerShell string.
+  if (/^[A-Za-z0-9_./\\+\-@:=]+$/.test(str)) return str;
+  return `'${str.replace(/'/g, "''")}'`;
+}
+
 // Dependency check: the LLM-wiki provider skill must be present before the
 // installer can proceed when ops.config declares the wiki as required. This
 // runs after bootstrap so a fresh install has a real opsConfig to read.
@@ -645,7 +764,7 @@ function buildClaudeMdManagedBlock(cfg, agentPrefix) {
     "",
     `**Before acting on any task, read the bundle rules as wrappers at**:`,
     "",
-    `- ${rule("github-source-of-truth")}`,
+    `- ${rule("tracker-source-of-truth")}`,
     `- ${rule("pr-workflow")}`,
     `- ${rule("no-dashes")}`,
     `- ${rule("plan-management")}`,

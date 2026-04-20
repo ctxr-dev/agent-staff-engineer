@@ -12,7 +12,12 @@ The recommended path is via [`@ctxr/kit`](https://github.com/ctxr-dev/kit). Manu
 - [Claude Code](https://claude.ai/code) CLI or IDE extension.
 - **Node.js 20+**. The installer's preflight check enforces this and prints platform-specific install guidance on mismatch. Pass `--auto-install-node` to opt into a supported auto-install on macOS (Homebrew), Linux (nvm), or Windows (winget).
 - **Git** installed and available on PATH.
-- **GitHub CLI** (`gh`) authenticated with scopes `repo`, `project`, `read:org`, `workflow`. Verify with `gh auth status`.
+- A tracker CLI or token for the tracker kind(s) you'll configure in `ops.config.json -> trackers.*`:
+  - **GitHub**: `gh` CLI authenticated with scopes `repo`, `project`, `read:org`, `workflow`. Verify with `gh auth status`.
+  - **Jira**: `JIRA_API_TOKEN` env var set to an Atlassian API token. `jira-cli` is optional and used when available.
+  - **Linear**: `LINEAR_API_KEY` env var.
+  - **GitLab**: `GITLAB_TOKEN` env var. `glab` is optional.
+  - Jira / Linear / GitLab backends are placeholders today; any op on those trackers surfaces `NotSupportedError` from `scripts/lib/trackers/{jira,linear,gitlab}.mjs`.
 
 ## Required external skills
 
@@ -63,7 +68,7 @@ On first run the agent:
 
 1. Resolves its own install location.
 2. Checks for `<project>/.claude/ops.config.json`. If absent, announces that it will bootstrap and invokes its own installer via the Bash tool.
-3. The installer's preflight confirms Node 20+, then launches the interactive bootstrap interview (eight topics: work tracking, release cadence, team size and push principals, e2e setup, which GitHub projects to observe and at what depth, compliance context, project-specific rules to seed).
+3. The installer's preflight confirms Node 20+, then launches the interactive bootstrap interview (eight topics: release cadence, team size and push principals, e2e setup, which tracker kind hosts dev issues and release umbrellas plus the target coordinates (GitHub owner/repo and Projects v2, Jira site + project, Linear workspace + team, or GitLab host + project_path), additional repos to observe, observation depth, compliance context, project-specific rules to seed).
 4. The installer writes `ops.config.json`, generates thin wrappers at `paths.wrappers.*` (default `.claude/skills/`, `.claude/rules/`, and the target's Claude memory folder), **prefixes every wrapper filename with the agent name** (derived from `package.json -> name`, so `@ctxr/agent-staff-engineer` becomes the prefix `agent-staff-engineer_`) to prevent collisions with other agents or skills, **injects a managed block into the project-level `CLAUDE.md`** (creates the file if missing; appends the block to any pre-existing user content; on update only the content between the two managed-block markers is refreshed), ensures `.development/` exists with `shared/` (committed), `local/` (gitignored), and `cache/` (gitignored) subtrees, and appends `local/` and `cache/` to `.gitignore` unless already present.
 5. The agent hands control back, ready for your actual request.
 
@@ -143,7 +148,7 @@ When your project changes shape, use the adapt-system skill. From a Claude Code 
 adapt-system: we handle PHI now
 ```
 
-The agent parses the intent, loads the current state, produces a unified diff across `ops.config.json`, label plans, template sections, proposed new product rules, and memory-seed installs. You approve the diff; the skill applies the file changes and, if needed, calls `github-sync` to reconcile labels.
+The agent parses the intent, loads the current state, produces a unified diff across `ops.config.json`, label plans, template sections, proposed new product rules, and memory-seed installs. You approve the diff; the skill applies the file changes and, if needed, calls `tracker-sync` to reconcile labels.
 
 Idempotent: re-running with the same intent is a no-op. Contradictory intents ("we dropped X") produce removal diffs and flag any open GitHub issues that carry the affected labels.
 
@@ -158,8 +163,8 @@ Every other seed is untagged and installs on every project.
 
 ## Troubleshooting
 
-- **gh not authed / missing scopes**: bootstrap halts with `gh auth status` guidance. Fix and re-run the agent.
-- **No git remote detected**: bootstrap halts. Initialise the remote first.
+- **Tracker CLI / token missing**: bootstrap halts with per-kind guidance (`gh auth status` for GitHub; `JIRA_API_TOKEN` / `LINEAR_API_KEY` / `GITLAB_TOKEN` env var check for the others). Fix and re-run the agent.
+- **No git remote detected**: bootstrap halts when the project's `trackers.dev.kind` is GitHub or GitLab (those derive owner/repo from the remote). Initialise the remote first, or if the tracker is elsewhere (Jira, Linear), re-answer the interview without relying on remote detection.
 - **Schema validation fails after your answers**: the installer points at the exact key that failed; correct your answer and re-run the bootstrap prompt.
 - **Node too old**: preflight exits with platform-specific install guidance. Use `--auto-install-node` if you trust it for your platform.
 - **Wrapper lost its marker** (you edited the wrapper above the marker and wiped the line accidentally): the installer detects the missing marker and refuses to update that wrapper, pointing at the edit. Move your changes below the marker and re-run `--update`.

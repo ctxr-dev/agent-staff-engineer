@@ -11,53 +11,64 @@
     }
   },
 
-  "github": {
-    "auth_login": "claude-bot",
-    "dev_projects": [
+  "trackers": {
+    "dev": {
+      "kind": "github",
+      "owner": "acme-corp",
+      "repo": "ferrycart",
+      "auth_login": "claude-bot",
+      "depth": "full",
+      "projects": [
+        {
+          "owner": "acme-corp",
+          "number": 7,
+          "depth": "full",
+          "status_field": "Status",
+          "status_values": {
+            "backlog": "Backlog",
+            "ready": "Ready",
+            "in_progress": "In progress",
+            "in_review": "In review",
+            "done": "Done"
+          },
+          "fields": ["Area", "Intent", "Priority", "Size", "Estimate", "Iteration", "Linked Release"],
+          "label_scope": null
+        }
+      ]
+    },
+    "release": {
+      "kind": "github",
+      "owner": "acme-corp",
+      "depth": "umbrella-only",
+      "projects": [
+        {
+          "owner": "acme-corp",
+          "number": 8,
+          "depth": "umbrella-only",
+          "status_field": "Status",
+          "status_values": {
+            "backlog": "Backlog",
+            "in_progress": "In progress",
+            "done": "Done"
+          },
+          "fields": ["Target Date", "Scope Tag", "Linked Dev Issues"]
+        }
+      ]
+    },
+    "observed": [
       {
+        "kind": "github",
         "owner": "acme-corp",
-        "number": 7,
-        "role": "dev",
-        "depth": "full",
-        "status_field": "Status",
-        "status_values": {
-          "backlog": "Backlog",
-          "ready": "Ready",
-          "in_progress": "In progress",
-          "in_review": "In review",
-          "done": "Done"
-        },
-        "fields": ["Area", "Intent", "Priority", "Size", "Estimate", "Iteration", "Linked Release"],
-        "label_scope": null
-      }
-    ],
-    "release_projects": [
-      {
-        "owner": "acme-corp",
-        "number": 8,
-        "role": "release",
-        "depth": "umbrella-only",
-        "status_field": "Status",
-        "status_values": {
-          "backlog": "Backlog",
-          "in_progress": "In progress",
-          "done": "Done"
-        },
-        "fields": ["Target Date", "Scope Tag", "Linked Dev Issues"]
-      }
-    ],
-    "observed_repos": [
-      {
-        "owner": "acme-corp",
-        "name": "ferrycart-shared",
-        "scope": "issues-with-label:cross-repo",
-        "depth": "labeled:cross-repo"
+        "repo": "ferrycart-shared",
+        "depth": "labeled:cross-repo",
+        "projects": []
       },
       {
+        "kind": "github",
         "owner": "acme-corp",
-        "name": "ferrycart-docs",
-        "scope": "issues-only",
-        "depth": "read-only"
+        "repo": "ferrycart-docs",
+        "depth": "read-only",
+        "projects": []
       }
     ]
   },

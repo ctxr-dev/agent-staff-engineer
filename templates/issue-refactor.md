@@ -1,7 +1,7 @@
 <!--
 agent-staff-engineer template: issue-refactor.md
 purpose: internal refactor with no intended behaviour change
-rendered by: github-sync.create_issue (type=refactor)
+rendered by: tracker-sync issues.createIssue (type=refactor)
 ops.config keys read:
   - project.name
   - labels.type          (value "refactor")

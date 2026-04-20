@@ -1,7 +1,7 @@
 <!--
 agent-staff-engineer template: issue-feature.md
 purpose: new feature proposal, tracked as a dev issue
-rendered by: github-sync.create_issue (type=feature)
+rendered by: tracker-sync issues.createIssue (type=feature)
 ops.config keys read:
   - project.name
   - labels.type          (value "feature")

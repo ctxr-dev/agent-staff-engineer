@@ -33,7 +33,7 @@ Key invariants the rest of this document relies on:
                               |  v
 +----------------------------------------------------------------+
 | Layer 4: Skills (7)                                            |
-|   bootstrap-ops-config, adapt-system, github-sync, dev-loop,   |
+|   bootstrap-ops-config, adapt-system, tracker-sync, dev-loop,   |
 |   release-tracker, regression-handler, plan-keeper             |
 |   Each skill reads ops.config.json, uses templates + rules,    |
 |   may invoke scripts/*.mjs                                     |
@@ -117,17 +117,17 @@ Key groups:
 
 **bootstrap-ops-config**: inspects git, gh, codebase. Produces `ops.config.json`. Hands off to `install.mjs`. No other skill runs before this one on a fresh project.
 
-**adapt-system**: on user intent like "this is a PHI product now", produces a cascading diff across config, labels, templates, rules, seeds. Calls `github-sync` to propose label relabel plan if label taxonomy changes. Idempotent.
+**adapt-system**: on user intent like "this is a PHI product now", produces a cascading diff across config, labels, templates, rules, seeds. Calls `tracker-sync` to propose label relabel plan if label taxonomy changes. Idempotent.
 
-**github-sync**: the only skill that writes to GitHub. Hosts: label reconcile, field reconcile, issue create/update, project item add/move, rollout-to-issues converter. Every other skill that needs GitHub state goes through `github-sync`.
+**tracker-sync**: the only skill that writes to the configured tracker kind (GitHub real; Jira / Linear / GitLab stubbed until their real backends land). Hosts: label reconcile, field reconcile, issue create/update, project item add/move, rollout-to-issues converter, review-iteration ops. Every other skill that needs tracker state goes through `tracker-sync`.
 
-**dev-loop**: owns the PR lifecycle from branch to `In review`. Calls `github-sync` to move the issue status and to comment on the PR. Calls `plan-keeper` to update the plan one-liner on gate crossings. Never merges, never sets Done.
+**dev-loop**: owns the PR / MR lifecycle from branch to `In review`. Calls `tracker-sync` to move the issue status and to comment on the PR. Calls `plan-keeper` to update the plan one-liner on gate crossings. Never merges, never sets Done.
 
-**release-tracker**: computes umbrella status from linked dev issues. Reads via `github-sync`. Auto-moves the Release umbrella status. Never touches dev issues.
+**release-tracker**: computes umbrella status from linked dev issues. Reads via `tracker-sync`. Auto-moves the Release umbrella status. Never touches dev issues.
 
-**regression-handler**: triggered when the user reports a bug. Runs the lookup order (referenced commit/file, area label match, title keyword), asks `github-sync` to reopen or link issues, fills `templates/regression-report.md`, attaches to the issue.
+**regression-handler**: triggered when the user reports a bug. Runs the lookup order (referenced commit/file, area label match, title keyword), asks `tracker-sync` to reopen or link issues, fills `templates/regression-report.md`, attaches to the issue.
 
-**plan-keeper**: enforces folder placement, checkbox format, frontmatter, lifecycle moves (todo -> in-progress -> in-review -> done). Invokes `github-sync` only to confirm the linked issue status on a plan move. Does not write to `daily/` or `knowledge/`. Any project that already runs a daily-log or knowledge-base system keeps running it through its own hooks; the agent stays out of the way.
+**plan-keeper**: enforces folder placement, checkbox format, frontmatter, lifecycle moves (todo -> in-progress -> in-review -> done). Invokes `tracker-sync` only to confirm the linked issue status on a plan move. Does not write to `daily/` or `knowledge/`. Any project that already runs a daily-log or knowledge-base system keeps running it through its own hooks; the agent stays out of the way.
 
 ## Code-review provider
 
@@ -319,7 +319,7 @@ user: "this is a HIPAA product handling PHI"
 | apply diff                    |
 |  write files                  |
 |  relabel GitHub issues via    |
-|    github-sync                |
+|    tracker-sync                |
 |  append to the install manifest|
 +-------------------------------+
 ```
@@ -351,7 +351,7 @@ Idempotent: same intent against already-adapted state produces a no-op diff. Con
                   v
        [PR opened, reviewers requested]
                   |
-                  |--> github-sync: issue -> In review
+                  |--> tracker-sync: issue -> In review
                   |--> plan-keeper: mark [x] in plan
                   |--> release-tracker: recompute umbrella
                   v
@@ -364,7 +364,7 @@ Idempotent: same intent against already-adapted state produces a no-op diff. Con
                   v
        [PR merged]
                   |
-                  |--> github-sync: keep issue at In review
+                  |--> tracker-sync: keep issue at In review
                   |--> plan-keeper: update plan (no-op if already [x])
                   v
        ***  HUMAN GATE: mark issue Done  ***
@@ -582,7 +582,7 @@ The agent reads and writes GitHub according to a list of observed targets declar
              |
              v
 +-------------------------+        +---------------------+
-|   github-sync           |<------>|   gh CLI            |
+|   tracker-sync           |<------>|   gh CLI            |
 |   per-target depth      |        |   (read + write)    |
 |   gates every call      |        +---------------------+
 +------------+------------+
@@ -595,7 +595,7 @@ The agent reads and writes GitHub according to a list of observed targets declar
 +---------+    +----------+   +-----------+
 ```
 
-Every skill that hits GitHub goes through `github-sync`. `github-sync` checks the target's `depth` before any write, and refuses writes on `read-only` or out-of-scope items.
+Every skill that hits GitHub goes through `tracker-sync`. `tracker-sync` checks the target's `depth` before any write, and refuses writes on `read-only` or out-of-scope items.
 
 Examples:
 
@@ -631,7 +631,7 @@ Every `.mjs` file imports only from:
 | bootstrap-ops-config | gh not authed | prints `gh auth login` guidance, exits |
 | bootstrap-ops-config | no git remote | prints error, exits, asks user to initialise |
 | adapt-system | intent ambiguous | asks clarifying question via AskUserQuestion, does not guess |
-| github-sync | rate-limited | retries with backoff; if still failing, surfaces and halts |
+| tracker-sync | rate-limited | retries with backoff; if still failing, surfaces and halts |
 | dev-loop | tests failing locally | halts at the failed stage, does not push |
 | dev-loop | PR template missing sections | halts, asks user to fill |
 | release-tracker | sub-issue link broken | logs warning, continues with remaining |

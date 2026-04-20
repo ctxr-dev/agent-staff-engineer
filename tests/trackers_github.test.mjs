@@ -1,9 +1,9 @@
-// review_github.test.mjs
-// Integration tests for the GitHub ReviewProvider impl. Uses a fake `gh`
-// on PATH (same pattern as ghExec.test.mjs) that both returns scripted
-// fixture JSON AND tees every argv + the query body into a log file, so
-// tests assert on the actual request the provider sent (not just that
-// gh was called at all).
+// trackers_github.test.mjs
+// Integration tests for the GitHub tracker's `review` namespace. Uses a
+// fake `gh` on PATH (same pattern as ghExec.test.mjs) that both returns
+// scripted fixture JSON AND tees every argv + the query body into a log
+// file, so tests assert on the actual request the provider sent (not
+// just that gh was called at all).
 //
 // Skipped on Windows because the fake-gh shim here is a POSIX `#!/bin/sh`
 // script; Windows needs a .cmd/.bat wrapper or a shim install strategy
@@ -23,7 +23,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeGithubReviewProvider } from "../scripts/lib/review/github.mjs";
+import { makeGithubTracker } from "../scripts/lib/trackers/github.mjs";
 import { GhGraphqlError } from "../scripts/lib/ghExec.mjs";
 
 const IS_WIN = process.platform === "win32";
@@ -219,7 +219,7 @@ const skipOpts = IS_WIN
 describe("github review provider: requestReview", skipOpts, () => {
   it("succeeds and actually transmits the resolved botIds into the mutation text", async () => {
     const { result, log } = await withFakeGh("request_review_ok", () =>
-      makeGithubReviewProvider().requestReview({
+      makeGithubTracker().review.requestReview({
         owner: "ctxr-dev",
         repo: "agent-staff-engineer",
         prNumber: 1,
@@ -241,7 +241,7 @@ describe("github review provider: requestReview", skipOpts, () => {
 
   it("passes every supplied botId through (would catch a silent drop)", async () => {
     const { log } = await withFakeGh("request_review_ok", () =>
-      makeGithubReviewProvider().requestReview({
+      makeGithubTracker().review.requestReview({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -255,7 +255,7 @@ describe("github review provider: requestReview", skipOpts, () => {
   });
 
   it("refuses when botIds are empty (pre-call guard, no gh invocation)", async () => {
-    const provider = makeGithubReviewProvider();
+    const provider = makeGithubTracker().review;
     await assert.rejects(
       () =>
         provider.requestReview({
@@ -271,7 +271,7 @@ describe("github review provider: requestReview", skipOpts, () => {
   });
 
   it("rejects non-string or empty-string botId elements with a pointed TypeError", async () => {
-    const provider = makeGithubReviewProvider();
+    const provider = makeGithubTracker().review;
     for (const bad of [null, undefined, 42, true, "", "   "]) {
       await assert.rejects(
         () =>
@@ -296,7 +296,7 @@ describe("github review provider: requestReview", skipOpts, () => {
 describe("github review provider: pollForReview", skipOpts, () => {
   it("returns all-green state when review is on HEAD and CI is SUCCESS", async () => {
     const { result } = await withFakeGh("poll_all_green_review_on_head", () =>
-      makeGithubReviewProvider().pollForReview({
+      makeGithubTracker().review.pollForReview({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -310,7 +310,7 @@ describe("github review provider: pollForReview", skipOpts, () => {
 
   it("returns PENDING when statusCheckRollup is null", async () => {
     const { result } = await withFakeGh("poll_pending", () =>
-      makeGithubReviewProvider().pollForReview({
+      makeGithubTracker().review.pollForReview({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -323,7 +323,7 @@ describe("github review provider: pollForReview", skipOpts, () => {
 
   it("returns ERROR when statusCheckRollup.state is ERROR", async () => {
     const { result } = await withFakeGh("poll_error", () =>
-      makeGithubReviewProvider().pollForReview({
+      makeGithubTracker().review.pollForReview({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -335,7 +335,7 @@ describe("github review provider: pollForReview", skipOpts, () => {
 
   it("counts only unresolved threads and reports CI FAILURE", async () => {
     const { result } = await withFakeGh("poll_unresolved_threads", () =>
-      makeGithubReviewProvider().pollForReview({
+      makeGithubTracker().review.pollForReview({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -354,7 +354,7 @@ describe("github review provider: pollForReview", skipOpts, () => {
     // accepted any review would set reviewOnHead=true here and exit
     // early.
     const { result } = await withFakeGh("poll_human_review_on_head_only", () =>
-      makeGithubReviewProvider().pollForReview({
+      makeGithubTracker().review.pollForReview({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -367,7 +367,7 @@ describe("github review provider: pollForReview", skipOpts, () => {
 
   it("filters reviewOnHead by ctx.botLogins when provided (matching login wins)", async () => {
     const { result } = await withFakeGh("poll_bot_login_filter", () =>
-      makeGithubReviewProvider().pollForReview({
+      makeGithubTracker().review.pollForReview({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -383,7 +383,7 @@ describe("github review provider: pollForReview", skipOpts, () => {
     // "copilot-pull-request-reviewer" (lowercase). Config may carry
     // mixed casing; ensure the filter treats them equal.
     const { result } = await withFakeGh("poll_bot_login_filter", () =>
-      makeGithubReviewProvider().pollForReview({
+      makeGithubTracker().review.pollForReview({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -396,7 +396,7 @@ describe("github review provider: pollForReview", skipOpts, () => {
 
   it("filters reviewOnHead by ctx.botLogins when provided (non-matching login rejected)", async () => {
     const { result } = await withFakeGh("poll_bot_login_mismatch", () =>
-      makeGithubReviewProvider().pollForReview({
+      makeGithubTracker().review.pollForReview({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -413,7 +413,7 @@ describe("github review provider: pollForReview", skipOpts, () => {
     // fix, reviewOnHead would wrongly be false because comparison used
     // the stale ctx value.
     const { result } = await withFakeGh("poll_stale_ctx_head", () =>
-      makeGithubReviewProvider().pollForReview({
+      makeGithubTracker().review.pollForReview({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -432,7 +432,7 @@ describe("github review provider: pollForReview", skipOpts, () => {
     const { result, log } = await withFakeGhSequence(
       ["poll_all_resolved_page1_with_next", "poll_page2_has_unresolved"],
       () =>
-        makeGithubReviewProvider().pollForReview({
+        makeGithubTracker().review.pollForReview({
           owner: "o",
           repo: "r",
           prNumber: 1,
@@ -451,7 +451,7 @@ describe("github review provider: pollForReview", skipOpts, () => {
 
   it("transmits owner/repo/number variables and the reviewThreads query", async () => {
     const { log } = await withFakeGh("poll_all_green_review_on_head", () =>
-      makeGithubReviewProvider().pollForReview({
+      makeGithubTracker().review.pollForReview({
         owner: "ctxr-dev",
         repo: "agent-staff-engineer",
         prNumber: 42,
@@ -469,7 +469,7 @@ describe("github review provider: pollForReview", skipOpts, () => {
 describe("github review provider: fetchUnresolvedThreads", skipOpts, () => {
   it("filters resolved threads, flattens the first comment, tolerates null author + unicode body", async () => {
     const { result } = await withFakeGh("fetch_threads_mixed", () =>
-      makeGithubReviewProvider().fetchUnresolvedThreads({
+      makeGithubTracker().review.fetchUnresolvedThreads({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -501,7 +501,7 @@ describe("github review provider: fetchUnresolvedThreads", skipOpts, () => {
 describe("github review provider: resolveThread", skipOpts, () => {
   it("actually passes the threadId to the mutation (argv check)", async () => {
     const { result, log } = await withFakeGh("resolve_ok", () =>
-      makeGithubReviewProvider().resolveThread({}, "PRRT_abc"),
+      makeGithubTracker().review.resolveThread({}, "PRRT_abc"),
     );
     assert.equal(result.resolveReviewThread.thread.isResolved, true);
     assert.match(log, /resolveReviewThread/);
@@ -509,7 +509,7 @@ describe("github review provider: resolveThread", skipOpts, () => {
   });
 
   it("rejects an empty or whitespace-only threadId without hitting gh", async () => {
-    const provider = makeGithubReviewProvider();
+    const provider = makeGithubTracker().review;
     for (const bad of ["", "   ", "\t\n", null, undefined, 42]) {
       await assert.rejects(
         () => provider.resolveThread({}, bad),
@@ -523,7 +523,7 @@ describe("github review provider: resolveThread", skipOpts, () => {
 describe("github review provider: ciStateOnHead (narrow query)", skipOpts, () => {
   it("fetches only the HEAD commit statusCheckRollup, not the full poll payload", async () => {
     const { result, log } = await withFakeGh("ci_state_success", () =>
-      makeGithubReviewProvider().ciStateOnHead({
+      makeGithubTracker().review.ciStateOnHead({
         owner: "o",
         repo: "r",
         prNumber: 1,
@@ -542,7 +542,7 @@ describe("github review provider: GraphQL error surface", skipOpts, () => {
   it("throws GhGraphqlError with the server-reported message", async () => {
     try {
       await withFakeGh("graphql_error", () =>
-        makeGithubReviewProvider().pollForReview({
+        makeGithubTracker().review.pollForReview({
           owner: "o",
           repo: "r",
           prNumber: 1,

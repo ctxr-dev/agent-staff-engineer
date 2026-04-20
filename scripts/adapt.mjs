@@ -9,7 +9,7 @@
 // object plus a human-readable diff. The actual "decide what to change" logic
 // for edge cases is performed by Claude at invocation time, reading this
 // script's proposal as context; this script never writes files on its own
-// without --apply, and never mutates GitHub (that goes through github-sync).
+// without --apply, and never mutates GitHub (that goes through tracker-sync).
 //
 // Usage:
 //   node adapt.mjs --target <path> --intent "<user intent>" [--dry-run | --apply]
@@ -337,8 +337,8 @@ export function buildNonConfigPlan(signals, current, proposed) {
   const steps = [];
   const addedLabels = diffArray(current.labels?.area ?? [], proposed.labels?.area ?? []).added;
   const removedLabels = diffArray(current.labels?.area ?? [], proposed.labels?.area ?? []).removed;
-  if (addedLabels.length) steps.push(`via github-sync: create labels ${addedLabels.map((l) => `area/${l}`).join(", ")}`);
-  if (removedLabels.length) steps.push(`via github-sync: list open issues carrying ${removedLabels.map((l) => `area/${l}`).join(", ")} before removing labels`);
+  if (addedLabels.length) steps.push(`via tracker-sync: create labels ${addedLabels.map((l) => `area/${l}`).join(", ")}`);
+  if (removedLabels.length) steps.push(`via tracker-sync: list open issues carrying ${removedLabels.map((l) => `area/${l}`).join(", ")} before removing labels`);
 
   const stackBefore = current.stack ?? {};
   const stackAfter = proposed.stack ?? {};
