@@ -12,7 +12,10 @@
 //
 // The caller owns the decision of whether to enter the wait at all;
 // this module does not inspect TTY state. install.mjs gates the call
-// behind `processStdin.isTTY && processStdout.isTTY && !YES`.
+// behind `processStdin.isTTY && processStdout.isTTY && !YES &&
+// !process.env.CI` so that pseudo-TTYs in CI environments (GitHub
+// Actions with `tty: true`, Buildkite, etc.) don't trigger a prompt
+// the runner can't answer.
 
 import { createInterface } from "node:readline/promises";
 
@@ -160,11 +163,18 @@ export async function waitForRequiredSkill({
           `\nInstall aborted at your request. Re-run when the skill is ready:\n` +
           `  ${rerun}\n`,
         );
+        // Close readline and remove the SIGINT handler BEFORE exit so
+        // the terminal is restored from raw mode even when `exit` is
+        // real process.exit() (which skips the outer `finally`).
+        // rl.close() and off() are both idempotent, so the finally
+        // block's redundant call is harmless on the test-stub path.
+        rl.close();
+        off("SIGINT", onSigint);
         exit(1);
         // If `exit` returned (test stub), throw so the function honors
         // its Promise<string> contract and callers never see a null
-        // masquerading as a real install path. `finally` below runs
-        // cleanup exactly once either way.
+        // masquerading as a real install path. The idempotent cleanup
+        // above means the finally block's second call is a no-op.
         throw new InstallAbortedByUserError();
       }
 
