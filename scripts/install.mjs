@@ -35,6 +35,8 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createInterface } from "node:readline/promises";
+import { stdin as processStdin, stdout as processStdout } from "node:process";
 import { preflight } from "./preflight.mjs";
 import { parseArgv, boolFlag } from "./lib/argv.mjs";
 import {
@@ -322,22 +324,113 @@ function psQuote(s) {
 // installer can proceed when ops.config declares the wiki as required. This
 // runs after bootstrap so a fresh install has a real opsConfig to read.
 // See rules/llm-wiki.md for the runtime contract this gate protects.
+//
+// Interactive mode (a real terminal and --yes not set): the installer WAITS
+// for the user to install the skill, polling on each Enter key until the
+// skill appears. Commands the user can type at the prompt: 'help' for
+// troubleshooting, 'abort' to cancel. This is friendlier than the previous
+// "error and exit" behavior for humans sitting at the terminal.
+//
+// Non-interactive mode (stdin is not a TTY, or --yes was passed): the
+// installer preserves the previous error-and-exit behavior so CI scripts
+// and scripted installs fail fast with a pointed remediation message.
 if (opsConfig.wiki?.required) {
   const provider = opsConfig.wiki.provider ?? "@ctxr/skill-llm-wiki";
-  const found = locateKitSkill(provider, TARGET);
-  if (!found) {
+  const found = await waitForRequiredSkill(provider, TARGET);
+  process.stdout.write(`wiki provider: ${provider} found at ${portableRef(found, TARGET)}\n`);
+}
+
+/**
+ * Block the installer until the required companion skill is present at one
+ * of the known install paths. In an interactive terminal, the user drives
+ * the wait with Enter / 'help' / 'abort'; in a non-interactive context the
+ * old error-and-exit remains so CI fails fast.
+ *
+ * Never returns null; either returns an absolute path (which always exists
+ * and is a directory) or exits the process.
+ */
+async function waitForRequiredSkill(provider, target) {
+  let found = locateKitSkill(provider, target);
+  if (found) return found;
+
+  const interactive = Boolean(processStdin.isTTY) && !YES;
+  if (!interactive) {
     process.stderr.write(
       `\nERROR: agent-staff-engineer requires the wiki provider skill '${provider}'.\n` +
       `It was not found at either\n` +
-      `  ${kitSkillCandidatePaths(provider, TARGET).join("\n  ")}\n\n` +
+      `  ${kitSkillCandidatePaths(provider, target).join("\n  ")}\n\n` +
       `Install it first:\n` +
       `  npx @ctxr/kit install ${provider}\n\n` +
       `Then re-run this installer. To opt out (you will manage .development/ manually),\n` +
-      `set 'wiki.required' to false in ops.config.json.\n`
+      `set 'wiki.required' to false in ops.config.json.\n`,
     );
     process.exit(1);
   }
-  process.stdout.write(`wiki provider: ${provider} found at ${portableRef(found, TARGET)}\n`);
+
+  const candidates = kitSkillCandidatePaths(provider, target);
+  process.stdout.write(
+    `\nThe agent needs a companion skill that isn't installed yet.\n` +
+    `  Missing: ${provider}\n` +
+    `  I searched:\n    ${candidates.join("\n    ")}\n\n` +
+    `To install it, run this in a separate terminal:\n` +
+    `  npx @ctxr/kit install ${provider}\n\n` +
+    `I'll wait here until it's ready.\n`,
+  );
+
+  const rl = createInterface({ input: processStdin, output: processStdout });
+  try {
+    for (;;) {
+      const raw = await rl.question(
+        `\nWhen '${provider}' is installed, press Enter to continue. ` +
+        `Type 'help' for troubleshooting, or 'abort' to cancel: `,
+      );
+      const answer = raw.trim().toLowerCase();
+
+      if (answer === "abort") {
+        process.stderr.write(
+          `\nInstall aborted at your request. Re-run 'install.mjs --apply' when the skill is ready.\n`,
+        );
+        process.exit(1);
+      }
+
+      if (answer === "help") {
+        process.stdout.write(
+          `\nTroubleshooting tips for 'npx @ctxr/kit install ${provider}':\n` +
+          `  1. 'npx: command not found' -> install Node.js + npm from nodejs.org. The agent needs\n` +
+          `     Node 20 or newer.\n` +
+          `  2. 'Not found in registry' -> double-check the package name: '${provider}'. A typo is the\n` +
+          `     most common cause.\n` +
+          `  3. Permission / EACCES errors -> retry the install with a different destination; kit's\n` +
+          `     interactive menu lets you pick ~/.claude/ (user-local) which avoids sudo.\n` +
+          `  4. Behind a corporate proxy -> configure npm's proxy settings first\n` +
+          `     ('npm config set proxy ...' and 'npm config set https-proxy ...') and re-run.\n` +
+          `  5. Already installed somewhere unusual? I check these locations (in order):\n` +
+          `       ${candidates.join("\n       ")}\n` +
+          `     If your skill landed elsewhere, reinstall via kit so it goes to one of these.\n` +
+          `  6. If kit itself is misbehaving, you can alternatively clone the skill manually:\n` +
+          `       git clone https://github.com/ctxr-dev/skill-llm-wiki.git \\\n` +
+          `         ~/.claude/skills/ctxr-skill-llm-wiki\n` +
+          `     and re-run this installer.\n\n` +
+          `Ask me any question about the error you are seeing; I can read it and help.\n`,
+        );
+        continue;
+      }
+
+      // Any other input (including empty Enter) means "check again".
+      found = locateKitSkill(provider, target);
+      if (found) return found;
+
+      process.stdout.write(
+        `\nStill not finding '${provider}' at any known location.\n` +
+        `  Checked: ${candidates.join(", ")}\n` +
+        `  - Confirm the install command finished without errors.\n` +
+        `  - If it completed in another terminal, double-check the scope (@ctxr) and package name.\n` +
+        `Type 'help' for more guidance, or press Enter to check again.\n`,
+      );
+    }
+  } finally {
+    rl.close();
+  }
 }
 
 const marker = opsConfig.paths.wrappers.marker;
