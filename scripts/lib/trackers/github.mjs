@@ -485,11 +485,15 @@ function requirePositiveInt(value, label) {
 
 /**
  * Fetch an issue's GraphQL node id AND its full current label set.
- * Used by every mutation-shaped method (comment, relabel,
- * update-status) that needs the node id; the paginated label fetch
- * additionally backs `relabelIssue`'s delta computation (skipping
- * labels the issue already has) so callers don't get a no-op
- * mutation or, worse, re-add an existing label.
+ * Currently used by `relabelIssue` only: it needs the node id for
+ * the add/remove mutations, and the paginated label fetch backs
+ * the delta computation (skipping labels the issue already has) so
+ * callers don't get a no-op mutation or, worse, re-add an existing
+ * label. `comment` uses the lighter `fetchIssueIdOnly` helper since
+ * it only needs the id; `updateIssueStatus` fetches directly via
+ * its own compound project-item query. The "used by comment /
+ * update-status" phrasing earlier in PR 9's history was pre-R14;
+ * see git-blame if you need the full migration path.
  *
  * Labels are paginated at GitHub's 100-per-page max with a hard
  * cap of 20 pages (= 2000 labels per issue). An issue beyond that
