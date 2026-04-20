@@ -74,10 +74,28 @@ case "$FAKE_GH_FIXTURE" in
     printf '%s' '{"data":{"removeLabelsFromLabelable":{"labelable":{"id":"I_abc"}}}}'
     ;;
   search_dedupe_hit)
-    printf '%s' '{"data":{"search":{"nodes":[{"id":"I_existing","number":99,"title":"my title","state":"OPEN","repository":{"nameWithOwner":"acme/widgets"}}]}}}'
+    printf '%s' '${JSON.stringify({data:{search:{nodes:[{id:"I_existing",number:99,title:"my title",state:"OPEN",repository:{nameWithOwner:"acme/widgets"}}],pageInfo:{hasNextPage:false,endCursor:null}}}})}'
     ;;
   search_dedupe_miss)
-    printf '%s' '{"data":{"search":{"nodes":[]}}}'
+    printf '%s' '${JSON.stringify({data:{search:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}})}'
+    ;;
+  search_dedupe_page1_near)
+    printf '%s' '${JSON.stringify({data:{search:{nodes:[{id:"I_near",number:50,title:"my title prefix",state:"OPEN",repository:{nameWithOwner:"acme/widgets"}}],pageInfo:{hasNextPage:true,endCursor:"CURSOR1"}}}})}'
+    ;;
+  search_dedupe_page2_hit)
+    printf '%s' '${JSON.stringify({data:{search:{nodes:[{id:"I_exact",number:77,title:"my title",state:"OPEN",repository:{nameWithOwner:"acme/widgets"}}],pageInfo:{hasNextPage:false,endCursor:null}}}})}'
+    ;;
+  get_issue_too_many_labels)
+    printf '%s' '${JSON.stringify({data:{repository:{issue:{id:"I_full",number:7,title:"hello",body:"x",state:"OPEN",url:"u",createdAt:"c",closedAt:null,author:{login:"j"},assignees:{nodes:[],pageInfo:{hasNextPage:false}},labels:{nodes:[{name:"x"}],pageInfo:{hasNextPage:true}},milestone:null}}}})}'
+    ;;
+  status_items_page1_miss_other_project)
+    printf '%s' '${JSON.stringify({data:{repository:{issue:{id:"I_task",projectItems:{nodes:[{id:"PVTI_other",project:{id:"PVT_other",number:99},fieldValueByName:null}],pageInfo:{hasNextPage:true,endCursor:"ITEMS_CURSOR"}}}}}})}'
+    ;;
+  status_items_page2_hit)
+    printf '%s' '${JSON.stringify({data:{repository:{issue:{id:"I_task",projectItems:{nodes:[{id:"PVTI_item1",project:{id:"PVT_proj1",number:3},fieldValueByName:{optionId:"OPT_backlog",name:"Backlog"}}],pageInfo:{hasNextPage:false,endCursor:null}}}}}})}'
+    ;;
+  create_issue_label_fail_issue_not_found)
+    printf '%s' '{"data":{"repository":{"issue":null}}}'
     ;;
   repo_node_id)
     printf '%s' '{"data":{"repository":{"id":"R_widgets"}}}'
@@ -85,17 +103,20 @@ case "$FAKE_GH_FIXTURE" in
   create_issue_ok)
     printf '%s' '{"data":{"createIssue":{"issue":{"id":"I_new","number":101,"url":"https://github.com/acme/widgets/issues/101"}}}}'
     ;;
-  status_query_not_in_status)
-    printf '%s' '${JSON.stringify({data:{repository:{issue:{id:"I_task",projectItems:{nodes:[{id:"PVTI_item1",project:{id:"PVT_proj1",number:3},fieldValueByName:{optionId:"OPT_backlog",name:"Backlog"}}]}}},repositoryOwner:{projectV2:{id:"PVT_proj1",field:{id:"PVTF_status",options:[{id:"OPT_backlog",name:"Backlog"},{id:"OPT_inprogress",name:"In progress"}]}}}}})}'
+  status_field_query)
+    printf '%s' '${JSON.stringify({data:{repositoryOwner:{projectV2:{id:"PVT_proj1",field:{id:"PVTF_status",options:[{id:"OPT_backlog",name:"Backlog"},{id:"OPT_inprogress",name:"In progress"}]}}}}})}'
     ;;
-  status_query_already_in_status)
-    printf '%s' '${JSON.stringify({data:{repository:{issue:{id:"I_task",projectItems:{nodes:[{id:"PVTI_item1",project:{id:"PVT_proj1",number:3},fieldValueByName:{optionId:"OPT_inprogress",name:"In progress"}}]}}},repositoryOwner:{projectV2:{id:"PVT_proj1",field:{id:"PVTF_status",options:[{id:"OPT_backlog",name:"Backlog"},{id:"OPT_inprogress",name:"In progress"}]}}}}})}'
+  status_items_current_backlog)
+    printf '%s' '${JSON.stringify({data:{repository:{issue:{id:"I_task",projectItems:{nodes:[{id:"PVTI_item1",project:{id:"PVT_proj1",number:3},fieldValueByName:{optionId:"OPT_backlog",name:"Backlog"}}],pageInfo:{hasNextPage:false,endCursor:null}}}}}})}'
+    ;;
+  status_items_current_inprogress)
+    printf '%s' '${JSON.stringify({data:{repository:{issue:{id:"I_task",projectItems:{nodes:[{id:"PVTI_item1",project:{id:"PVT_proj1",number:3},fieldValueByName:{optionId:"OPT_inprogress",name:"In progress"}}],pageInfo:{hasNextPage:false,endCursor:null}}}}}})}'
     ;;
   update_field_ok)
     printf '%s' '{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"PVTI_item1"}}}}'
     ;;
   *)
-    printf '%s' '{"data":null,"errors":[{"message":"fake gh unknown fixture: ""\${FAKE_GH_FIXTURE}"""}]}'
+    printf '%s' '{"data":null,"errors":[{"message":"fake gh unknown fixture"}]}'
     exit 1
     ;;
 esac
@@ -236,6 +257,20 @@ describe("github issues.getIssue", skipOpts, () => {
       /issue #999 not found/,
     );
   });
+
+  // PR 9 R3 (Copilot): getIssue fetched labels/assignees at first:100
+  // without a truncation check; a heavier issue would return a
+  // silently-truncated list. Now fails loud, matching listIssues.
+  it("refuses to return a truncated label list on a heavily-labeled issue", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      withFakeGhSequence(
+        ["get_issue_too_many_labels"],
+        () => tracker.issues.getIssue({}, { issueNumber: 7 }),
+      ),
+      /more than 100 labels.*truncated/s,
+    );
+  });
 });
 
 // -------------------------------------------------------------------
@@ -296,6 +331,26 @@ describe("github issues.listIssues", skipOpts, () => {
         () => tracker.issues.listIssues({}, {}),
       ),
       /repository acme\/missing not found or inaccessible/,
+    );
+  });
+
+  // PR 9 R3 (Copilot): resolveRepoCoords used `||`, which silently
+  // fell back to target values when ctx supplied "". That masked
+  // caller bugs and could send mutations to the wrong repo. Now
+  // empty-string / non-string ctx values throw explicitly.
+  it("rejects explicit ctx.owner = '' (no silent fallback to target)", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({ owner: "" }, {}),
+      /ctx\.owner must be a non-empty string when supplied/,
+    );
+  });
+
+  it("rejects explicit ctx.repo = '' (no silent fallback to target)", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({ repo: "" }, {}),
+      /ctx\.repo must be a non-empty string when supplied/,
     );
   });
 
@@ -518,6 +573,49 @@ describe("github issues.createIssue", skipOpts, () => {
       /not supported on this namespace yet/,
     );
   });
+
+  // PR 9 R3 (Copilot): dedupe previously requested `search(first: 20)`.
+  // Because GitHub search is ranked + substring-based, an exact match
+  // could exist but fall past the first page. Now paginates up to
+  // DEDUPE_MAX_RESULTS before giving up.
+  it("paginates dedupe search until an exact match is found on a later page", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    // Page 1: near-match only. Page 2: exact match. The method
+    // should scan both pages and return the existing issue.
+    const { result } = await withFakeGhSequence(
+      ["search_dedupe_page1_near", "search_dedupe_page2_hit"],
+      () => tracker.issues.createIssue({}, { title: "my title" }),
+    );
+    assert.equal(result.existed, true);
+    assert.equal(result.number, 77);
+  });
+
+  // PR 9 R3 (Copilot): label apply used to throw and lose the
+  // created issue's metadata if the relabel mutation failed.
+  // Now wrapped in try/catch so the result carries the created
+  // number and surfaces the label failure on `labelError`.
+  it("creates the issue + surfaces labelError when the label apply fails", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    // Sequence: dedupe miss, repo id, create ok, relabel fetches
+    // issue -> NOT FOUND (simulates a post-create race). The
+    // relabel throws, but createIssue still returns the created
+    // number with labelError set.
+    const { result } = await withFakeGhSequence(
+      [
+        "search_dedupe_miss",
+        "repo_node_id",
+        "create_issue_ok",
+        "create_issue_label_fail_issue_not_found",
+      ],
+      () => tracker.issues.createIssue({}, {
+        title: "with labels",
+        labels: ["priority/high"],
+      }),
+    );
+    assert.equal(result.existed, false);
+    assert.equal(result.number, 101);
+    assert.ok(result.labelError, "labelError must be populated on label apply failure");
+  });
 });
 
 // -------------------------------------------------------------------
@@ -553,26 +651,26 @@ describe("github issues.updateIssueStatus", skipOpts, () => {
   it("moves the item when current status differs from target", async () => {
     const tracker = makeGithubTracker(makeProjectTarget());
     const { result, log } = await withFakeGhSequence(
-      ["status_query_not_in_status", "update_field_ok"],
+      ["status_field_query", "status_items_current_backlog", "update_field_ok"],
       () => tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
     );
     assert.equal(result.changed, true);
     assert.equal(result.optionId, "OPT_inprogress");
     const lines = log.trim().split("\n");
-    assert.equal(lines.length, 2);
-    assert.match(lines[1], /updateProjectV2ItemFieldValue/);
+    assert.equal(lines.length, 3, "field query, items query, update mutation");
+    assert.match(lines[2], /updateProjectV2ItemFieldValue/);
   });
 
   it("no-ops when the item is already in the target status", async () => {
     const tracker = makeGithubTracker(makeProjectTarget());
     const { result, log } = await withFakeGhSequence(
-      ["status_query_already_in_status"],
+      ["status_field_query", "status_items_current_inprogress"],
       () => tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
     );
     assert.equal(result.changed, false);
     assert.equal(result.optionId, "OPT_inprogress");
-    // Only the query fires; no mutation.
-    assert.equal(log.trim().split("\n").length, 1);
+    // Only the two queries fire; no mutation.
+    assert.equal(log.trim().split("\n").length, 2);
   });
 
   it("throws when the status vocabulary key has no native mapping", async () => {
@@ -589,6 +687,25 @@ describe("github issues.updateIssueStatus", skipOpts, () => {
       tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
       /projects\[0\] binding/,
     );
+  });
+
+  // PR 9 R3 (Copilot): projectItems was fetched first:20, so an
+  // issue linked to >20 projects could miss the target. Now
+  // paginates until the target project is found or pages exhaust.
+  it("paginates issue.projectItems to find the target project on page 2", async () => {
+    const tracker = makeGithubTracker(makeProjectTarget());
+    const { result, log } = await withFakeGhSequence(
+      [
+        "status_field_query",
+        "status_items_page1_miss_other_project",
+        "status_items_page2_hit",
+        "update_field_ok",
+      ],
+      () => tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
+    );
+    assert.equal(result.changed, true);
+    assert.equal(result.optionId, "OPT_inprogress");
+    assert.equal(log.trim().split("\n").length, 4, "field + items page1 + items page2 + update");
   });
 
   // PR 9 R1 (Copilot): status_field previously flowed straight into

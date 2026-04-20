@@ -408,12 +408,32 @@ async function countUnresolvedBeyondFirstPage({ owner, repo, prNumber }, startCu
  * fields, since every `issues.*` method needs them.
  */
 function resolveRepoCoords(ctx, trackerTarget) {
-  const owner = (ctx && ctx.owner) || (trackerTarget && trackerTarget.owner);
-  const repo = (ctx && ctx.repo) || (trackerTarget && trackerTarget.repo);
-  if (typeof owner !== "string" || owner.length === 0) {
+  // Explicit-invalid detection: a caller who passes `ctx.owner = ""`
+  // (or any non-string) is almost always expressing a bug in their
+  // own code, not asking for the tracker default. Raise here so the
+  // failure surfaces at the call site. The `||` shortcut would
+  // silently fall through to target.owner and send the mutation
+  // somewhere the caller didn't intend.
+  const validString = (v) => typeof v === "string" && v.length > 0;
+  const assertIfPresent = (key, v) => {
+    if (v === undefined || v === null) return; // permit fallthrough
+    if (!validString(v)) {
+      throw new TypeError(
+        `github issues: ctx.${key} must be a non-empty string when supplied; got ${JSON.stringify(v)}`,
+      );
+    }
+  };
+  assertIfPresent("owner", ctx?.owner);
+  assertIfPresent("repo", ctx?.repo);
+  // Nullish-coalesce so ctx.owner/repo wins when set (already
+  // validated above), else the target's value wins. Only when
+  // both are absent does the final check below throw.
+  const owner = ctx?.owner ?? trackerTarget?.owner;
+  const repo = ctx?.repo ?? trackerTarget?.repo;
+  if (!validString(owner)) {
     throw new TypeError("github issues: ctx.owner (or target.owner) is required");
   }
-  if (typeof repo !== "string" || repo.length === 0) {
+  if (!validString(repo)) {
     throw new TypeError("github issues: ctx.repo (or target.repo) is required");
   }
   return { owner, repo };
@@ -575,14 +595,27 @@ async function githubGetIssue(trackerTarget, ctx, payload) {
   const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
   const { issueNumber } = payload ?? {};
   requirePositiveInt(issueNumber, "issueNumber");
+  // Fetch labels + assignees at GitHub's max page size (100) and
+  // guard truncation explicitly. Matching listIssues' fail-loud
+  // contract: a caller filtering by label or assignee list on a
+  // silently-truncated result gets wrong answers, which is worse
+  // than a surfaced error. If real projects ever hit 100+ labels
+  // or assignees per issue, we add pagination here as a focused
+  // follow-up rather than hiding the issue.
   const query = `
     query($owner: String!, $name: String!, $number: Int!) {
       repository(owner: $owner, name: $name) {
         issue(number: $number) {
           id number title body state url createdAt closedAt
           author { login }
-          assignees(first: 10) { nodes { login } }
-          labels(first: 100) { nodes { name } }
+          assignees(first: 100) {
+            nodes { login }
+            pageInfo { hasNextPage }
+          }
+          labels(first: 100) {
+            nodes { name }
+            pageInfo { hasNextPage }
+          }
           milestone { number title state }
         }
       }
@@ -592,6 +625,16 @@ async function githubGetIssue(trackerTarget, ctx, payload) {
   const issue = data?.repository?.issue;
   if (!issue) {
     throw new Error(`github issues.getIssue: issue #${issueNumber} not found in ${owner}/${repo}`);
+  }
+  if (issue.labels?.pageInfo?.hasNextPage) {
+    throw new Error(
+      `github issues.getIssue: issue #${issueNumber} has more than 100 labels; refusing to return a truncated label list`,
+    );
+  }
+  if (issue.assignees?.pageInfo?.hasNextPage) {
+    throw new Error(
+      `github issues.getIssue: issue #${issueNumber} has more than 100 assignees; refusing to return a truncated assignee list`,
+    );
   }
   return {
     id: issue.id,
@@ -841,22 +884,38 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
       "github issues.createIssue: 'milestone' and 'assignees' are not supported on this namespace yet; apply them via a follow-up mutation (PR 10 will add the reconcile surface)",
     );
   }
-  // Dedupe: search open issues by exact title. GitHub's `search` API
-  // accepts a `is:issue is:open repo:owner/repo in:title "exact"`
-  // query string, but substring matching can't be turned off there,
-  // so we do the search + a strict equality filter on the result.
+  // Dedupe: search open issues by exact title. GitHub's search is
+  // ranked + substring-based, so an exact match may not appear on
+  // the first page of results even when there are only a handful
+  // of issues with related titles. Paginate through up to
+  // DEDUPE_MAX_RESULTS before giving up; if no match is found
+  // within that window, create anyway (better to accept a tiny
+  // residual duplicate risk than to burn unbounded search quota).
   const dedupeQuery = `
-    query($q: String!) {
-      search(query: $q, type: ISSUE, first: 20) {
+    query($q: String!, $after: String) {
+      search(query: $q, type: ISSUE, first: 100, after: $after) {
         nodes { ... on Issue { id number title state repository { nameWithOwner } } }
+        pageInfo { hasNextPage endCursor }
       }
     }
   `;
   const q = `is:issue is:open repo:${owner}/${repo} in:title "${title.replace(/"/g, '\\"')}"`;
-  const dupeData = await ghGraphqlQuery(dedupeQuery, { q });
-  const match = (dupeData.search.nodes || []).find(
-    (n) => n && n.title === title && n.repository?.nameWithOwner === `${owner}/${repo}`,
-  );
+  const DEDUPE_MAX_RESULTS = 500;
+  let dedupeScanned = 0;
+  let dedupeAfter = null;
+  let match = null;
+  while (dedupeScanned < DEDUPE_MAX_RESULTS) {
+    const dupeData = await ghGraphqlQuery(dedupeQuery, { q, after: dedupeAfter });
+    const nodes = dupeData?.search?.nodes || [];
+    match = nodes.find(
+      (n) => n && n.title === title && n.repository?.nameWithOwner === `${owner}/${repo}`,
+    );
+    if (match) break;
+    dedupeScanned += nodes.length;
+    const pageInfo = dupeData?.search?.pageInfo;
+    if (!pageInfo?.hasNextPage || !pageInfo.endCursor || nodes.length === 0) break;
+    dedupeAfter = pageInfo.endCursor;
+  }
   if (match) {
     return { id: match.id, number: match.number, existed: true };
   }
@@ -903,22 +962,32 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
   if (!created?.id) {
     throw new Error("github issues.createIssue: createIssue response missing issue.id");
   }
-  // Apply labels best-effort. Any failure surfaces but the issue
-  // has already been created, so the return value still includes
-  // the created number so the caller can retry / manually patch
-  // labels without re-creating the issue.
+  // Apply labels best-effort. The issue was already created above,
+  // so a label-apply failure (missing label name, permission error,
+  // transient transport failure) must NOT lose the created issue's
+  // metadata. Catch and surface the failure on the return value so
+  // the caller sees both the success of the create AND the label
+  // failure, and can retry or manually patch labels without
+  // re-creating the issue.
+  let labelError = null;
   if (labels.length > 0) {
-    await githubRelabelIssue({ owner, repo }, { owner, repo }, {
-      issueNumber: created.number,
-      add: labels,
-    });
+    try {
+      await githubRelabelIssue({ owner, repo }, { owner, repo }, {
+        issueNumber: created.number,
+        add: labels,
+      });
+    } catch (e) {
+      labelError = e;
+    }
   }
   // Assignees + milestone: left as future work; the payload guard
   // above refuses to accept those keys today. Tests lock on the
   // create + labels path for PR 9; PR 10's labels.* + projects.*
   // namespaces will revisit the broader reconcile semantics that
   // cover assignee resolution (which needs a users(first) query).
-  return { id: created.id, number: created.number, url: created.url, existed: false };
+  const result = { id: created.id, number: created.number, url: created.url, existed: false };
+  if (labelError) result.labelError = labelError;
+  return result;
 }
 
 // issues.updateIssueStatus ---------------------------------------------------
@@ -984,22 +1053,11 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
   // type String is allowed there); the `${statusField}` value is
   // gated by the regex above so that this is safe.
   const quotedField = JSON.stringify(statusField); // double-quoted, escaped
-  const query = `
-    query($owner: String!, $name: String!, $issueNumber: Int!, $projectOwner: String!, $projectNumber: Int!) {
-      repository(owner: $owner, name: $name) {
-        issue(number: $issueNumber) {
-          id
-          projectItems(first: 20) {
-            nodes {
-              id
-              project { id number }
-              fieldValueByName(name: ${quotedField}) {
-                ... on ProjectV2ItemFieldSingleSelectValue { optionId name }
-              }
-            }
-          }
-        }
-      }
+  // First: resolve the Project v2 field + options ONCE. These do
+  // not depend on the issue's projectItems, so hoisting them out
+  // of the projectItems loop keeps the query small per page.
+  const fieldQuery = `
+    query($projectOwner: String!, $projectNumber: Int!) {
       repositoryOwner(login: $projectOwner) {
         ... on ProjectV2Owner {
           projectV2(number: $projectNumber) {
@@ -1012,18 +1070,8 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
       }
     }
   `;
-  const data = await ghGraphqlQuery(query, {
-    owner,
-    name: repo,
-    issueNumber,
-    projectOwner,
-    projectNumber,
-  });
-  const issue = data?.repository?.issue;
-  if (!issue) {
-    throw new Error(`github issues.updateIssueStatus: issue #${issueNumber} not found in ${owner}/${repo}`);
-  }
-  const projectV2 = data?.repositoryOwner?.projectV2;
+  const fieldData = await ghGraphqlQuery(fieldQuery, { projectOwner, projectNumber });
+  const projectV2 = fieldData?.repositoryOwner?.projectV2;
   if (!projectV2?.id) {
     throw new Error(
       `github issues.updateIssueStatus: Project v2 #${projectNumber} not found under ${projectOwner}`,
@@ -1041,15 +1089,66 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
       `github issues.updateIssueStatus: option '${nativeStatusName}' (mapped from '${status}') not found on field '${statusField}'`,
     );
   }
-  // Match on the project's GraphQL node ID, NOT just its number.
-  // Project v2 numbers are scoped per owner, so an issue belonging
-  // to multiple projects (e.g. one in the dev owner's board and a
-  // second in another owner's board with the same number) could
-  // match the wrong item. projectV2.id is unique and already
-  // resolved by the compound query above.
-  const projectItem = issue.projectItems.nodes.find(
-    (n) => n && n.project?.id === projectV2.id,
-  );
+  // Second: paginate the issue's projectItems to find the one
+  // bound to our project. An issue linked to >20 projects would
+  // previously miss the target on the first-page-only fetch. Match
+  // on projectV2.id (owner-scoped number collisions possible).
+  const itemsQuery = `
+    query($owner: String!, $name: String!, $issueNumber: Int!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        issue(number: $issueNumber) {
+          id
+          projectItems(first: 100, after: $after) {
+            nodes {
+              id
+              project { id number }
+              fieldValueByName(name: ${quotedField}) {
+                ... on ProjectV2ItemFieldSingleSelectValue { optionId name }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }
+  `;
+  const MAX_PROJECT_ITEM_PAGES = 10;
+  let after = null;
+  let page = 0;
+  let projectItem = null;
+  let issueFound = false;
+  while (!projectItem) {
+    page += 1;
+    if (page > MAX_PROJECT_ITEM_PAGES) {
+      throw new Error(
+        `github issues.updateIssueStatus: issue #${issueNumber} is linked to more than ${MAX_PROJECT_ITEM_PAGES * 100} projects; refusing to paginate further`,
+      );
+    }
+    const data = await ghGraphqlQuery(itemsQuery, {
+      owner,
+      name: repo,
+      issueNumber,
+      after,
+    });
+    const issue = data?.repository?.issue;
+    if (!issue) {
+      throw new Error(`github issues.updateIssueStatus: issue #${issueNumber} not found in ${owner}/${repo}`);
+    }
+    issueFound = true;
+    projectItem = issue.projectItems.nodes.find(
+      (n) => n && n.project?.id === projectV2.id,
+    );
+    if (projectItem) break;
+    if (!issue.projectItems.pageInfo?.hasNextPage) break;
+    after = issue.projectItems.pageInfo.endCursor;
+  }
+  if (!issueFound) {
+    // Unreachable under the happy path (the loop always sets
+    // issueFound on its first iteration or throws). Defence in
+    // depth against a future refactor that changes control flow.
+    /* istanbul ignore next */
+    throw new Error(`github issues.updateIssueStatus: issue #${issueNumber} not found in ${owner}/${repo}`);
+  }
   if (!projectItem?.id) {
     throw new Error(
       `github issues.updateIssueStatus: issue #${issueNumber} is not bound to Project v2 #${projectNumber}; add it to the project first`,
