@@ -1212,13 +1212,18 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
   // resolveRepoCoords pattern that fixed the equivalent footgun
   // on ctx.owner/repo earlier in this PR.
   const projectOwner = project.owner ?? owner;
-  // Compound query: resolve issue's project item, the project's
-  // Status field node id, the option id for the target name, and
-  // the current value — all in one round trip. The `statusField`
-  // is interpolated inline because GitHub's GraphQL `fieldValueByName`
-  // and `field` args accept string literals only (no variable of
-  // type String is allowed there); the `${statusField}` value is
-  // gated by the regex above so that this is safe.
+  // Multi-step resolve, NOT a single compound round trip: first
+  // look up the project's Status field id + options once; then
+  // paginate the issue's projectItems to find the one bound to
+  // this project (and read its current value); finally fire the
+  // update mutation. The split is deliberate (PR 9 R3) because
+  // projectItems can have >100 entries and would otherwise force
+  // the field-lookup to refetch on every page. The `statusField`
+  // is interpolated inline (via JSON.stringify) because GitHub's
+  // GraphQL `fieldValueByName` and `field` args accept string
+  // literals only (no variable of type String is allowed there);
+  // the `${statusField}` value is gated by the validation above
+  // so that this is safe.
   const quotedField = JSON.stringify(statusField); // double-quoted, escaped
   // First: resolve the Project v2 field + options ONCE. These do
   // not depend on the issue's projectItems, so hoisting them out

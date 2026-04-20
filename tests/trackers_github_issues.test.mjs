@@ -630,13 +630,13 @@ describe("github issues.createIssue", skipOpts, () => {
     assert.equal(result.url, "https://github.com/acme/widgets/issues/101");
   });
 
-  it("applies labels after creation via the relabel path", async () => {
+  it("applies labels after creation via the relabel path (targets the newly-created issue)", async () => {
     const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
     const { log } = await withFakeGhSequence(
       [
         "search_dedupe_miss",       // 1: search
         "repo_node_id",              // 2: resolve repo id
-        "create_issue_ok",           // 3: createIssue
+        "create_issue_ok",           // 3: createIssue (returns number=101)
         "issue_node_id",             // 4: relabelIssue -> fetch issue
         "labels_all_found",          // 5: relabelIssue -> fetch labels
         "add_labels_ok",             // 6: relabelIssue -> addLabelsToLabelable
@@ -646,7 +646,16 @@ describe("github issues.createIssue", skipOpts, () => {
         labels: ["priority/high"],
       }),
     );
-    assert.equal(log.trim().split("\n").length, 6);
+    const calls = log.trim().split("\n");
+    assert.equal(calls.length, 6);
+    // PR 9 R10 (Copilot): assert the relabel path uses the created
+    // issue's number (101, from the create_issue_ok fixture), not a
+    // stale / wrong number. A regression where createIssue forgot
+    // to forward `created.number` to relabelIssue would silently
+    // relabel a different issue. The fetchIssueNodeId call is the
+    // 4th gh invocation (index 3) and carries number=101 as a
+    // `-F number=101` flag.
+    assert.match(calls[3], /number=101/);
   });
 
   it("renders the body from templateLoader when templateName is set", async () => {
