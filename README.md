@@ -70,7 +70,7 @@ Teams that don't coordinate releases with umbrella issues (solo dev on tag-based
 
 ## Multi-repo workspaces
 
-For projects where sibling directories have their own git repos and possibly different trackers (e.g., a Jira-tracked library next to a GitHub-tracked app), the interview asks you to declare each member: project-relative path, short name, and its own dev tracker (plus optional release tracker). The runtime dispatcher (`pickTrackerForMember` / `resolveMemberFromPath`) routes each operation through the owning member deepest-first: a file under `libs/shared/x.ts` resolves to the `libs/shared` member; files outside any nested member fall back to the root. Single-repo projects answer `no` and keep the single-tracker path with zero config overhead.
+For projects where sibling directories have their own git repos and possibly different trackers (e.g., a Jira-tracked library next to a GitHub-tracked app), the interview asks you to declare each member: project-relative path, short name, and its own dev tracker (plus optional release tracker). The runtime dispatcher (`pickTrackerForMember` / `resolveMemberFromPath`) routes each operation through the owning member deepest-first: a file under `libs/shared/x.ts` resolves to the `libs/shared` member. For files that don't match any nested member, include an explicit member with path `.` in `workspace.members[]` to catch them as the root; without one, unmatched files fall back to the top-level `trackers.dev` instead. Single-repo projects answer `no` and keep the single-tracker path with zero config overhead.
 
 ## Quick start
 

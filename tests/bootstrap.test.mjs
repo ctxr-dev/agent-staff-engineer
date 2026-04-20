@@ -757,13 +757,17 @@ describe("bootstrap.askBranchPattern", () => {
 
 describe("bootstrap.interviewWorkspaceMembers", () => {
   // Build a stubbed ask + askYesNo pair that reads from a scripted
-  // answer queue. The interview() pattern is ask(question, def) with
-  // trim+fallback; the stub replicates that so call sites under test
-  // can rely on the same semantics (empty-string -> default).
+  // answer queue. The interview() pattern is ask(question, def) which
+  // does `s.trim() || def`; the stub mirrors that exactly so
+  // whitespace-only inputs collapse to the default the same way they
+  // would during a real interview run. Without the trim, tests would
+  // mask whitespace-handling bugs in call sites that assume the
+  // returned string is already trimmed.
   const makeAsk = (queue) => async (_q, def = "") => {
     if (queue.length === 0) throw new Error("ask stub exhausted");
     const a = queue.shift();
-    return a === "" ? def : a;
+    const trimmed = String(a ?? "").trim();
+    return trimmed === "" ? def : trimmed;
   };
   const makeYesNo = (queue) => async (_q, def = "yes") => {
     if (queue.length === 0) throw new Error("yesno stub exhausted");
@@ -833,6 +837,72 @@ describe("bootstrap.interviewWorkspaceMembers", () => {
     const out = await interviewWorkspaceMembers(ask, yn, detection);
     assert.ok(out);
     assert.equal(out.members.length, 16, "cap enforced at 16");
+  });
+
+  // PR 8 R4 (Copilot): duplicate member paths make resolveMemberFromPath
+  // ambiguous (first-match semantics). Prompt-time rejection retries
+  // up to 3 times; on exhaustion the loop exits with the members
+  // collected so far rather than hanging the interview.
+  it("rejects duplicate member paths with a 3-attempt retry + loop exit", async () => {
+    // First member: path '.' is accepted. Second member: first
+    // attempt repeats '.', then a retry supplies 'libs/shared'.
+    const ask = makeAsk([
+      // --- member 1 ---
+      ".",
+      "primary",
+      "github",
+      "acme",
+      "primary",
+      "1",
+      // --- member 2, attempt 1 (duplicate '.') then attempt 2 ('libs/shared') ---
+      ".",
+      "libs/shared",
+      "shared",
+      "github",
+      "acme",
+      "shared-repo",
+      "1",
+      // --- end loop ---
+      "",
+    ]);
+    const yn = makeYesNo(["no", "no"]);
+    const out = await interviewWorkspaceMembers(ask, yn, detection);
+    assert.ok(out);
+    assert.equal(out.members.length, 2);
+    assert.equal(out.members[0].path, ".");
+    assert.equal(out.members[1].path, "libs/shared");
+  });
+
+  // PR 8 R4 (Copilot): duplicate member names make
+  // pickTrackerForMember ambiguous. Same 3-attempt retry pattern.
+  it("rejects duplicate member names with a 3-attempt retry + loop exit", async () => {
+    // First member uses default name 'primary'. Second member:
+    // attempt 1 tries the same 'primary' (duplicate), attempt 2
+    // supplies 'shared'.
+    const ask = makeAsk([
+      // --- member 1 ---
+      ".",
+      "primary",
+      "github",
+      "acme",
+      "primary",
+      "1",
+      // --- member 2 ---
+      "libs/shared",
+      "primary",   // attempt 1: duplicate name
+      "shared",    // attempt 2: unique
+      "github",
+      "acme",
+      "shared-repo",
+      "1",
+      // --- end loop ---
+      "",
+    ]);
+    const yn = makeYesNo(["no", "no"]);
+    const out = await interviewWorkspaceMembers(ask, yn, detection);
+    assert.ok(out);
+    assert.equal(out.members.length, 2);
+    assert.equal(out.members[1].name, "shared");
   });
 });
 

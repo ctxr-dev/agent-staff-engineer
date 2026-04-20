@@ -754,26 +754,46 @@ export async function interviewWorkspaceMembers(ask, askYesNo, d) {
     // Validate the member path at prompt time so users catch typos
     // (absolute paths, parent-traversal, Windows backslashes that
     // would never match POSIX diff input) before the config is
-    // written. Up to 3 attempts; if the user can't produce a
-    // valid path, break the loop rather than hang the interview.
+    // written. Also reject duplicate member paths (post-normalisation):
+    // two members with the same canonical path make resolveMemberFromPath
+    // ambiguous (first-match semantics). Up to 3 attempts; if the user
+    // can't produce a valid path, break the loop rather than hang the
+    // interview.
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const raw = (await ask(`   member ${idx} path (blank to finish)`, "")).trim();
       if (!raw) { path = null; break; }
       try {
         // allowRoot so members can bind to the project root via "."
-        path = normaliseMemberPath(raw, `member ${idx} path`, { allowRoot: true });
+        const candidate = normaliseMemberPath(raw, `member ${idx} path`, { allowRoot: true });
+        if (members.some((m) => m.path === candidate)) {
+          throw new Error(`member ${idx} path '${candidate}' duplicates an earlier member`);
+        }
+        path = candidate;
         break;
       } catch (e) {
-        process.stderr.write(`${e.message} (attempt ${attempt}/3). Use project-relative POSIX paths like 'libs/shared' or '.' for the root repo.\n`);
+        process.stderr.write(`${e.message} (attempt ${attempt}/3). Use project-relative POSIX paths like 'libs/shared' or '.' for the root repo; each path must be unique.\n`);
       }
     }
     if (path === null) break;
-    const name = await askNonEmpty(
-      ask,
-      `   member ${idx} name`,
-      path === "." ? "primary" : path.split("/").pop(),
-      "member name",
-    );
+    // Members must have distinct names too, since `pickTrackerForMember`
+    // does a first-match lookup on the name. Reject duplicates with up
+    // to 3 retries; fall back to the loop-exit on exhausting retries.
+    let name = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const candidate = await askNonEmpty(
+        ask,
+        `   member ${idx} name`,
+        path === "." ? "primary" : path.split("/").pop(),
+        "member name",
+      );
+      if (members.some((m) => m.name === candidate)) {
+        process.stderr.write(`member ${idx} name '${candidate}' duplicates an earlier member (attempt ${attempt}/3). Pick a different name.\n`);
+        continue;
+      }
+      name = candidate;
+      break;
+    }
+    if (name === null) break;
     const devKind = await askTrackerKind(
       ask,
       `   member ${idx} dev tracker kind: github / jira / linear / gitlab`,

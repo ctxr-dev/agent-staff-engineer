@@ -30,7 +30,7 @@
 //
 
 import { readFile, readdir, rm } from "node:fs/promises";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -424,6 +424,40 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
         name: member.name ?? "<unnamed>",
         path: member.path,
         reason: `resolved path '${absolute}' exists but is not a directory (workspace members must be directory subtrees)`,
+      });
+      continue;
+    }
+    // Symlink escape check: the earlier lexical containment check
+    // catches 'libs/../..' and absolute paths, but a symlink at the
+    // resolved location can still point outside TARGET. Resolve the
+    // actual filesystem location via realpath and re-check
+    // containment on the real paths. The resolvedTarget side is
+    // realpath'd up front so a TARGET that itself sits behind a
+    // symlink (common on macOS: /var is a symlink to /private/var)
+    // is compared apples-to-apples. realpath failures are treated
+    // as "cannot verify safety" and surface as invalid rather than
+    // silently trusting the lexical check.
+    let realAbs;
+    let realTarget;
+    try {
+      realAbs = realpathSync(absolute);
+      realTarget = realpathSync(resolvedTarget);
+    } catch (e) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `cannot resolve real path (${e?.message ?? e}); aborting rather than trusting lexical containment`,
+      });
+      continue;
+    }
+    const realRel = relative(realTarget, realAbs);
+    const realEscapes =
+      isAbsolute(realRel) || realRel === ".." || realRel.startsWith(`..${sep}`) || realRel.startsWith("../");
+    if (realEscapes) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `member path resolves to '${realAbs}' which is outside '${realTarget}' (symlink escape)`,
       });
     }
   }
