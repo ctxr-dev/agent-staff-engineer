@@ -1181,12 +1181,17 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
     },
     workflow: {
       phase_term: a.cadence === "per-wave" ? "wave" : a.cadence === "per-version" ? "version" : "track",
-      // Prefer the answers' branchPatterns (from the customise-yes path
-      // in the interview or from pickDefaults' default block); fall
-      // back to the canonical DEFAULT_BRANCH_PATTERNS if an older
-      // caller doesn't supply them. Spread to hand compose's consumers
-      // a mutable plain object (matches the interactive path's shape).
-      branch_patterns: a.branchPatterns ?? { ...DEFAULT_BRANCH_PATTERNS },
+      // Merge DEFAULT_BRANCH_PATTERNS under a.branchPatterns so:
+      //   (a) the composed object is always a fresh mutable copy,
+      //       never a direct reference to answers or the frozen
+      //       module-level constant;
+      //   (b) callers that supply a PARTIAL branchPatterns (e.g. a
+      //       migration script that only overrides `feature`) get the
+      //       remaining keys filled in from the canonical defaults,
+      //       rather than a schema-invalid config missing required
+      //       keys. The full key set is `required` on the schema, so
+      //       never letting partials through preserves that contract.
+      branch_patterns: { ...DEFAULT_BRANCH_PATTERNS, ...(a.branchPatterns ?? {}) },
       commits: {
         style: "conventional",
         signed: false,

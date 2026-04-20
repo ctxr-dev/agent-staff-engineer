@@ -945,6 +945,32 @@ describe("bootstrap.compose", () => {
     assert.equal(cfg.workflow.branch_patterns.docs, "docs/{issue}-{slug}");
   });
 
+  // PR 7 R4 (Copilot): compose now merges partial answers.branchPatterns
+  // UNDER DEFAULT_BRANCH_PATTERNS so callers (e.g. migration scripts
+  // that only override a subset) always produce a schema-valid config
+  // with every required key populated. Lock the merge semantics:
+  // user-supplied keys win, unset keys come from defaults.
+  it("merges partial answers.branchPatterns over defaults", () => {
+    const partial = { feature: "features/{issue}-{slug}" };
+    const cfg = compose(detection, { ...answers, branchPatterns: partial }, ".claude/agents/agent-staff-engineer");
+    assert.equal(cfg.workflow.branch_patterns.feature, "features/{issue}-{slug}", "user override wins");
+    assert.equal(cfg.workflow.branch_patterns.fix, "fix/{issue}-{slug}", "unset key filled from defaults");
+    assert.equal(cfg.workflow.branch_patterns.chore, "chore/{issue}-{slug}");
+    assert.equal(cfg.workflow.branch_patterns.refactor, "refactor/{issue}-{slug}");
+    assert.equal(cfg.workflow.branch_patterns.docs, "docs/{issue}-{slug}");
+  });
+
+  // Composed branch_patterns must ALWAYS be a fresh object — never a
+  // direct reference to the frozen DEFAULT_BRANCH_PATTERNS or to
+  // answers.branchPatterns. Mutating the composed result must not
+  // back-propagate into the source.
+  it("composed branch_patterns is a fresh object (mutation does not leak to answers)", () => {
+    const custom = { feature: "features/{issue}-{slug}", fix: "fix/{issue}-{slug}", chore: "chore/{issue}-{slug}", refactor: "refactor/{issue}-{slug}", docs: "docs/{issue}-{slug}" };
+    const cfg = compose(detection, { ...answers, branchPatterns: custom }, ".claude/agents/agent-staff-engineer");
+    cfg.workflow.branch_patterns.feature = "MUTATED";
+    assert.equal(custom.feature, "features/{issue}-{slug}", "answers.branchPatterns must not be mutated");
+  });
+
   // PR 7 R1 (Copilot): askBranchPattern used `includes` for each token
   // separately, accepting {slug}-{issue} order; but the schema's old
   // pattern `.*\{issue\}.*\{slug\}.*` required {issue} first, so the
