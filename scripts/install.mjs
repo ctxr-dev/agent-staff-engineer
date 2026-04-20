@@ -353,11 +353,15 @@ async function waitForRequiredSkill(provider, target) {
   let found = locateKitSkill(provider, target);
   if (found) return found;
 
-  const interactive = Boolean(processStdin.isTTY) && !YES;
+  // Require BOTH stdin and stdout to be TTY before entering the wait
+  // loop. If stdout is redirected (e.g. `install.mjs --apply > log`),
+  // stdin may still be interactive but the prompt would be invisible
+  // and the script would look hung. Fail fast in that case.
+  const interactive = Boolean(processStdin.isTTY) && Boolean(processStdout.isTTY) && !YES;
   if (!interactive) {
     process.stderr.write(
       `\nERROR: agent-staff-engineer requires the wiki provider skill '${provider}'.\n` +
-      `It was not found at either\n` +
+      `It was not found at any of\n` +
       `  ${kitSkillCandidatePaths(provider, target).join("\n  ")}\n\n` +
       `Install it first:\n` +
       `  npx @ctxr/kit install ${provider}\n\n` +
