@@ -439,6 +439,17 @@ describe("normaliseMemberPath: the canonical path normaliser", () => {
     assert.throws(() => normaliseMemberPath("Z:bar/baz", "x"), /drive/);
   });
 
+  // PR 8 R10 (Copilot): `./C:foo` bypassed the raw-input drive
+  // check because the `./` prefix made the regex miss, and the
+  // post-strip form re-exposed `C:foo`. Re-check after stripping
+  // so no prefix spelling of a drive path slips through.
+  it("rejects './C:foo' and backslash variants (drive path hidden behind './ prefix)", () => {
+    assert.throws(() => normaliseMemberPath("./C:foo", "x"), /drive/);
+    assert.throws(() => normaliseMemberPath(".\\C:foo", "x"), /drive/);
+    assert.throws(() => normaliseMemberPath("./D:/bar", "x"), /drive/);
+    assert.throws(() => normaliseMemberPath(".//C:foo", "x"), /drive/);
+  });
+
   it("rejects '..' segments", () => {
     assert.throws(() => normaliseMemberPath("../escape", "x"), /'\.\.'/);
     assert.throws(() => normaliseMemberPath("libs/../escape", "x"), /'\.\.'/);

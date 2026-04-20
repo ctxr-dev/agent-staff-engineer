@@ -323,18 +323,21 @@ export function normaliseMemberPath(input, label, opts = {}) {
   if (typeof input !== "string" || input.length === 0) {
     throw new Error(`normaliseMemberPath: ${label} must be a non-empty string`);
   }
-  // Reject Windows drive-qualified prefixes up front so the later
-  // "no leading /" check doesn't accidentally let any of
-  //   `C:\foo`   (backslash -> forward slash; still drive-qualified),
-  //   `C:/foo`   (already absolute on Windows),
-  //   `C:foo`    (drive-relative: uses the current directory on
-  //               drive C, which is not project-relative)
-  // through. All three escape "project-relative" on Windows even
-  // though only the first two have an explicit separator after
-  // the colon; broaden the guard to any `^[A-Za-z]:` prefix.
-  if (/^[A-Za-z]:/.test(input)) {
-    throw new Error(`normaliseMemberPath: ${label} must be project-relative (got drive path '${input}')`);
-  }
+  // Reject Windows drive-qualified prefixes. The guard has to run in
+  // two places:
+  //   1. On the raw input, to catch `C:\foo` / `C:/foo` / `C:foo`
+  //      directly.
+  //   2. On the post-"./"-strip form, to catch bypasses like
+  //      `./C:foo` or `.\C:foo` that would otherwise normalise to
+  //      `C:foo` after the strip and slip past a one-off check at
+  //      the top.
+  // `C:` with no separator is drive-relative on Windows (uses the
+  // current directory on drive C), so a bare `^[A-Za-z]:` prefix
+  // is sufficient to cover every variant.
+  const failDrive = (raw) => {
+    throw new Error(`normaliseMemberPath: ${label} must be project-relative (got drive path '${raw}')`);
+  };
+  if (/^[A-Za-z]:/.test(input)) failDrive(input);
   // Normalise separators first so the rest of the checks are
   // POSIX-only. An input of `libs\\shared` becomes `libs/shared`.
   const withForward = input.replace(/\\/g, "/");
@@ -343,6 +346,12 @@ export function normaliseMemberPath(input, label, opts = {}) {
   if (withForward.startsWith("/")) {
     throw new Error(`normaliseMemberPath: ${label} must be project-relative (got absolute path '${input}')`);
   }
+  // Second drive-prefix check. After "./" is stripped below, the
+  // remaining string could start with a drive prefix again (e.g.
+  // user typed `./C:foo`). The first check above only caught the
+  // raw-input form; re-run the test on the stripped candidate.
+  const afterStrip = withForward.replace(/^\.\/+/, "");
+  if (/^[A-Za-z]:/.test(afterStrip)) failDrive(input);
   // Root-member shorthand. "." and "./" (or any ".//" variant) are
   // the canonical ways to bind a member to the project root. They
   // need special handling because the strip-leading-"./" regex below
