@@ -24,7 +24,7 @@ Centralises every tracker API call. Other skills describe what they want; `track
 
 ## Inputs
 
-- Role (`dev` or `release`) plus an optional workspace member name when `workspace.members[]` is configured. The skill resolves these to a tracker target via `scripts/lib/trackers/dispatcher.mjs#pickTracker`.
+- Role (`dev` or `release`) plus an optional `memberName` string when `workspace.members[]` is configured. The skill resolves these to a tracker target via `scripts/lib/trackers/dispatcher.mjs#pickTrackerForMember` (falls back to `pickTracker` when `memberName === null` or the config has no workspace). Callers who need to derive `memberName` from a file path use `resolveMemberFromPath(cfg, filePath)` from the same module, which walks `workspace.members[]` deepest-first.
 - Operation name (enum, see "Operations" below).
 - Operation-specific payload (issue title, label list, field-value map, thread ID, etc.).
 - Approval mode (`dry-run` default, `--apply` to write).

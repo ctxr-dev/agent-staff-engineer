@@ -348,6 +348,39 @@ if (opsConfig.wiki?.required) {
   process.stdout.write(`wiki provider: ${provider} found at ${portableRef(found, TARGET)}\n`);
 }
 
+// Workspace member preflight: when the config declares multi-repo
+// workspace members, every declared path MUST exist on disk before
+// install proceeds. A missing member path almost always means the
+// user committed a config from a teammate's checkout or renamed a
+// directory after bootstrap; either way the runtime dispatch
+// (pickTrackerForMember, resolveMemberFromPath) has nothing to match
+// against and every call that targets the missing member throws at
+// use time. Fail here with a pointed list so the user fixes the
+// typo / clones the sibling before anything else runs. Non-fatal
+// when `workspace` is absent (single-repo projects).
+if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.length > 0) {
+  const missing = [];
+  for (const member of opsConfig.workspace.members) {
+    if (!member || typeof member.path !== "string") continue;
+    const absolute = join(TARGET, member.path);
+    if (!existsSync(absolute)) {
+      missing.push({ name: member.name ?? "<unnamed>", path: member.path, absolute });
+    }
+  }
+  if (missing.length > 0) {
+    process.stderr.write(
+      `\nERROR: ops.config.json declares workspace members whose paths do not exist on disk:\n`,
+    );
+    for (const m of missing) {
+      process.stderr.write(`  - '${m.name}' at '${m.path}' (expected ${portableRef(m.absolute, TARGET)})\n`);
+    }
+    process.stderr.write(
+      `\nEither (a) clone / create those directories at the listed paths, or (b) remove the affected entries from \`workspace.members\` in ops.config.json. The runtime dispatcher refuses to route through a member whose working tree is absent.\n`,
+    );
+    process.exit(1);
+  }
+}
+
 /**
  * Decide interactive vs fail-fast based on TTY state and --yes, then
  * dispatch to the extracted wait helper OR print the non-interactive

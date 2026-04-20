@@ -456,7 +456,7 @@ async function interview(rl, d, _bundleRef) {
     return s.split(",").map((x) => x.trim()).filter(Boolean);
   };
 
-  process.stdout.write("interview (9 topics). Enter accepts the default shown in brackets.\n");
+  process.stdout.write("interview (10 topics). Enter accepts the default shown in brackets.\n");
   process.stdout.write("Note: on GitHub, only the review namespace is implemented today (used by skills/pr-iteration); issues / projects / labels namespaces are stubbed. Jira / Linear / GitLab backends accept the config but EVERY op (read or write) throws NotSupportedError until their real impls land.\n\n");
 
   const cadence = await ask(
@@ -525,8 +525,24 @@ async function interview(rl, d, _bundleRef) {
     }
   }
 
+  // Multi-repo workspace. Most projects live in a single repo and
+  // answer "no"; teams with sibling directories that each have their
+  // own git origin + tracker (mid-migration monorepos, toolchain
+  // workspaces, Jira-tracked lib next to a GitHub-tracked app) say
+  // yes and bind per-member trackers. Runtime dispatch for these
+  // members is in `scripts/lib/trackers/dispatcher.mjs` via
+  // `pickTrackerForMember` and `resolveMemberFromPath`.
+  const hasWorkspace = await askYesNo(
+    "7. Multi-repo workspace? Say yes if sibling directories in this project have their OWN git origins with possibly-different trackers (e.g. a Jira-tracked library next to a GitHub-tracked app). Most projects are single-repo and say no",
+    "no"
+  );
+  let workspace;
+  if (hasWorkspace) {
+    workspace = await interviewWorkspaceMembers(ask, askYesNo, d);
+  }
+
   const observedReposStr = await ask(
-    "7. Additional observed GitHub repos (owner/name), comma-separated, blank for none",
+    "8. Additional observed GitHub repos (owner/name), comma-separated, blank for none",
     ""
   );
   const defaultDepth = await ask(
@@ -536,7 +552,7 @@ async function interview(rl, d, _bundleRef) {
   const observed = parseObservedGithubRepos(observedReposStr, defaultDepth);
 
   const regimes = await askCsv(
-    "8. Compliance regimes: gdpr,ccpa,soc2,pci,hipaa,mhmda,appi,pipa,lgpd or 'none'",
+    "9. Compliance regimes: gdpr,ccpa,soc2,pci,hipaa,mhmda,appi,pipa,lgpd or 'none'",
     "none"
   );
   const dataClasses = await askCsv(
@@ -544,7 +560,7 @@ async function interview(rl, d, _bundleRef) {
     "none"
   );
   const seedProductRules = await askYesNo(
-    "9. Seed any project-specific rules now? (you can add later via adapt-system)",
+    "10. Seed any project-specific rules now? (you can add later via adapt-system)",
     "no"
   );
 
@@ -558,6 +574,7 @@ async function interview(rl, d, _bundleRef) {
     devTracker,
     releaseTracker,
     branchPatterns,
+    workspace,
     observed,
     // defaultDepth lives as a local variable only: its single use is
     // parseObservedGithubRepos() above, which consumes it inline to
@@ -708,6 +725,61 @@ export async function askBranchPattern(ask, label, defaultValue) {
     `bootstrap: could not obtain a valid ${label} after ${MAX_ATTEMPTS} attempts; keeping the default '${defaultValue}'.\n`,
   );
   return defaultValue;
+}
+
+/**
+ * Interview loop for `workspace.members[]`. Called only when the user
+ * answered "yes" to the multi-repo workspace question. Collects one
+ * member per iteration until the user enters an empty path. Each
+ * member gets a `path`, `name`, and its own tracker binding(s).
+ *
+ * The returned object matches the schema's `workspace` block shape
+ * exactly: `{ members: [{ path, name, trackers: { dev, release? } }] }`.
+ * Returns `undefined` when the user bailed before providing a single
+ * valid member (treat as "actually no workspace" and drop the block).
+ *
+ * Exported so tests can exercise the loop in isolation without
+ * driving the full `interview()` run.
+ */
+export async function interviewWorkspaceMembers(ask, askYesNo, d) {
+  const members = [];
+  process.stdout.write(
+    "   Enter workspace members one at a time. Blank path ends the loop.\n"
+    + "   Each member needs a path (project-relative, use '.' for the primary repo),\n"
+    + "   a short name, and its own dev tracker.\n"
+  );
+  for (let idx = 1; idx <= 16; idx += 1) {
+    const path = (await ask(`   member ${idx} path (blank to finish)`, "")).trim();
+    if (!path) break;
+    const name = await askNonEmpty(
+      ask,
+      `   member ${idx} name`,
+      path === "." ? "primary" : path.split("/").pop(),
+      "member name",
+    );
+    const devKind = await askTrackerKind(
+      ask,
+      `   member ${idx} dev tracker kind: github / jira / linear / gitlab`,
+      "github",
+    );
+    const devTracker = await askTrackerTarget(ask, devKind, "dev", d);
+    const memberTrackers = { dev: devTracker };
+    const hasRelease = await askYesNo(
+      `   member ${idx} also binds its own release tracker? (most members say no)`,
+      "no",
+    );
+    if (hasRelease) {
+      const releaseKind = await askTrackerKind(
+        ask,
+        `   member ${idx} release tracker kind (default: same as dev)`,
+        devKind,
+      );
+      memberTrackers.release = await askTrackerTarget(ask, releaseKind, "release", d, devTracker);
+    }
+    members.push({ path, name, trackers: memberTrackers });
+  }
+  if (members.length === 0) return undefined;
+  return { members };
 }
 
 /**
@@ -999,6 +1071,11 @@ export function pickDefaults(d) {
     // directly) hands callers a mutable plain object, matching what
     // the interactive path produces.
     branchPatterns: { ...DEFAULT_BRANCH_PATTERNS },
+    // --yes installs default to single-repo (no workspace block).
+    // Interactive users answer the multi-repo question and populate
+    // members explicitly; teams that need this on --yes can follow up
+    // with adapt-system or hand-edit `workspace.members[]`.
+    workspace: undefined,
     observed: [],
     regimes: ["none"],
     dataClasses: ["none"],
@@ -1161,6 +1238,13 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
       ...(a.releaseTracker === undefined ? {} : { release: a.releaseTracker }),
       observed: a.observed ?? [],
     },
+    // workspace is optional. Emitted only when the user said "yes" to
+    // the multi-repo question AND provided at least one member
+    // (interviewWorkspaceMembers returns undefined when the user
+    // bailed without adding any). Gate on `=== undefined` (not
+    // truthiness) so bad inputs surface via schema validation instead
+    // of silently dropping the block.
+    ...(a.workspace === undefined ? {} : { workspace: a.workspace }),
     labels: {
       type: ["feature", "bug", "task", "refactor", "docs", "chore"],
       area: [

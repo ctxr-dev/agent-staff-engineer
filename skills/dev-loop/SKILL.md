@@ -23,6 +23,7 @@ Hard rule baked in: **the dev-loop never merges a PR and never sets a dev issue 
 
 - Issue reference (number or URL) on a `dev_project` with `depth` permitting writes.
 - Optional work plan or acceptance-criteria override the user supplies up front.
+- Optional workspace member. For single-repo projects, omit (the skill routes through `trackers.dev`). For multi-repo projects (`workspace.members[]` present), the skill resolves the owning member by walking the diff's file paths through `resolveMemberFromPath(cfg, filePath)` before picking the tracker via `pickTrackerForMember(cfg, memberName, "dev")`. Deepest-first match wins; files outside any nested member fall back to the root member (path `.`).
 
 ## Outputs
 

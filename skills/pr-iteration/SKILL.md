@@ -23,6 +23,7 @@ Hard rule baked in: **pr-iteration never merges a PR.** Merge is a human gate. E
 ## Inputs
 
 - PR number on the tracker that owns dev issues (`trackers.dev.kind`).
+- Optional workspace member. For multi-repo projects (`workspace.members[]` present), the skill inherits the member name from the originating `dev-loop` invocation, or resolves it via `resolveMemberFromPath(cfg, filePath)` on the PR's changed files. The review provider is then picked via `pickTrackerForMember(cfg, memberName, "dev").tracker.review`. Single-repo projects omit `memberName` and route through `trackers.dev` as before.
 - Optional override of `workflow.external_review.*` fields for this invocation (rare).
 
 ## Outputs

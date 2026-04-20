@@ -140,3 +140,120 @@ function makeTracker(kind, target) {
     default: throw new Error(`makeTracker: unreachable kind '${kind}'`);
   }
 }
+
+/**
+ * Build a Tracker for a specific workspace member + role. Callers pass
+ * a member `name` (as recorded in `cfg.workspace.members[].name`); when
+ * `memberName === null` or `cfg.workspace` is absent, the call falls
+ * through to the project-level `pickTracker(cfg, role)` so single-repo
+ * projects do not need to change their call sites.
+ *
+ * A member whose `trackers.<role>` is missing is an error, not a
+ * silent fallback to the project-level tracker: the member declared
+ * itself in the workspace but did not bind a tracker for this role,
+ * which is almost always a bootstrap bug the user should see. If you
+ * truly want a member to inherit the top-level tracker, omit it from
+ * `workspace.members[]` entirely.
+ *
+ * @param {object} cfg          parsed ops.config.json
+ * @param {string|null} memberName  workspace member name, or null for root
+ * @param {"dev"|"release"} [role="dev"]
+ * @returns {{ tracker: object, kind: string, memberName: string|null }}
+ */
+export function pickTrackerForMember(cfg, memberName, role = "dev") {
+  if (role !== "dev" && role !== "release") {
+    throw new Error(`pickTrackerForMember: role must be "dev" or "release"; got ${JSON.stringify(role)}`);
+  }
+  if (memberName === null || memberName === undefined) {
+    const { tracker, kind } = pickTracker(cfg, role);
+    return { tracker, kind, memberName: null };
+  }
+  const members = cfg?.workspace?.members;
+  if (!Array.isArray(members) || members.length === 0) {
+    // A memberName was supplied but the config has no workspace block.
+    // This is a caller bug: surface it rather than silently routing
+    // through the root tracker, which would mask the missing workspace.
+    throw new Error(
+      `pickTrackerForMember: memberName='${memberName}' was requested but cfg.workspace.members is absent or empty`,
+    );
+  }
+  const member = members.find((m) => m && m.name === memberName);
+  if (!member) {
+    const known = members.map((m) => m?.name).filter(Boolean).join(", ");
+    throw new Error(
+      `pickTrackerForMember: unknown workspace member '${memberName}' (known: ${known || "<none>"})`,
+    );
+  }
+  const target = member.trackers?.[role];
+  if (!target || typeof target !== "object" || Array.isArray(target)) {
+    throw new Error(
+      `pickTrackerForMember: workspace member '${memberName}' is missing trackers.${role}`,
+    );
+  }
+  const kind = target.kind;
+  if (!SUPPORTED_KINDS.includes(kind)) {
+    throw new Error(
+      `pickTrackerForMember: member '${memberName}' declares unsupported tracker kind '${kind}' for role '${role}' (supported: ${SUPPORTED_KINDS.join(", ")})`,
+    );
+  }
+  return { tracker: makeTracker(kind, target), kind, memberName };
+}
+
+/**
+ * Resolve the workspace member that owns a given project-relative file
+ * path. Returns the member `name`, or `null` if no member declares a
+ * path that contains the file (single-repo projects always return
+ * null). Matching is deepest-first, so a file under `libs/shared/x.ts`
+ * resolves to the `libs/shared` member even when `.` also declares
+ * itself as a member. Path comparison is normalised (POSIX-style; trailing
+ * slashes stripped) so `.` and `./` both match as the project root.
+ *
+ * This helper is consumed by dev-loop / pr-iteration before they pick a
+ * tracker: given the set of files changed on the current branch, the
+ * agent picks the deepest containing member and dispatches through it.
+ * Callers pass project-relative paths (no leading `/`, no `..` escape).
+ *
+ * @param {object} cfg       parsed ops.config.json
+ * @param {string} filePath  project-relative POSIX path (no leading slash)
+ * @returns {string|null}    matched member's name, or null
+ */
+export function resolveMemberFromPath(cfg, filePath) {
+  if (typeof filePath !== "string" || filePath.length === 0) {
+    throw new Error("resolveMemberFromPath: filePath must be a non-empty string");
+  }
+  const members = cfg?.workspace?.members;
+  if (!Array.isArray(members) || members.length === 0) return null;
+
+  // Normalise the file path: strip leading ./ and trailing slashes;
+  // reject absolute paths and parent-traversal since those never
+  // describe a project-relative position.
+  const norm = filePath.replace(/^\.\/+/, "").replace(/\/+$/, "");
+  if (norm.startsWith("/") || norm.split("/").includes("..")) {
+    throw new Error(`resolveMemberFromPath: filePath must be project-relative, got '${filePath}'`);
+  }
+
+  // Rank each member's path by how many leading path segments match
+  // the file's segments. Ties and zero-match misses are discarded.
+  // "." matches everything with length 0 (the weakest signal).
+  const fileParts = norm.split("/");
+  let best = { name: null, depth: -1 };
+  for (const m of members) {
+    if (!m || typeof m.path !== "string" || typeof m.name !== "string") continue;
+    const memberPath = m.path.replace(/^\.\/+/, "").replace(/\/+$/, "");
+    if (memberPath === "" || memberPath === ".") {
+      // Root member: weakest match, length 0.
+      if (best.depth < 0) best = { name: m.name, depth: 0 };
+      continue;
+    }
+    const memberParts = memberPath.split("/");
+    if (memberParts.length > fileParts.length) continue;
+    let matches = true;
+    for (let i = 0; i < memberParts.length; i += 1) {
+      if (memberParts[i] !== fileParts[i]) { matches = false; break; }
+    }
+    if (matches && memberParts.length > best.depth) {
+      best = { name: m.name, depth: memberParts.length };
+    }
+  }
+  return best.name;
+}
