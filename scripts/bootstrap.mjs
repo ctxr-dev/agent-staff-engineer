@@ -1152,11 +1152,13 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
     // trackers.release is omitted entirely when the user said "no" to
     // the release-umbrella question (a.releaseTracker is undefined).
     // The schema treats `release` as optional; consumers short-circuit
-    // on absence. Conditionally spread so the key is literally missing
-    // rather than set to undefined (which would fail strict schema).
+    // on absence. Gate on `=== undefined` (not truthiness) so bad
+    // inputs like null / 0 / "" still propagate through and fail
+    // schema validation downstream — silently dropping them would hide
+    // bugs in callers that construct an answers object programmatically.
     trackers: {
       dev: a.devTracker,
-      ...(a.releaseTracker ? { release: a.releaseTracker } : {}),
+      ...(a.releaseTracker === undefined ? {} : { release: a.releaseTracker }),
       observed: a.observed ?? [],
     },
     labels: {
@@ -1190,8 +1192,22 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
       //       remaining keys filled in from the canonical defaults,
       //       rather than a schema-invalid config missing required
       //       keys. The full key set is `required` on the schema, so
-      //       never letting partials through preserves that contract.
-      branch_patterns: { ...DEFAULT_BRANCH_PATTERNS, ...(a.branchPatterns ?? {}) },
+      //       never letting partials through preserves that contract;
+      //   (c) only schema-known keys survive. The schema declares
+      //       `additionalProperties: false` on workflow.branch_patterns,
+      //       so a caller with a typo ("fixes" instead of "fix") would
+      //       otherwise produce a schema-invalid config. Whitelist
+      //       against `DEFAULT_BRANCH_PATTERNS` (the single source of
+      //       truth for valid keys) so typos are silently dropped in
+      //       favour of the default rather than poisoning the output.
+      branch_patterns: {
+        ...DEFAULT_BRANCH_PATTERNS,
+        ...Object.fromEntries(
+          Object.entries(a.branchPatterns ?? {}).filter(
+            ([key]) => Object.prototype.hasOwnProperty.call(DEFAULT_BRANCH_PATTERNS, key),
+          ),
+        ),
+      },
       commits: {
         style: "conventional",
         signed: false,

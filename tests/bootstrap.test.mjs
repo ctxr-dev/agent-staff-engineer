@@ -1003,4 +1003,43 @@ describe("bootstrap.compose", () => {
     const v = validate(schema, cfg);
     assert.equal(v.ok, false, "missing {slug} must fail schema validation");
   });
+
+  // PR 7 R5 (Copilot): compose whitelists branchPatterns keys against
+  // DEFAULT_BRANCH_PATTERNS because the schema declares
+  // `additionalProperties: false` on workflow.branch_patterns. A typo
+  // like "fixes" instead of "fix" would otherwise propagate and
+  // produce a schema-invalid config. Lock the drop-unknown-keys
+  // behaviour so a future rewrite doesn't silently undo it.
+  it("compose drops unknown branchPatterns keys (schema has additionalProperties: false)", async () => {
+    const schema = await loadSchemaOnce();
+    const { validate } = await import("../scripts/lib/schema.mjs");
+    const polluted = {
+      feature: "feat/{issue}-{slug}",
+      fix: "fix/{issue}-{slug}",
+      chore: "chore/{issue}-{slug}",
+      refactor: "refactor/{issue}-{slug}",
+      docs: "docs/{issue}-{slug}",
+      fixes: "fixes/{issue}-{slug}",           // typo; must be dropped
+      releaseBranch: "release/{slug}",          // extra key; must be dropped
+    };
+    const cfg = compose(detection, { ...answers, branchPatterns: polluted }, ".claude/agents/agent-staff-engineer");
+    assert.equal("fixes" in cfg.workflow.branch_patterns, false, "unknown 'fixes' key must be dropped");
+    assert.equal("releaseBranch" in cfg.workflow.branch_patterns, false, "unknown 'releaseBranch' key must be dropped");
+    assert.equal(cfg.workflow.branch_patterns.fix, "fix/{issue}-{slug}", "valid keys survive");
+    assert.ok(validate(schema, cfg).ok, "composed config with dropped unknown keys must validate");
+  });
+
+  // PR 7 R5 (Copilot): trackers.release is gated on `=== undefined`,
+  // not truthiness. Bad inputs (null / 0 / "") must propagate so
+  // downstream schema validation surfaces them instead of silently
+  // omitting the key (which would produce a "valid" config despite
+  // the bad caller input).
+  it("compose propagates null releaseTracker to fail schema (not silently omit)", async () => {
+    const schema = await loadSchemaOnce();
+    const { validate } = await import("../scripts/lib/schema.mjs");
+    const cfg = compose(detection, { ...answers, releaseTracker: null }, ".claude/agents/agent-staff-engineer");
+    assert.equal("release" in cfg.trackers, true, "null releaseTracker must still produce a release key");
+    assert.equal(cfg.trackers.release, null, "null passes through verbatim");
+    assert.equal(validate(schema, cfg).ok, false, "null release must fail schema validation");
+  });
 });
