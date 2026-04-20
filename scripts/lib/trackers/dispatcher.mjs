@@ -224,13 +224,10 @@ export function resolveMemberFromPath(cfg, filePath) {
   const members = cfg?.workspace?.members;
   if (!Array.isArray(members) || members.length === 0) return null;
 
-  // Normalise the file path: strip leading ./ and trailing slashes;
-  // reject absolute paths and parent-traversal since those never
-  // describe a project-relative position.
-  const norm = filePath.replace(/^\.\/+/, "").replace(/\/+$/, "");
-  if (norm.startsWith("/") || norm.split("/").includes("..")) {
-    throw new Error(`resolveMemberFromPath: filePath must be project-relative, got '${filePath}'`);
-  }
+  // Normalise the caller-supplied file path. Member paths get the
+  // same normalisation below so "libs\\shared" in ops.config.json
+  // matches "libs/shared/x.ts" from a git diff.
+  const norm = normaliseMemberPath(filePath, "filePath");
 
   // Rank each member's path by how many leading path segments match
   // the file's segments. Ties and zero-match misses are discarded.
@@ -239,8 +236,20 @@ export function resolveMemberFromPath(cfg, filePath) {
   let best = { name: null, depth: -1 };
   for (const m of members) {
     if (!m || typeof m.path !== "string" || typeof m.name !== "string") continue;
-    const memberPath = m.path.replace(/^\.\/+/, "").replace(/\/+$/, "");
-    if (memberPath === "" || memberPath === ".") {
+    // Member paths are normalised the same way as file paths so a
+    // Windows user who typed "libs\\shared" in the interview still
+    // resolves to POSIX-diff input "libs/shared/x.ts". Bad member
+    // paths (absolute, parent-traversal, empty-after-normalise) are
+    // caught at install-time preflight and bootstrap prompt-time, so
+    // a throw here is a config-loaded-mid-session edge case: treat
+    // it as "skip this member" rather than abort the whole resolve.
+    let memberPath;
+    try {
+      memberPath = normaliseMemberPath(m.path, `member '${m.name}' path`, { allowRoot: true });
+    } catch {
+      continue;
+    }
+    if (memberPath === ".") {
       // Root member: weakest match, length 0.
       if (best.depth < 0) best = { name: m.name, depth: 0 };
       continue;
@@ -256,4 +265,71 @@ export function resolveMemberFromPath(cfg, filePath) {
     }
   }
   return best.name;
+}
+
+/**
+ * Canonical normalisation for workspace member paths and the file
+ * paths passed to `resolveMemberFromPath`. Exported so bootstrap and
+ * install can reuse the same contract at prompt-time and preflight,
+ * rather than each round-tripping through slightly-different ad-hoc
+ * regex and later disagreeing.
+ *
+ * Contract:
+ *   - Converts backslashes to forward slashes (Windows paths typed
+ *     into the bootstrap interview or checked-in configs).
+ *   - Strips a leading `./` and trailing `/`.
+ *   - Rejects absolute paths (leading `/` after normalisation or a
+ *     Windows drive prefix like `C:/`).
+ *   - Rejects any `..` segment.
+ *   - Rejects collapse-to-empty (e.g. `./`, `////`).
+ *   - When `allowRoot` is true, the inputs `.` and `./` resolve to
+ *     `.` instead of throwing. File paths never set this flag (a
+ *     file "." makes no sense); member paths always do.
+ *
+ * @param {string} input     raw path
+ * @param {string} label     prefix for error messages
+ * @param {{allowRoot?: boolean}} [opts]
+ * @returns {string}         normalised POSIX path, or `.` for root member
+ */
+export function normaliseMemberPath(input, label, opts = {}) {
+  const { allowRoot = false } = opts;
+  if (typeof input !== "string" || input.length === 0) {
+    throw new Error(`normaliseMemberPath: ${label} must be a non-empty string`);
+  }
+  // Reject Windows drive prefixes up front so the later "no leading /"
+  // check doesn't accidentally let `C:\foo` through (the backslash
+  // conversion would turn it into `C:/foo`, which has no leading
+  // slash but still resolves to an absolute drive path on Windows).
+  if (/^[A-Za-z]:[\\/]/.test(input)) {
+    throw new Error(`normaliseMemberPath: ${label} must be project-relative (got drive path '${input}')`);
+  }
+  // Normalise separators first so the rest of the checks are
+  // POSIX-only. An input of `libs\\shared` becomes `libs/shared`.
+  const withForward = input.replace(/\\/g, "/");
+  // Handle absolute paths BEFORE stripping leading "./" so the error
+  // message distinguishes "/absolute" from "./foo".
+  if (withForward.startsWith("/")) {
+    throw new Error(`normaliseMemberPath: ${label} must be project-relative (got absolute path '${input}')`);
+  }
+  // Root-member shorthand. "." and "./" (or any ".//" variant) are
+  // the canonical ways to bind a member to the project root. They
+  // need special handling because the strip-leading-"./" regex below
+  // leaves "." as-is but collapses "./" to "". Canonicalise both to
+  // "." when allowRoot is set; reject otherwise since a non-root
+  // caller (like a file path) never meaningfully maps to the root.
+  const rootOnly = withForward === "." || /^\.\/+$/.test(withForward);
+  if (rootOnly) {
+    if (allowRoot) return ".";
+    throw new Error(`normaliseMemberPath: ${label} collapses to empty after normalisation (got '${input}')`);
+  }
+  const stripped = withForward.replace(/^\.\/+/, "").replace(/\/+$/, "");
+  if (stripped.length === 0) {
+    // e.g. "////" or ".////" that didn't match rootOnly above.
+    throw new Error(`normaliseMemberPath: ${label} collapses to empty after normalisation (got '${input}')`);
+  }
+  const parts = stripped.split("/");
+  if (parts.includes("..")) {
+    throw new Error(`normaliseMemberPath: ${label} must not contain '..' (got '${input}')`);
+  }
+  return stripped;
 }

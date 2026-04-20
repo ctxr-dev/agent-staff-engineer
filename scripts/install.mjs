@@ -55,6 +55,7 @@ import { ensureGitignore } from "./lib/gitignore.mjs";
 import { injectManagedBlock, removeManagedBlock } from "./lib/inject.mjs";
 import { getAgentPrefix, prefixed } from "./lib/agentName.mjs";
 import { portableRef, resolvePortable } from "./lib/bundleRef.mjs";
+import { normaliseMemberPath } from "./lib/trackers/dispatcher.mjs";
 
 // Managed-block markers used to own a region inside a project-authored
 // CLAUDE.md. Any content outside these two lines belongs to the user and the
@@ -360,12 +361,50 @@ if (opsConfig.wiki?.required) {
 // when `workspace` is absent (single-repo projects).
 if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.length > 0) {
   const missing = [];
+  const invalid = [];
   for (const member of opsConfig.workspace.members) {
     if (!member || typeof member.path !== "string") continue;
-    const absolute = join(TARGET, member.path);
+    // Run member.path through the canonical normaliser so absolute
+    // paths, Windows drive prefixes, and `..` traversal are rejected
+    // up front. `join(TARGET, absPath)` would let an absolute path
+    // silently escape TARGET and check a location outside the
+    // project; the normaliser catches that before it can happen.
+    let relative;
+    try {
+      relative = normaliseMemberPath(member.path, `workspace member '${member.name ?? "<unnamed>"}' path`, { allowRoot: true });
+    } catch (e) {
+      invalid.push({ name: member.name ?? "<unnamed>", path: member.path, reason: e.message });
+      continue;
+    }
+    // After normalisation, resolve under TARGET. Defence-in-depth:
+    // recompute the absolute path with `resolve` and assert it
+    // stays under TARGET. A mid-normaliser bug or a clever
+    // symlink would otherwise get through the first check.
+    const absolute = resolve(TARGET, relative);
+    const resolvedTarget = resolve(TARGET);
+    if (absolute !== resolvedTarget && !absolute.startsWith(resolvedTarget + "/")) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `resolved path '${absolute}' escapes target '${resolvedTarget}'`,
+      });
+      continue;
+    }
     if (!existsSync(absolute)) {
       missing.push({ name: member.name ?? "<unnamed>", path: member.path, absolute });
     }
+  }
+  if (invalid.length > 0) {
+    process.stderr.write(
+      `\nERROR: ops.config.json declares workspace members with invalid paths:\n`,
+    );
+    for (const m of invalid) {
+      process.stderr.write(`  - '${m.name}' at '${m.path}': ${m.reason}\n`);
+    }
+    process.stderr.write(
+      `\nMember paths must be project-relative POSIX strings (e.g. '.', 'libs/shared'). Absolute paths, Windows drive prefixes, and '..' traversal are all refused because the runtime dispatcher cannot route through them safely. Fix \`workspace.members\` in ops.config.json.\n`,
+    );
+    process.exit(1);
   }
   if (missing.length > 0) {
     process.stderr.write(

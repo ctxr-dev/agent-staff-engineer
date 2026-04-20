@@ -12,6 +12,7 @@ import {
   hasReleaseTracker,
   pickTrackerForMember,
   resolveMemberFromPath,
+  normaliseMemberPath,
 } from "../scripts/lib/trackers/dispatcher.mjs";
 import {
   NotSupportedError,
@@ -343,7 +344,7 @@ describe("resolveMemberFromPath: workspace resolution", () => {
     );
     assert.throws(
       () => resolveMemberFromPath(WORKSPACE_CFG, "../escape/path.ts"),
-      /project-relative/,
+      /'\.\.'/,
     );
   });
 
@@ -356,5 +357,86 @@ describe("resolveMemberFromPath: workspace resolution", () => {
   it("throws on empty or non-string filePath", () => {
     assert.throws(() => resolveMemberFromPath(WORKSPACE_CFG, ""), /non-empty string/);
     assert.throws(() => resolveMemberFromPath(WORKSPACE_CFG, null), /non-empty string/);
+  });
+
+  // PR 8 R1 (Copilot): empty-after-normalisation inputs like "./" and
+  // "////" previously produced fileParts = [""] and silently resolved
+  // to the root member. Now rejected at the normaliser.
+  it("throws on inputs that collapse to empty after normalisation", () => {
+    assert.throws(() => resolveMemberFromPath(WORKSPACE_CFG, "./"), /collapses to empty/);
+    assert.throws(() => resolveMemberFromPath(WORKSPACE_CFG, "////"), /absolute/); // leading '/' now caught explicitly
+  });
+
+  // PR 8 R1 (Copilot): Windows backslashes in either filePath or
+  // member.path previously never matched POSIX diff input.
+  it("normalises backslashes in filePath so Windows-style input matches POSIX member paths", () => {
+    assert.equal(resolveMemberFromPath(WORKSPACE_CFG, "libs\\shared\\x.ts"), "shared");
+  });
+
+  it("normalises backslashes in member.path so a Windows-style config matches POSIX diff input", () => {
+    const winCfg = {
+      workspace: {
+        members: [
+          {
+            path: "libs\\shared",
+            name: "shared",
+            trackers: { dev: { kind: "github", owner: "acme", repo: "s", projects: [] } },
+          },
+        ],
+      },
+    };
+    assert.equal(resolveMemberFromPath(winCfg, "libs/shared/x.ts"), "shared");
+  });
+});
+
+describe("normaliseMemberPath: the canonical path normaliser", () => {
+  it("strips leading './' and trailing '/'", () => {
+    assert.equal(normaliseMemberPath("./libs/shared/", "x"), "libs/shared");
+    assert.equal(normaliseMemberPath("libs/shared", "x"), "libs/shared");
+  });
+
+  it("converts backslashes to forward slashes", () => {
+    assert.equal(normaliseMemberPath("libs\\shared", "x"), "libs/shared");
+    assert.equal(normaliseMemberPath(".\\libs\\shared\\", "x"), "libs/shared");
+  });
+
+  it("rejects absolute paths", () => {
+    assert.throws(() => normaliseMemberPath("/absolute", "x"), /absolute/);
+    assert.throws(() => normaliseMemberPath("/foo/bar", "x"), /absolute/);
+  });
+
+  it("rejects Windows drive paths", () => {
+    assert.throws(() => normaliseMemberPath("C:\\foo", "x"), /drive/);
+    assert.throws(() => normaliseMemberPath("D:/bar", "x"), /drive/);
+  });
+
+  it("rejects '..' segments", () => {
+    assert.throws(() => normaliseMemberPath("../escape", "x"), /'\.\.'/);
+    assert.throws(() => normaliseMemberPath("libs/../escape", "x"), /'\.\.'/);
+  });
+
+  it("rejects empty string and non-string", () => {
+    assert.throws(() => normaliseMemberPath("", "x"), /non-empty/);
+    assert.throws(() => normaliseMemberPath(null, "x"), /non-empty/);
+    assert.throws(() => normaliseMemberPath(42, "x"), /non-empty/);
+  });
+
+  it("rejects collapse-to-empty without allowRoot", () => {
+    assert.throws(() => normaliseMemberPath(".", "x"), /collapses to empty/);
+    assert.throws(() => normaliseMemberPath("./", "x"), /collapses to empty/);
+  });
+
+  it("returns '.' for collapse-to-empty WITH allowRoot (member root convention)", () => {
+    assert.equal(normaliseMemberPath(".", "x", { allowRoot: true }), ".");
+    assert.equal(normaliseMemberPath("./", "x", { allowRoot: true }), ".");
+  });
+
+  it("includes the label in every error message for debuggability", () => {
+    try {
+      normaliseMemberPath("/absolute", "member 'shared' path");
+      assert.fail("expected throw");
+    } catch (e) {
+      assert.match(e.message, /member 'shared' path/);
+    }
   });
 });

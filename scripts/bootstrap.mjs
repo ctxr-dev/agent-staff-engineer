@@ -29,6 +29,7 @@ import {
   safeRealpathOrExit,
 } from "./lib/fsx.mjs";
 import { ghExec, ghAuthReady } from "./lib/ghExec.mjs";
+import { normaliseMemberPath } from "./lib/trackers/dispatcher.mjs";
 import { validate } from "./lib/schema.mjs";
 import { diffLines } from "./lib/diff.mjs";
 
@@ -749,8 +750,24 @@ export async function interviewWorkspaceMembers(ask, askYesNo, d) {
     + "   a short name, and its own dev tracker.\n"
   );
   for (let idx = 1; idx <= 16; idx += 1) {
-    const path = (await ask(`   member ${idx} path (blank to finish)`, "")).trim();
-    if (!path) break;
+    let path = null;
+    // Validate the member path at prompt time so users catch typos
+    // (absolute paths, parent-traversal, Windows backslashes that
+    // would never match POSIX diff input) before the config is
+    // written. Up to 3 attempts; if the user can't produce a
+    // valid path, break the loop rather than hang the interview.
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const raw = (await ask(`   member ${idx} path (blank to finish)`, "")).trim();
+      if (!raw) { path = null; break; }
+      try {
+        // allowRoot so members can bind to the project root via "."
+        path = normaliseMemberPath(raw, `member ${idx} path`, { allowRoot: true });
+        break;
+      } catch (e) {
+        process.stderr.write(`${e.message} (attempt ${attempt}/3). Use project-relative POSIX paths like 'libs/shared' or '.' for the root repo.\n`);
+      }
+    }
+    if (path === null) break;
     const name = await askNonEmpty(
       ask,
       `   member ${idx} name`,
