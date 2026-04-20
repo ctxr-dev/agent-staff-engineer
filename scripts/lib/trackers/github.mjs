@@ -2011,8 +2011,22 @@ async function resolveProjectNodeId(owner, projectNumber) {
  */
 async function githubListProjectItems(trackerTarget, ctx, payload) {
   const { owner } = resolveOwnerOnly(ctx, trackerTarget, "projects.listProjectItems");
-  const { projectNumber, projectOwner, first = 100, after = null, limit = 500 } = payload ?? {};
+  const { projectNumber, projectOwner, first = 100, after: rawAfter = null, limit = 500 } = payload ?? {};
   requirePositiveInt(projectNumber, "projectNumber", "github projects.listProjectItems");
+  // Validate `after` at the boundary: must be null/undefined or a
+  // non-empty string. Letting a number or object flow into the
+  // GraphQL $after variable produces a less actionable error
+  // straight from the server.
+  let after;
+  if (rawAfter === null || rawAfter === undefined) {
+    after = null;
+  } else if (typeof rawAfter !== "string" || rawAfter.trim().length === 0) {
+    throw new TypeError(
+      `github projects.listProjectItems: after must be null or a non-empty string cursor; got ${JSON.stringify(rawAfter)}`,
+    );
+  } else {
+    after = rawAfter.trim();
+  }
   if (!Number.isInteger(first) || first <= 0 || first > 100) {
     throw new TypeError(
       `github projects.listProjectItems: first must be an integer 1-100; got ${JSON.stringify(first)}`,
@@ -2220,8 +2234,19 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
       `github projects.updateProjectField: projectOwner must match GitHub owner rules; got ${JSON.stringify(ownerLogin)}`,
     );
   }
+  // Normalise the configured `p.owner` before comparing. A config
+  // that accidentally ships "acme " (trailing whitespace) would
+  // otherwise never match the already-trimmed `ownerLogin` and
+  // block writes with a misleading "not declared" error.
+  const normaliseDeclaredOwner = (configuredOwner) => {
+    if (configuredOwner === undefined || configuredOwner === null) return owner;
+    if (typeof configuredOwner !== "string") return null;
+    const t = configuredOwner.trim();
+    if (t.length === 0 || !GITHUB_OWNER_RE.test(t)) return null;
+    return t;
+  };
   const declared = (trackerTarget?.projects ?? []).find(
-    (p) => p?.number === projectNumber && (p.owner ?? owner) === ownerLogin,
+    (p) => p?.number === projectNumber && normaliseDeclaredOwner(p?.owner) === ownerLogin,
   );
   if (!declared) {
     throw new Error(
@@ -2260,6 +2285,11 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
     );
   }
   const [kind] = keys;
+  // Canonicalised value holders — never mutate the caller's
+  // `value` object: callers commonly reuse the payload for logging,
+  // retries, and diffing, and silent mutation (eg trimming
+  // singleSelect) would surprise them.
+  let singleSelectName = null;
   if (kind === "text") {
     if (typeof value.text !== "string") {
       throw new TypeError("github projects.updateProjectField: value.text must be a string");
@@ -2277,8 +2307,8 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
       throw new TypeError("github projects.updateProjectField: value.singleSelect must be a non-empty string (option name)");
     }
     // Canonicalise so " P0 " and "P0" both resolve against the
-    // project's option list. Mirrors the field-name trim above.
-    value.singleSelect = value.singleSelect.trim();
+    // project's option list. Local variable, not input mutation.
+    singleSelectName = value.singleSelect.trim();
   } else {
     throw new TypeError(
       `github projects.updateProjectField: unknown value kind '${kind}'; expected text / number / date / singleSelect`,
@@ -2321,11 +2351,11 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
     valueInput = `{ date: ${JSON.stringify(value.date)} }`;
   } else if (kind === "singleSelect") {
     const options = fieldNode.options ?? [];
-    const opt = options.find((o) => o && o.name === value.singleSelect);
+    const opt = options.find((o) => o && o.name === singleSelectName);
     if (!opt?.id) {
       const avail = options.map((o) => o.name).join(", ") || "<none>";
       throw new Error(
-        `github projects.updateProjectField: option '${value.singleSelect}' not found on field '${canonicalField}' (available: ${avail})`,
+        `github projects.updateProjectField: option '${singleSelectName}' not found on field '${canonicalField}' (available: ${avail})`,
       );
     }
     valueInput = `{ singleSelectOptionId: ${JSON.stringify(opt.id)} }`;
@@ -2356,11 +2386,14 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
 }
 
 /**
- * projects.reconcileProjectFields: ensure every field declared in
- * trackerTarget.projects[i].fields (matched by project number) exists
- * on the Project v2 board. Missing fields are added via
- * `createProjectV2Field`; no edits, no deletes (deletions are a
- * destructive op users do via the UI).
+ * projects.reconcileProjectFields: ensure every field named in the
+ * caller-supplied `payload.declared` list (typically derived from
+ * `ops.config.json -> trackers.projects[].fields`) exists on the
+ * Project v2 board identified by `payload.projectNumber`
+ * (optionally scoped to `payload.projectOwner`). Entries are
+ * trimmed and deduplicated at the input boundary. Missing fields
+ * are added via `createProjectV2Field`; no edits, no deletes
+ * (deletions are a destructive op users do via the UI).
  *
  * The `dataType` for newly-created fields defaults to TEXT (the
  * only type that doesn't require extra config). Callers needing
