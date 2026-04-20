@@ -221,13 +221,13 @@
           "type": "object",
           "required": ["feature", "fix", "chore", "refactor", "docs"],
           "additionalProperties": false,
-          "description": "Branch name templates per type. Placeholders: {issue}, {slug}.",
+          "description": "Branch name templates per type. Placeholders: {issue}, {slug}. Both must appear; either order is accepted (e.g. 'feat/{issue}-{slug}' and 'feat/{slug}-{issue}' both validate).",
           "properties": {
-            "feature":  { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
-            "fix":      { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
-            "chore":    { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
-            "refactor": { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" },
-            "docs":     { "type": "string", "pattern": ".*\\{issue\\}.*\\{slug\\}.*" }
+            "feature":  { "type": "string", "pattern": "^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$" },
+            "fix":      { "type": "string", "pattern": "^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$" },
+            "chore":    { "type": "string", "pattern": "^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$" },
+            "refactor": { "type": "string", "pattern": "^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$" },
+            "docs":     { "type": "string", "pattern": "^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$" }
           }
         },
         "commits": {

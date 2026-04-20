@@ -638,8 +638,13 @@ export async function askNonEmpty(ask, question, defaultValue, humanLabel, optio
  * `{slug}` placeholders are present (the schema's pattern check enforces
  * this downstream; catching it at prompt time gives a better error).
  * Up to 3 attempts, then fall back to the default. The schema's
- * workflow.branch_patterns.<type> pattern is `.*\\{issue\\}.*\\{slug\\}.*`
- * so the two tokens can appear in any order with prefix / suffix text.
+ * workflow.branch_patterns.<type> pattern is
+ * `^(?=.*\\{issue\\})(?=.*\\{slug\\}).*$` so the two tokens can appear
+ * in EITHER order (`{issue}-{slug}` and `{slug}-{issue}` are both
+ * valid) with prefix / suffix text. This prompt check (using
+ * `includes` for each token separately) intentionally matches the
+ * schema's order-independent contract, so any pattern accepted here
+ * validates against the schema at compose time.
  */
 export async function askBranchPattern(ask, label, defaultValue) {
   const MAX_ATTEMPTS = 3;

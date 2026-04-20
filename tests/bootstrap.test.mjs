@@ -944,4 +944,37 @@ describe("bootstrap.compose", () => {
     assert.equal(cfg.workflow.branch_patterns.refactor, "refactor/{issue}-{slug}");
     assert.equal(cfg.workflow.branch_patterns.docs, "docs/{issue}-{slug}");
   });
+
+  // PR 7 R1 (Copilot): askBranchPattern used `includes` for each token
+  // separately, accepting {slug}-{issue} order; but the schema's old
+  // pattern `.*\{issue\}.*\{slug\}.*` required {issue} first, so the
+  // prompt could pass inputs that later failed schema. Schema was
+  // loosened to accept either order. Lock the contract: both orders
+  // validate; missing-either-token still fails.
+  it("schema accepts {slug} before {issue} in branch patterns (either order OK)", async () => {
+    const schema = await loadSchemaOnce();
+    const { validate } = await import("../scripts/lib/schema.mjs");
+    const cfg = composeFresh();
+    cfg.workflow.branch_patterns.feature = "feat/{slug}-{issue}";
+    const v = validate(schema, cfg);
+    assert.ok(v.ok, `{slug}-{issue} order must validate: ${JSON.stringify(v.errors ?? null)}`);
+  });
+
+  it("schema still rejects a branch pattern missing {issue}", async () => {
+    const schema = await loadSchemaOnce();
+    const { validate } = await import("../scripts/lib/schema.mjs");
+    const cfg = composeFresh();
+    cfg.workflow.branch_patterns.feature = "feat/{slug}-only";
+    const v = validate(schema, cfg);
+    assert.equal(v.ok, false, "missing {issue} must fail schema validation");
+  });
+
+  it("schema still rejects a branch pattern missing {slug}", async () => {
+    const schema = await loadSchemaOnce();
+    const { validate } = await import("../scripts/lib/schema.mjs");
+    const cfg = composeFresh();
+    cfg.workflow.branch_patterns.feature = "feat/{issue}-only";
+    const v = validate(schema, cfg);
+    assert.equal(v.ok, false, "missing {slug} must fail schema validation");
+  });
 });
