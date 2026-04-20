@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@ctxr/agent-staff-engineer)](https://www.npmjs.com/package/@ctxr/agent-staff-engineer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-An AI staff engineer for your software project. It picks up tickets, writes code, reviews its own work, opens pull requests, responds to reviewer comments, and drives changes all the way up to the point of merge. It stops there and hands the decision to you. It works with GitHub, Jira, Linear, or GitLab as the source of truth for your issues, and it reads your project's config once so every action it takes is consistent with how your team already operates.
+An AI staff engineer for your software project. It picks up tickets, writes code, reviews its own work, opens pull requests, responds to reviewer comments, and drives changes all the way up to the point of merge. It stops there and hands the decision to you. **GitHub is the only tracker with a working implementation today**; the config and bootstrap interview also accept Jira, Linear, and GitLab, but those backends are placeholders that throw `NotSupportedError` until their real implementations land (see the Current implementation status table below). It reads your project's config once so every action it takes is consistent with how your team already operates.
 
 ## What it actually does for you
 

@@ -35,8 +35,8 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { createInterface } from "node:readline/promises";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
+import { waitForRequiredSkill } from "./lib/waitForSkill.mjs";
 import { preflight } from "./preflight.mjs";
 import { parseArgv, boolFlag } from "./lib/argv.mjs";
 import {
@@ -336,22 +336,19 @@ function psQuote(s) {
 // and scripted installs fail fast with a pointed remediation message.
 if (opsConfig.wiki?.required) {
   const provider = opsConfig.wiki.provider ?? "@ctxr/skill-llm-wiki";
-  const found = await waitForRequiredSkill(provider, TARGET);
+  const found = await waitForRequiredSkillOrExit(provider, TARGET);
   process.stdout.write(`wiki provider: ${provider} found at ${portableRef(found, TARGET)}\n`);
 }
 
 /**
- * Block the installer until the required companion skill is present at one
- * of the known install paths. In an interactive terminal, the user drives
- * the wait with Enter / 'help' / 'abort'; in a non-interactive context the
- * old error-and-exit remains so CI fails fast.
- *
- * Never returns null; either returns an absolute path (which always exists
- * and is a directory) or exits the process.
+ * Decide interactive vs fail-fast based on TTY state and --yes, then
+ * dispatch to the extracted wait helper OR print the non-interactive
+ * error and exit. The helper (scripts/lib/waitForSkill.mjs) is
+ * factored out so it is unit-testable with injected streams;
+ * install.mjs keeps the TTY gate + kit-specific messaging.
  */
-async function waitForRequiredSkill(provider, target) {
-  let found = locateKitSkill(provider, target);
-  if (found) return found;
+async function waitForRequiredSkillOrExit(provider, target) {
+  const candidates = kitSkillCandidatePaths(provider, target);
 
   // Require BOTH stdin and stdout to be TTY before entering the wait
   // loop. If stdout is redirected (e.g. `install.mjs --apply > log`),
@@ -359,10 +356,14 @@ async function waitForRequiredSkill(provider, target) {
   // and the script would look hung. Fail fast in that case.
   const interactive = Boolean(processStdin.isTTY) && Boolean(processStdout.isTTY) && !YES;
   if (!interactive) {
+    // First: the early-return fast path. If the skill is already
+    // installed, don't print any error; just return it.
+    const found = locateKitSkill(provider, target);
+    if (found) return found;
     process.stderr.write(
       `\nERROR: agent-staff-engineer requires the wiki provider skill '${provider}'.\n` +
       `It was not found at any of\n` +
-      `  ${kitSkillCandidatePaths(provider, target).join("\n  ")}\n\n` +
+      `  ${candidates.join("\n  ")}\n\n` +
       `Install it first:\n` +
       `  npx @ctxr/kit install ${provider}\n\n` +
       `Then re-run this installer. To opt out (you will manage .development/ manually),\n` +
@@ -371,89 +372,12 @@ async function waitForRequiredSkill(provider, target) {
     process.exit(1);
   }
 
-  const candidates = kitSkillCandidatePaths(provider, target);
-  process.stdout.write(
-    `\nThe agent needs a companion skill that isn't installed yet.\n` +
-    `  Missing: ${provider}\n` +
-    `  I searched:\n    ${candidates.join("\n    ")}\n\n` +
-    `To install it, run this in a separate terminal:\n` +
-    `  npx @ctxr/kit install ${provider}\n\n` +
-    `I'll wait here until it's ready.\n`,
-  );
-
-  const rl = createInterface({ input: processStdin, output: processStdout });
-  // Handle Ctrl+C while rl.question() is waiting. Without this, a
-  // SIGINT would leave the readline interface open and potentially
-  // corrupt the terminal state (mirrors bootstrap.mjs' pattern).
-  // Exit 130 is the POSIX convention for "terminated by SIGINT".
-  const onSigint = () => {
-    rl.close();
-    process.stderr.write("\ninstall: interrupted\n");
-    process.exit(130);
-  };
-  process.on("SIGINT", onSigint);
-
-  try {
-    for (;;) {
-      const raw = await rl.question(
-        `\nWhen '${provider}' is installed, press Enter to continue. ` +
-        `Type 'help' for troubleshooting, or 'abort' to cancel: `,
-      );
-      const answer = raw.trim().toLowerCase();
-
-      if (answer === "abort") {
-        // Close readline BEFORE exiting so the finally block's cleanup
-        // runs predictably and the terminal is left in a good state.
-        // process.exit() in a try/finally would otherwise skip finally
-        // in some Node versions.
-        process.stderr.write(
-          `\nInstall aborted at your request. Re-run 'install.mjs --apply' when the skill is ready.\n`,
-        );
-        rl.close();
-        process.off("SIGINT", onSigint);
-        process.exit(1);
-      }
-
-      if (answer === "help") {
-        process.stdout.write(
-          `\nTroubleshooting tips for 'npx @ctxr/kit install ${provider}':\n` +
-          `  1. 'npx: command not found' -> install Node.js + npm from nodejs.org. The agent needs\n` +
-          `     Node 20 or newer.\n` +
-          `  2. 'Not found in registry' -> double-check the package name: '${provider}'. A typo is the\n` +
-          `     most common cause.\n` +
-          `  3. Permission / EACCES errors -> retry the install with a different destination; kit's\n` +
-          `     interactive menu lets you pick ~/.claude/ (user-local) which avoids sudo.\n` +
-          `  4. Behind a corporate proxy -> configure npm's proxy settings first\n` +
-          `     ('npm config set proxy ...' and 'npm config set https-proxy ...') and re-run.\n` +
-          `  5. Already installed somewhere unusual? I check these locations (in order):\n` +
-          `       ${candidates.join("\n       ")}\n` +
-          `     If your skill landed elsewhere, reinstall via kit so it goes to one of these.\n` +
-          `  6. If kit itself is misbehaving, you can alternatively clone the skill manually:\n` +
-          `       git clone https://github.com/ctxr-dev/skill-llm-wiki.git \\\n` +
-          `         ~/.claude/skills/ctxr-skill-llm-wiki\n` +
-          `     and re-run this installer.\n\n` +
-          `If you still get an error, copy the full message and paste it into Claude, ChatGPT, or your\n` +
-          `preferred support channel for help troubleshooting.\n`,
-        );
-        continue;
-      }
-
-      // Any other input (including empty Enter) means "check again".
-      found = locateKitSkill(provider, target);
-      if (found) return found;
-
-      process.stdout.write(
-        `\nStill not finding '${provider}' at any known location.\n` +
-        `  Checked: ${candidates.join(", ")}\n` +
-        `  - Confirm the install command finished without errors.\n` +
-        `  - If it completed in another terminal, double-check the scope (@ctxr) and package name.\n` +
-        `Type 'help' for more guidance, or press Enter to check again.\n`,
-      );
-    }
-  } finally {
-    rl.close();
-    process.off("SIGINT", onSigint);
-  }
+  return waitForRequiredSkill({
+    provider,
+    target,
+    candidates,
+    locate: locateKitSkill,
+  });
 }
 
 const marker = opsConfig.paths.wrappers.marker;
