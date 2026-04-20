@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { waitForRequiredSkill } from "../scripts/lib/waitForSkill.mjs";
+import { waitForRequiredSkill, InstallAbortedByUserError } from "../scripts/lib/waitForSkill.mjs";
 
 /**
  * Minimal writable-stream stub. Captures every write into an array
@@ -43,16 +43,24 @@ function makeReadlineStub(answers) {
   };
 }
 
-/** Collect calls to process.exit into an array instead of actually exiting. */
-function makeExitStub() {
+/**
+ * Collect calls to process.exit into an array. By default the stub
+ * RETURNS instead of throwing, which is the scenario the helper's
+ * abort branch is designed to handle (so it falls through and throws
+ * InstallAbortedByUserError to honor its Promise<string> contract).
+ * Pass `{ throwOnExit: true }` for the alternate shape where exit
+ * synchronously aborts execution like the real process.exit.
+ */
+function makeExitStub({ throwOnExit = false } = {}) {
   const calls = [];
   return {
     exit: (code) => {
       calls.push(code);
-      // Throw so the wait loop unwinds (mirrors process.exit's effect).
-      const err = new Error(`exit(${code})`);
-      err.__exitCode = code;
-      throw err;
+      if (throwOnExit) {
+        const err = new Error(`exit(${code})`);
+        err.__exitCode = code;
+        throw err;
+      }
     },
     calls,
   };
@@ -158,10 +166,15 @@ describe("waitForRequiredSkill: help command", () => {
 });
 
 describe("waitForRequiredSkill: abort command", () => {
-  it("calls exit(1), prints a rerun command derived from process.argv, and does not loop", async () => {
+  it("calls exit(1) and throws InstallAbortedByUserError when exit is a non-terminating stub", async () => {
+    // Models the test-harness case where `exit` returns instead of
+    // aborting the process. The helper must still honor its
+    // Promise<string> contract, so it throws after exit returns.
+    // In production, `process.exit` terminates before the throw is
+    // observed, so real users never see the error.
     const stdout = makeWriteStub();
     const stderr = makeWriteStub();
-    const exitStub = makeExitStub();
+    const exitStub = makeExitStub(); // returns, does not throw
     let offCalled = false;
 
     await assert.rejects(
@@ -177,15 +190,74 @@ describe("waitForRequiredSkill: abort command", () => {
         off: () => { offCalled = true; },
         makeReadline: () => makeReadlineStub(["abort"]),
       }),
-      /exit\(1\)/,
+      (err) => err instanceof InstallAbortedByUserError,
     );
     assert.deepEqual(exitStub.calls, [1], "exit(1) must be called exactly once on abort");
     assert.match(stderr.text(), /Install aborted at your request/);
     assert.match(stderr.text(), /Re-run when the skill is ready/);
-    // The rerun line should include the actual process.argv[0] (node) —
-    // we don't assert the specific path because it varies per host.
-    assert.ok(stderr.text().includes(process.argv[0]), "rerun command should echo process.argv[0]");
-    assert.equal(offCalled, true, "SIGINT handler must be removed on abort");
+    assert.equal(offCalled, true, "SIGINT handler must be removed on abort (via finally)");
+  });
+
+  it("uses the injected rerunCommand verbatim in the stderr hint", async () => {
+    // Round-4 T2: paths with spaces break a naive argv join. The
+    // caller (install.mjs) shell-quotes the command and injects it;
+    // the helper must print it verbatim without re-quoting.
+    const stdout = makeWriteStub();
+    const stderr = makeWriteStub();
+    const exitStub = makeExitStub();
+
+    await assert.rejects(
+      () => waitForRequiredSkill({
+        provider: "@ctxr/skill-llm-wiki",
+        target: "/tmp/test",
+        candidates: ["~/.claude/skills/ctxr-skill-llm-wiki"],
+        locate: () => null,
+        rerunCommand: "node '/pre/quoted/path with spaces/install.mjs' --apply",
+        stdout,
+        stderr,
+        exit: exitStub.exit,
+        on: () => {},
+        off: () => {},
+        makeReadline: () => makeReadlineStub(["abort"]),
+      }),
+      InstallAbortedByUserError,
+    );
+    assert.match(
+      stderr.text(),
+      /node '\/pre\/quoted\/path with spaces\/install\.mjs' --apply/,
+      "injected rerunCommand must be printed verbatim",
+    );
+  });
+
+  it("falls back to a naive argv join when no rerunCommand is injected", async () => {
+    // Regression guard: the old behavior (before the injection
+    // parameter existed) was to derive the rerun from process.argv
+    // inline. Preserve it as a fallback so callers that omit
+    // rerunCommand still get something on the prompt.
+    const stdout = makeWriteStub();
+    const stderr = makeWriteStub();
+    const exitStub = makeExitStub();
+
+    await assert.rejects(
+      () => waitForRequiredSkill({
+        provider: "@ctxr/skill-llm-wiki",
+        target: "/tmp/test",
+        candidates: ["~/.claude/skills/ctxr-skill-llm-wiki"],
+        locate: () => null,
+        // no rerunCommand
+        stdout,
+        stderr,
+        exit: exitStub.exit,
+        on: () => {},
+        off: () => {},
+        makeReadline: () => makeReadlineStub(["abort"]),
+      }),
+      InstallAbortedByUserError,
+    );
+    assert.ok(
+      stderr.text().includes(process.argv[0]),
+      "fallback rerun must echo process.argv[0] at minimum",
+    );
   });
 });
 

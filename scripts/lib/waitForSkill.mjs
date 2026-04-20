@@ -17,6 +17,22 @@
 import { createInterface } from "node:readline/promises";
 
 /**
+ * Signalled by the wait loop when the user types `abort`. The helper
+ * calls `exit(1)` first; if `exit` terminates the process (the
+ * production default), this error is never observed. If `exit` is a
+ * test stub that returns, throwing this error instead of returning
+ * `null` keeps the function's Promise<string> contract intact so
+ * downstream callers can't mistake a "user aborted" result for a
+ * real install path.
+ */
+export class InstallAbortedByUserError extends Error {
+  constructor(message = "Install aborted by user") {
+    super(message);
+    this.name = "InstallAbortedByUserError";
+  }
+}
+
+/**
  * Block until `locate(provider, target)` returns a truthy path, the
  * user aborts, or SIGINT is received.
  *
@@ -32,6 +48,11 @@ import { createInterface } from "node:readline/promises";
  * @param {(provider: string, target: string) => string|null|undefined} opts.locate
  *                                      Probe that returns an absolute path (truthy) when
  *                                      the skill is installed, or a falsy value when missing.
+ * @param {string} [opts.rerunCommand]  Pre-shell-quoted command the user should run after
+ *                                      aborting. install.mjs builds this with its existing
+ *                                      shellQuote/psQuote helpers (platform-aware) so paths
+ *                                      with spaces / metacharacters survive copy-paste.
+ *                                      When omitted, falls back to a naive argv join.
  * @param {NodeJS.ReadableStream} [opts.stdin=process.stdin]   Input stream for the prompt.
  * @param {NodeJS.WritableStream} [opts.stdout=process.stdout] Where prompts + help go.
  * @param {NodeJS.WritableStream} [opts.stderr=process.stderr] Where abort / SIGINT messages go.
@@ -44,12 +65,16 @@ import { createInterface } from "node:readline/promises";
  *                                      Factory for the readline interface (injected for tests).
  *
  * @returns {Promise<string>} the absolute path returned by `locate()` when the skill appears.
+ *                            Throws InstallAbortedByUserError on abort when `exit` is a
+ *                            non-terminating stub (tests); in production, `exit` ends the
+ *                            process before the throw is observed.
  */
 export async function waitForRequiredSkill({
   provider,
   target,
   candidates,
   locate,
+  rerunCommand,
   stdin = process.stdin,
   stdout = process.stdout,
   stderr = process.stderr,
@@ -77,9 +102,9 @@ export async function waitForRequiredSkill({
   // Handle Ctrl+C while rl.question() is waiting. Without this, a
   // SIGINT would leave the readline interface open and potentially
   // corrupt the terminal state. Exit 130 is the POSIX convention for
-  // "terminated by SIGINT".
+  // "terminated by SIGINT". Cleanup (rl.close + off) happens once in
+  // the `finally` block below so it's not duplicated on every branch.
   const onSigint = () => {
-    rl.close();
     stderr.write("\ninstall: interrupted\n");
     exit(130);
   };
@@ -94,23 +119,26 @@ export async function waitForRequiredSkill({
       const answer = String(raw ?? "").trim().toLowerCase();
 
       if (answer === "abort") {
-        // Derive the re-run command from the actual invocation so the
-        // user can copy it verbatim. Avoids hardcoding `--apply` when
-        // the user was running `--update` or some other mode.
+        // The caller (install.mjs) typically passes a pre-shell-quoted
+        // rerunCommand so paths with spaces survive copy-paste. If no
+        // pre-formatted command is supplied, fall back to a naive
+        // argv join; it works for the common case but breaks on
+        // whitespace-containing arguments.
         const argv = Array.isArray(process.argv) ? process.argv : [];
-        const rerun = argv.length >= 2
-          ? `${argv[0]} ${argv.slice(1).join(" ")}`
-          : "<re-run with the same flags you used>";
+        const rerun = rerunCommand
+          ?? (argv.length >= 2
+            ? `${argv[0]} ${argv.slice(1).join(" ")}`
+            : "<re-run with the same flags you used>");
         stderr.write(
           `\nInstall aborted at your request. Re-run when the skill is ready:\n` +
           `  ${rerun}\n`,
         );
-        rl.close();
-        off("SIGINT", onSigint);
         exit(1);
-        // `exit` may be a test stub that returns instead of throwing.
-        // Fall through so the function still returns in that case.
-        return null;
+        // If `exit` returned (test stub), throw so the function honors
+        // its Promise<string> contract and callers never see a null
+        // masquerading as a real install path. `finally` below runs
+        // cleanup exactly once either way.
+        throw new InstallAbortedByUserError();
       }
 
       if (answer === "help") {

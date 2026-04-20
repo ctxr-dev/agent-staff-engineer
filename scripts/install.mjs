@@ -372,11 +372,25 @@ async function waitForRequiredSkillOrExit(provider, target) {
     process.exit(1);
   }
 
+  // Build the rerun command with platform-aware shell quoting so a
+  // user whose target path contains spaces (macOS "Application
+  // Support", Windows "Program Files") can copy it verbatim. The
+  // helper falls back to a naive argv join when no pre-quoted value
+  // is supplied, but that breaks on whitespace; pre-quoting here is
+  // the robust path.
+  const onWindows = process.platform === "win32";
+  const quote = onWindows ? psQuote : shellQuote;
+  const argv = Array.isArray(process.argv) ? process.argv : [];
+  const rerunCommand = argv.length >= 2
+    ? [argv[0], ...argv.slice(1)].map(quote).join(" ")
+    : undefined;
+
   return waitForRequiredSkill({
     provider,
     target,
     candidates,
     locate: locateKitSkill,
+    rerunCommand,
   });
 }
 
