@@ -45,20 +45,40 @@ export function makeGithubTracker(target = {}) {
     resolveThread: githubResolveThread,
     ciStateOnHead: githubCiStateOnHead,
   };
-  // Construction-time coverage assert: if REVIEW_METHODS grows a new
-  // entry and this file forgets to wire it, fail loudly here rather
-  // than letting the skill hit a bare `x is not a function` at runtime.
-  const missing = REVIEW_METHODS.filter((m) => typeof review[m] !== "function");
-  if (missing.length > 0) {
+  // issues.* methods need access to the tracker's construction-time
+  // target (owner/repo defaults, projects[0] for status mapping).
+  // Wrap the module-level implementations as closures that capture
+  // `target`, rather than relying on `this` binding, so destructured
+  // callers (`const {comment} = tracker.issues`) keep working.
+  const issues = {
+    createIssue: (ctx, payload) => githubCreateIssue(target, ctx, payload),
+    updateIssueStatus: (ctx, payload) => githubUpdateIssueStatus(target, ctx, payload),
+    comment: (ctx, payload) => githubComment(target, ctx, payload),
+    relabelIssue: (ctx, payload) => githubRelabelIssue(target, ctx, payload),
+    getIssue: (ctx, payload) => githubGetIssue(target, ctx, payload),
+    listIssues: (ctx, payload) => githubListIssues(target, ctx, payload),
+  };
+  // Construction-time coverage assert: if REVIEW_METHODS (or the
+  // issues list in TRACKER_NAMESPACES) grows a new entry and this
+  // file forgets to wire it, fail loudly here rather than letting
+  // the skill hit a bare `x is not a function` at runtime.
+  const missingReview = REVIEW_METHODS.filter((m) => typeof review[m] !== "function");
+  if (missingReview.length > 0) {
     throw new Error(
-      `makeGithubTracker: missing review methods [${missing.join(", ")}]; wire them or update REVIEW_METHODS`,
+      `makeGithubTracker: missing review methods [${missingReview.join(", ")}]; wire them or update REVIEW_METHODS`,
+    );
+  }
+  const missingIssues = TRACKER_NAMESPACES.issues.filter((m) => typeof issues[m] !== "function");
+  if (missingIssues.length > 0) {
+    throw new Error(
+      `makeGithubTracker: missing issues methods [${missingIssues.join(", ")}]; wire them or update TRACKER_NAMESPACES.issues`,
     );
   }
   return {
     kind: "github",
     target,
     review,
-    issues: makeStubNamespace("github", "issues"),
+    issues,
     projects: makeStubNamespace("github", "projects"),
     labels: makeStubNamespace("github", "labels"),
   };
@@ -366,4 +386,577 @@ async function countUnresolvedBeyondFirstPage({ owner, repo, prNumber }, startCu
     after = rt.pageInfo.endCursor ?? null;
   }
   return unresolved;
+}
+
+// ============================================================================
+// issues.* namespace (PR 9)
+//
+// Each method takes the common `ctx = { owner, repo }` runtime fields
+// (falling back to the tracker's constructor-time `target.owner` / `target.repo`
+// when `ctx` omits them) plus a method-specific payload object. The
+// implementations make one or more `gh api graphql` calls via
+// ghGraphqlQuery / ghGraphqlMutation from ghExec.mjs, matching the
+// `review` namespace's transport. Rationale-per-method in the JSDoc blocks
+// below. See `skills/tracker-sync/SKILL.md` for the skill-level contract.
+// ============================================================================
+
+// Shared utilities -----------------------------------------------------------
+
+/**
+ * Pull `owner` + `repo` out of ctx, falling back to the tracker target
+ * this provider was constructed with. Throws if neither source has both
+ * fields, since every `issues.*` method needs them.
+ */
+function resolveRepoCoords(ctx, trackerTarget) {
+  const owner = (ctx && ctx.owner) || (trackerTarget && trackerTarget.owner);
+  const repo = (ctx && ctx.repo) || (trackerTarget && trackerTarget.repo);
+  if (typeof owner !== "string" || owner.length === 0) {
+    throw new TypeError("github issues: ctx.owner (or target.owner) is required");
+  }
+  if (typeof repo !== "string" || repo.length === 0) {
+    throw new TypeError("github issues: ctx.repo (or target.repo) is required");
+  }
+  return { owner, repo };
+}
+
+/** Validate an integer issue number at the input boundary. */
+function requirePositiveInt(value, label) {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new TypeError(`github issues: ${label} must be a positive integer; got ${JSON.stringify(value)}`);
+  }
+}
+
+/**
+ * Fetch an issue's node ID and current label set for a given issue
+ * number. Used as a prerequisite by every mutation-shaped method
+ * (comment, relabel, update-status) that needs the GraphQL node ID.
+ *
+ * Returns `null` if the issue doesn't exist (caller decides whether
+ * that's an error). Throws on transport / authorization failures via
+ * the underlying ghGraphqlQuery path.
+ */
+async function fetchIssueNodeId(owner, repo, issueNumber) {
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        issue(number: $number) {
+          id number title state
+          labels(first: 100) { nodes { id name } }
+        }
+      }
+    }
+  `;
+  const data = await ghGraphqlQuery(query, { owner, name: repo, number: issueNumber });
+  return data?.repository?.issue ?? null;
+}
+
+/**
+ * Resolve an array of label names to their GraphQL node IDs within a
+ * given repo. Returns a Map of name -> id for the labels that exist;
+ * any unknown label name is collected into `missing[]` for the caller
+ * to surface. Pagination is bounded by GitHub's 100-labels-per-page
+ * limit; repos with >100 labels walk through a `labels(first:100, after:...)`
+ * page loop here rather than silently truncating.
+ */
+async function resolveLabelIds(owner, repo, names) {
+  const wanted = new Set(names);
+  const found = new Map();
+  let after = null;
+  const query = `
+    query($owner: String!, $name: String!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        labels(first: 100, after: $after) {
+          nodes { id name }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  `;
+  const MAX_PAGES = 20;
+  let page = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    page += 1;
+    if (page > MAX_PAGES) {
+      throw new Error(
+        `github issues.resolveLabelIds: repo ${owner}/${repo} has more than ${MAX_PAGES * 100} labels; refusing to paginate further`,
+      );
+    }
+    const data = await ghGraphqlQuery(query, { owner, name: repo, after });
+    const labels = data.repository.labels;
+    for (const l of labels.nodes) {
+      if (wanted.has(l.name)) found.set(l.name, l.id);
+      if (found.size === wanted.size) break;
+    }
+    if (found.size === wanted.size) break;
+    if (!labels.pageInfo?.hasNextPage) break;
+    after = labels.pageInfo.endCursor;
+  }
+  const missing = names.filter((n) => !found.has(n));
+  return { found, missing };
+}
+
+// issues.comment -------------------------------------------------------------
+
+async function githubComment(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { issueNumber, body } = payload ?? {};
+  requirePositiveInt(issueNumber, "issueNumber");
+  if (typeof body !== "string" || body.length === 0) {
+    throw new TypeError("github issues.comment: body must be a non-empty string");
+  }
+  const issue = await fetchIssueNodeId(owner, repo, issueNumber);
+  if (!issue) {
+    throw new Error(`github issues.comment: issue #${issueNumber} not found in ${owner}/${repo}`);
+  }
+  const mutation = `
+    mutation($subjectId: ID!, $body: String!) {
+      addComment(input: { subjectId: $subjectId, body: $body }) {
+        commentEdge { node { id } }
+      }
+    }
+  `;
+  return ghGraphqlMutation(mutation, { subjectId: issue.id, body });
+}
+
+// issues.getIssue ------------------------------------------------------------
+
+async function githubGetIssue(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { issueNumber } = payload ?? {};
+  requirePositiveInt(issueNumber, "issueNumber");
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        issue(number: $number) {
+          id number title body state url createdAt closedAt
+          author { login }
+          assignees(first: 10) { nodes { login } }
+          labels(first: 100) { nodes { name } }
+          milestone { number title state }
+        }
+      }
+    }
+  `;
+  const data = await ghGraphqlQuery(query, { owner, name: repo, number: issueNumber });
+  const issue = data?.repository?.issue;
+  if (!issue) {
+    throw new Error(`github issues.getIssue: issue #${issueNumber} not found in ${owner}/${repo}`);
+  }
+  return {
+    id: issue.id,
+    number: issue.number,
+    title: issue.title,
+    body: issue.body ?? "",
+    state: issue.state, // OPEN | CLOSED
+    url: issue.url,
+    author: issue.author?.login ?? null,
+    createdAt: issue.createdAt,
+    closedAt: issue.closedAt,
+    assignees: issue.assignees.nodes.map((a) => a.login),
+    labels: issue.labels.nodes.map((l) => l.name),
+    milestone: issue.milestone
+      ? { number: issue.milestone.number, title: issue.milestone.title, state: issue.milestone.state }
+      : null,
+  };
+}
+
+// issues.listIssues ----------------------------------------------------------
+
+/**
+ * Paginated issue list. Filters:
+ *   - state: "OPEN" | "CLOSED" | "ALL" (default: OPEN). Mapped to
+ *     GitHub's `issues(states: ...)` arg; "ALL" omits the filter.
+ *   - labels: string[]. Client-side filter after the page fetch
+ *     (GitHub's Issue.labels arg supports only exact-match on a
+ *     single label, and `issues(labels:)` is unavailable on the
+ *     Repository connection via GraphQL).
+ *   - milestone: { number: int } | null — client-side filter.
+ *   - limit: int (default 100; hard max 1000 to match the review
+ *     namespace's pagination cap).
+ */
+async function githubListIssues(trackerTarget, ctx, payload = {}) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { state = "OPEN", labels = null, milestone = null, limit = 100 } = payload;
+  if (state !== "OPEN" && state !== "CLOSED" && state !== "ALL") {
+    throw new TypeError(`github issues.listIssues: state must be "OPEN", "CLOSED", or "ALL"; got ${JSON.stringify(state)}`);
+  }
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new TypeError(`github issues.listIssues: limit must be a positive integer`);
+  }
+  const HARD_CAP = 1000;
+  const effectiveLimit = Math.min(limit, HARD_CAP);
+  const statesArg = state === "ALL" ? "" : `, states: [${state}]`;
+  const query = `
+    query($owner: String!, $name: String!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        issues(first: 100, after: $after${statesArg}, orderBy: { field: CREATED_AT, direction: DESC }) {
+          nodes {
+            id number title state url createdAt
+            labels(first: 20) { nodes { name } }
+            milestone { number }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  `;
+  const out = [];
+  let after = null;
+  const MAX_PAGES = 10;
+  let page = 0;
+  while (out.length < effectiveLimit) {
+    page += 1;
+    if (page > MAX_PAGES) {
+      throw new Error(
+        `github issues.listIssues: exceeded ${MAX_PAGES} pages for ${owner}/${repo}; tighten filters or raise the cap`,
+      );
+    }
+    const data = await ghGraphqlQuery(query, { owner, name: repo, after });
+    const conn = data.repository.issues;
+    for (const n of conn.nodes) {
+      // Client-side filters. Label filter means "has every name in the
+      // filter array"; milestone means "same milestone number".
+      const nodeLabels = new Set(n.labels.nodes.map((l) => l.name));
+      if (Array.isArray(labels) && labels.length > 0) {
+        if (!labels.every((l) => nodeLabels.has(l))) continue;
+      }
+      if (milestone && typeof milestone.number === "number") {
+        if (!n.milestone || n.milestone.number !== milestone.number) continue;
+      }
+      out.push({
+        id: n.id,
+        number: n.number,
+        title: n.title,
+        state: n.state,
+        url: n.url,
+        createdAt: n.createdAt,
+        labels: [...nodeLabels],
+        milestoneNumber: n.milestone?.number ?? null,
+      });
+      if (out.length >= effectiveLimit) break;
+    }
+    if (!conn.pageInfo?.hasNextPage) break;
+    after = conn.pageInfo.endCursor;
+  }
+  return out;
+}
+
+// issues.relabelIssue --------------------------------------------------------
+
+/**
+ * Add / remove labels on an existing issue. Either or both of `add`
+ * and `remove` may be supplied; empty arrays are allowed but result
+ * in no mutation call for that side. Unknown label names (not present
+ * on the repo) throw with a pointed message listing which ones
+ * missed, rather than silently succeeding.
+ */
+async function githubRelabelIssue(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { issueNumber, add = [], remove = [] } = payload ?? {};
+  requirePositiveInt(issueNumber, "issueNumber");
+  if (!Array.isArray(add) || !Array.isArray(remove)) {
+    throw new TypeError("github issues.relabelIssue: add and remove must be arrays of label names");
+  }
+  if (add.length === 0 && remove.length === 0) {
+    // Nothing to do. Match the idempotency contract: no-op is a
+    // successful return, not an error.
+    return { added: [], removed: [], issueNumber };
+  }
+  const issue = await fetchIssueNodeId(owner, repo, issueNumber);
+  if (!issue) {
+    throw new Error(`github issues.relabelIssue: issue #${issueNumber} not found in ${owner}/${repo}`);
+  }
+  const allNames = [...new Set([...add, ...remove])];
+  const { found, missing } = await resolveLabelIds(owner, repo, allNames);
+  if (missing.length > 0) {
+    throw new Error(
+      `github issues.relabelIssue: labels not found in ${owner}/${repo}: ${missing.map((m) => `'${m}'`).join(", ")}`,
+    );
+  }
+  // Filter add/remove down to labels the issue isn't already / is
+  // still in, so the result is a true delta (avoids a needless
+  // mutation on a re-run). Using the issue's current labels from
+  // fetchIssueNodeId.
+  const currentSet = new Set(issue.labels.nodes.map((l) => l.name));
+  const toAdd = add.filter((n) => !currentSet.has(n));
+  const toRemove = remove.filter((n) => currentSet.has(n));
+  if (toAdd.length > 0) {
+    const ids = toAdd.map((n) => JSON.stringify(found.get(n))).join(", ");
+    const mutation = `
+      mutation($labelableId: ID!) {
+        addLabelsToLabelable(input: { labelableId: $labelableId, labelIds: [${ids}] }) {
+          labelable { ... on Issue { id } }
+        }
+      }
+    `;
+    await ghGraphqlMutation(mutation, { labelableId: issue.id });
+  }
+  if (toRemove.length > 0) {
+    const ids = toRemove.map((n) => JSON.stringify(found.get(n))).join(", ");
+    const mutation = `
+      mutation($labelableId: ID!) {
+        removeLabelsFromLabelable(input: { labelableId: $labelableId, labelIds: [${ids}] }) {
+          labelable { ... on Issue { id } }
+        }
+      }
+    `;
+    await ghGraphqlMutation(mutation, { labelableId: issue.id });
+  }
+  return { added: toAdd, removed: toRemove, issueNumber };
+}
+
+// issues.createIssue ---------------------------------------------------------
+
+/**
+ * Create an issue with dedupe-by-title. Required fields: `title`. Optional:
+ *   - body: issue body (markdown).
+ *   - labels: array of existing label names. Resolved to IDs after
+ *     creation (GitHub's createIssue input only accepts label IDs,
+ *     not names, so we apply labels via addLabelsToLabelable in a
+ *     second mutation).
+ *   - milestone: { number: int } — bound after lookup.
+ *   - assignees: array of usernames. Resolved to node IDs via a
+ *     `users(first:...)` query; unknown logins surface as an error.
+ *   - templateName: name (without .md) of a file under
+ *     `paths.templates/`. When set, the caller's `body` is ignored
+ *     and the file is rendered with `{{ placeholder }}` substitution
+ *     driven by `ctx.templateVars`. Template rendering lives at
+ *     `ctx.templateLoader(name, vars)` so the tracker doesn't
+ *     reach into the filesystem itself.
+ *
+ * Dedupe: before creating, the method lists open issues by the
+ * requested title (exact match). If one already exists, it is
+ * returned as-is without a create. This matches the skill-level
+ * idempotency contract documented in skills/tracker-sync/SKILL.md.
+ */
+async function githubCreateIssue(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const {
+    title,
+    body = "",
+    labels = [],
+    milestone = null,
+    assignees = [],
+    templateName = null,
+  } = payload ?? {};
+  if (typeof title !== "string" || title.trim().length === 0) {
+    throw new TypeError("github issues.createIssue: title must be a non-empty string");
+  }
+  if (!Array.isArray(labels) || !Array.isArray(assignees)) {
+    throw new TypeError("github issues.createIssue: labels and assignees must be arrays");
+  }
+  // Dedupe: search open issues by exact title. GitHub's `search` API
+  // accepts a `is:issue is:open repo:owner/repo in:title "exact"`
+  // query string, but substring matching can't be turned off there,
+  // so we do the search + a strict equality filter on the result.
+  const dedupeQuery = `
+    query($q: String!) {
+      search(query: $q, type: ISSUE, first: 20) {
+        nodes { ... on Issue { id number title state repository { nameWithOwner } } }
+      }
+    }
+  `;
+  const q = `is:issue is:open repo:${owner}/${repo} in:title "${title.replace(/"/g, '\\"')}"`;
+  const dupeData = await ghGraphqlQuery(dedupeQuery, { q });
+  const match = (dupeData.search.nodes || []).find(
+    (n) => n && n.title === title && n.repository?.nameWithOwner === `${owner}/${repo}`,
+  );
+  if (match) {
+    return { id: match.id, number: match.number, existed: true };
+  }
+  // Render body from template when requested. The caller injects the
+  // loader (keeps the tracker filesystem-pure for tests + parallel
+  // platforms). Template vars come from ctx.templateVars.
+  let finalBody = body;
+  if (templateName) {
+    if (typeof ctx?.templateLoader !== "function") {
+      throw new TypeError(
+        "github issues.createIssue: templateName was supplied but ctx.templateLoader is not a function",
+      );
+    }
+    finalBody = await ctx.templateLoader(templateName, ctx.templateVars ?? {});
+    if (typeof finalBody !== "string") {
+      throw new TypeError(
+        "github issues.createIssue: ctx.templateLoader must return a string (rendered body)",
+      );
+    }
+  }
+  // Resolve the repository node ID for createIssue's input.
+  const repoQuery = `
+    query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) { id }
+    }
+  `;
+  const repoData = await ghGraphqlQuery(repoQuery, { owner, name: repo });
+  const repoId = repoData?.repository?.id;
+  if (!repoId) {
+    throw new Error(`github issues.createIssue: repository ${owner}/${repo} not found`);
+  }
+  // createIssue mutation. Labels are applied in a separate step below
+  // because the mutation's labelIds input wants node IDs, not names,
+  // and we want the caller to pass names.
+  const createMutation = `
+    mutation($repoId: ID!, $title: String!, $body: String!) {
+      createIssue(input: { repositoryId: $repoId, title: $title, body: $body }) {
+        issue { id number url }
+      }
+    }
+  `;
+  const createData = await ghGraphqlMutation(createMutation, { repoId, title, body: finalBody });
+  const created = createData?.createIssue?.issue;
+  if (!created?.id) {
+    throw new Error("github issues.createIssue: createIssue response missing issue.id");
+  }
+  // Apply labels + assignees + milestone best-effort. Any failure
+  // surfaces but the issue has already been created, so the return
+  // value still includes the created number so the caller can
+  // retry / manually patch.
+  if (labels.length > 0) {
+    await githubRelabelIssue({ owner, repo }, { owner, repo }, {
+      issueNumber: created.number,
+      add: labels,
+    });
+  }
+  // Assignees + milestone: left as future work. Tests lock on the
+  // create + labels path for PR 9; PR 10's labels.* + projects.*
+  // namespaces will revisit the broader reconcile semantics that
+  // cover assignee resolution (which needs a users(first) query).
+  return { id: created.id, number: created.number, url: created.url, existed: false };
+}
+
+// issues.updateIssueStatus ---------------------------------------------------
+
+/**
+ * Move an issue's status on its bound Project v2. Refuses to set
+ * Done (the human-gate contract in rules/pr-workflow.md). No-op
+ * when the item is already in the requested status.
+ *
+ * `status` is one of the agent's vocabulary keys
+ * (backlog / ready / in_progress / in_review / done). Mapped to the
+ * Project v2 option name via `trackerTarget.projects[0].status_values`.
+ * Config must supply a dev project binding for this method to work;
+ * throws otherwise.
+ */
+async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { issueNumber, status } = payload ?? {};
+  requirePositiveInt(issueNumber, "issueNumber");
+  if (typeof status !== "string" || status.length === 0) {
+    throw new TypeError("github issues.updateIssueStatus: status must be a non-empty string key");
+  }
+  // Refuse Done per the human-gate contract.
+  if (status === "done") {
+    throw new Error(
+      "github issues.updateIssueStatus: refusing to set status 'done'; that is a human gate (see rules/pr-workflow.md)",
+    );
+  }
+  const target = trackerTarget;
+  const project = target?.projects?.[0];
+  if (!project || typeof project.number !== "number") {
+    throw new Error(
+      "github issues.updateIssueStatus: tracker target has no projects[0] binding; cannot resolve Project v2 item",
+    );
+  }
+  const nativeStatusName = project.status_values?.[status];
+  if (typeof nativeStatusName !== "string" || nativeStatusName.length === 0) {
+    throw new Error(
+      `github issues.updateIssueStatus: status '${status}' has no native mapping in projects[0].status_values`,
+    );
+  }
+  const statusField = project.status_field || "Status";
+  const projectNumber = project.number;
+  const projectOwner = project.owner || owner;
+  // Compound query: resolve issue's project item, the project's
+  // Status field node id, the option id for the target name, and
+  // the current value — all in one round trip.
+  const query = `
+    query($owner: String!, $name: String!, $issueNumber: Int!, $projectOwner: String!, $projectNumber: Int!) {
+      repository(owner: $owner, name: $name) {
+        issue(number: $issueNumber) {
+          id
+          projectItems(first: 20) {
+            nodes {
+              id
+              project { id number }
+              fieldValueByName(name: "${statusField}") {
+                ... on ProjectV2ItemFieldSingleSelectValue { optionId name }
+              }
+            }
+          }
+        }
+      }
+      repositoryOwner(login: $projectOwner) {
+        ... on ProjectV2Owner {
+          projectV2(number: $projectNumber) {
+            id
+            field(name: "${statusField}") {
+              ... on ProjectV2SingleSelectField { id options { id name } }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const data = await ghGraphqlQuery(query, {
+    owner,
+    name: repo,
+    issueNumber,
+    projectOwner,
+    projectNumber,
+  });
+  const issue = data?.repository?.issue;
+  if (!issue) {
+    throw new Error(`github issues.updateIssueStatus: issue #${issueNumber} not found in ${owner}/${repo}`);
+  }
+  const projectV2 = data?.repositoryOwner?.projectV2;
+  if (!projectV2?.id) {
+    throw new Error(
+      `github issues.updateIssueStatus: Project v2 #${projectNumber} not found under ${projectOwner}`,
+    );
+  }
+  const field = projectV2.field;
+  if (!field?.id) {
+    throw new Error(
+      `github issues.updateIssueStatus: field '${statusField}' not found on Project v2 #${projectNumber}`,
+    );
+  }
+  const option = field.options.find((o) => o.name === nativeStatusName);
+  if (!option) {
+    throw new Error(
+      `github issues.updateIssueStatus: option '${nativeStatusName}' (mapped from '${status}') not found on field '${statusField}'`,
+    );
+  }
+  const projectItem = issue.projectItems.nodes.find(
+    (n) => n && n.project?.number === projectNumber,
+  );
+  if (!projectItem?.id) {
+    throw new Error(
+      `github issues.updateIssueStatus: issue #${issueNumber} is not bound to Project v2 #${projectNumber}; add it to the project first`,
+    );
+  }
+  // Idempotency: no-op when the item is already in the target status.
+  const currentValue = projectItem.fieldValueByName;
+  if (currentValue && currentValue.optionId === option.id) {
+    return { issueNumber, status, changed: false, optionId: option.id };
+  }
+  const mutation = `
+    mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: $projectId
+        itemId: $itemId
+        fieldId: $fieldId
+        value: { singleSelectOptionId: $optionId }
+      }) {
+        projectV2Item { id }
+      }
+    }
+  `;
+  await ghGraphqlMutation(mutation, {
+    projectId: projectV2.id,
+    itemId: projectItem.id,
+    fieldId: field.id,
+    optionId: option.id,
+  });
+  return { issueNumber, status, changed: true, optionId: option.id };
 }

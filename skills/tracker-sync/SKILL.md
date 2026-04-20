@@ -19,7 +19,7 @@ Before acting, read the target project's `.claude/ops.config.json`. Refuse to ru
 
 Centralises every tracker API call. Other skills describe what they want; `tracker-sync` owns how it hits the API of the configured kind, how it respects per-target depth, and how it stays idempotent. Concrete backends live in `scripts/lib/trackers/`:
 
-- **GitHub**: partial impl via `gh` CLI + GraphQL. The `review.*` namespace is fully implemented (backs `skills/pr-iteration`); `issues.*`, `projects.*`, and `labels.*` are currently stubbed and throw `NotSupportedError` until ported from the pre-trackers gh-only path. Follow-up PRs wire those namespaces onto `scripts/lib/trackers/github.mjs`.
+- **GitHub**: partial impl via `gh` CLI + GraphQL. The `review.*` and `issues.*` namespaces are fully implemented (`review` backs `skills/pr-iteration`; `issues` backs `dev-loop`, `regression-handler`, and every create/update/comment/relabel/read call across the bundle). `projects.*` and `labels.*` are currently stubbed and throw `NotSupportedError`; follow-up PRs wire those onto `scripts/lib/trackers/github.mjs`.
 - **Jira / Linear / GitLab**: every namespace stubbed today; every op throws `NotSupportedError`. Callers catch and halt cleanly. Real backends land in follow-up PRs.
 
 ## Inputs
@@ -38,11 +38,11 @@ Centralises every tracker API call. Other skills describe what they want; `track
 
 The method list is grouped by namespace on the Tracker interface (see `scripts/lib/trackers/tracker.mjs` for the canonical method names). Each entry is tagged with its current implementation status on this PR: **implemented on github** means the github backend has working code; **stubbed on every backend** means every Tracker throws `NotSupportedError` today and the operation is part of the contract, pending a port of the pre-trackers gh-only code path. Real backends for jira / linear / gitlab land in follow-up PRs.
 
-- **`issues.createIssue`** (stubbed on every backend): render the right template from `templates/` against caller-supplied placeholders, apply labels, link the release umbrella.
-- **`issues.updateIssueStatus`** (stubbed on every backend): move an issue to a named status, never to Done. Status vocabulary comes from `trackers.<role>.status_values` (GitHub) or the per-kind equivalent (Jira workflow state, Linear workflow state, GitLab scoped label).
-- **`issues.comment`** (stubbed on every backend): post a comment on an issue (e.g. a filled regression report).
-- **`issues.relabelIssue`** / **`labels.relabelBulk`** (stubbed on every backend): apply a label taxonomy plan from `adapt-system`, including renames via add-new plus remove-old.
-- **`issues.getIssue`** / **`issues.listIssues`** (stubbed on every backend): read-only lookups, respecting depth.
+- **`issues.createIssue`** (implemented on github; stubbed on jira/linear/gitlab): render the right template from `templates/` against caller-supplied placeholders, apply labels, link the release umbrella. Dedupes open issues by exact title match on the repo before creating; returns the existing issue when a match is found.
+- **`issues.updateIssueStatus`** (implemented on github; stubbed on jira/linear/gitlab): move an issue to a named status on the tracker's bound Project v2 (GitHub) or per-kind equivalent (Jira workflow state, Linear workflow state, GitLab scoped label). Never moves an issue to Done: that step is a human gate per `rules/pr-workflow.md`. No-op when the item is already in the requested status.
+- **`issues.comment`** (implemented on github; stubbed on jira/linear/gitlab): post a comment on an issue (e.g. a filled regression report).
+- **`issues.relabelIssue`** (implemented on github; stubbed on jira/linear/gitlab) / **`labels.relabelBulk`** (stubbed on every backend): apply a label taxonomy plan from `adapt-system`, including renames via add-new plus remove-old. `relabelIssue` computes a delta against the issue's current labels so calling it twice with the same add/remove set is a no-op on the second run.
+- **`issues.getIssue`** / **`issues.listIssues`** (implemented on github; stubbed on jira/linear/gitlab): read-only lookups, respecting depth. `listIssues` paginates through the repo's open-by-default issues and applies client-side label + milestone filters on top of GitHub's `issues(states:)` connection (GraphQL does not expose a label filter on the Repository.issues field).
 - **`labels.reconcileLabels`** (stubbed on every backend): compare the target's labels to `ops.config.json -> labels.*`; produce an add/edit/deprecate plan; apply on approval.
 - **`projects.reconcileProjectFields`** (stubbed on every backend): ensure every field declared in the github tracker's `projects[].fields` exists on the right Project v2 board; add missing fields. The Project v2 concept is GitHub-specific; other tracker kinds will either surface `NotSupportedError` or map to a native equivalent when they ship.
 - **`projects.listProjectItems`** (stubbed on every backend): read-only snapshot of project items with their fields.
