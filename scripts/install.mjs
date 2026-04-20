@@ -325,15 +325,23 @@ function psQuote(s) {
 // runs after bootstrap so a fresh install has a real opsConfig to read.
 // See rules/llm-wiki.md for the runtime contract this gate protects.
 //
-// Interactive mode (a real terminal and --yes not set): the installer WAITS
-// for the user to install the skill, polling on each Enter key until the
-// skill appears. Commands the user can type at the prompt: 'help' for
-// troubleshooting, 'abort' to cancel. This is friendlier than the previous
-// "error and exit" behavior for humans sitting at the terminal.
+// Interactive mode (stdin IS a TTY, stdout IS a TTY, --yes is not
+// set, and the CI env var is unset / empty / "false"): the installer
+// WAITS for the user to install the skill, polling on each Enter key
+// until the skill appears. Commands the user can type at the prompt:
+// 'help' for troubleshooting, 'abort' to cancel. This is friendlier
+// than the previous "error and exit" behavior for humans sitting at
+// the terminal.
 //
-// Non-interactive mode (stdin is not a TTY, or --yes was passed): the
-// installer preserves the previous error-and-exit behavior so CI scripts
-// and scripted installs fail fast with a pointed remediation message.
+// Non-interactive mode (ANY of: stdin not a TTY, stdout not a TTY,
+// --yes passed, or CI env var set to any truthy value other than
+// "false" / ""): the installer preserves the previous error-and-exit
+// behavior so CI scripts and scripted installs fail fast with a
+// pointed remediation message. The stdout-TTY check catches the
+// `install.mjs > log` scenario where stdin is interactive but the
+// prompt would be invisible; the CI check catches pseudo-TTY CI
+// runners (GitHub Actions with `tty: true`, Buildkite) that would
+// otherwise trigger a prompt no human can answer.
 if (opsConfig.wiki?.required) {
   const provider = opsConfig.wiki.provider ?? "@ctxr/skill-llm-wiki";
   const found = await waitForRequiredSkillOrExit(provider, TARGET);
