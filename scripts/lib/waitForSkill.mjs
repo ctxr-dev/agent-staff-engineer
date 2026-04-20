@@ -2,8 +2,12 @@
 // Interactive dependency-wait helper used by install.mjs when a
 // required companion skill is missing and the user is sitting at a
 // real terminal. The wait loop prompts the user, polls for the skill,
-// and accepts three inputs: Enter (re-check), `help` (print a
-// troubleshooting blurb), `abort` (exit cleanly).
+// and accepts Enter (re-check), `help` (print a troubleshooting
+// blurb), and `abort` (exit cleanly). Any other input, including
+// arbitrary typed text, is treated the same as Enter: the helper
+// re-probes for the skill and continues waiting. This deliberately
+// keeps the happy path forgiving — a user who accidentally hit a
+// key before Enter doesn't get a special error.
 //
 // Factored out of install.mjs so the logic is unit-testable without
 // having to run the install body. Every external effect (streams,
