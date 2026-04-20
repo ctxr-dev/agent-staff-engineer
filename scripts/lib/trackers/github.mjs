@@ -960,6 +960,16 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
   if (typeof title !== "string" || title.trim().length === 0) {
     throw new TypeError("github issues.createIssue: title must be a non-empty string");
   }
+  // body is optional; empty string is fine. A non-string value
+  // (number, boolean, object) used to flow into the GraphQL mutation
+  // via `-F body=<value>`, which gh silently typed as number/boolean
+  // and then the server rejected with a generic "expected String"
+  // error. Validate here so the caller sees the actual bug.
+  if (typeof body !== "string") {
+    throw new TypeError(
+      `github issues.createIssue: body must be a string when provided; got ${JSON.stringify(body)}`,
+    );
+  }
   if (!Array.isArray(labels)) {
     throw new TypeError("github issues.createIssue: labels must be an array of label names");
   }

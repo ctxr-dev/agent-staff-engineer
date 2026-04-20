@@ -710,6 +710,25 @@ describe("github issues.createIssue", skipOpts, () => {
     );
   });
 
+  // PR 9 R9 (Copilot): non-string body used to flow into the
+  // GraphQL `-F body=<value>` and fail with a generic "expected
+  // String" server error. Now rejected at the boundary.
+  it("rejects non-string body at the boundary", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.createIssue({}, { title: "x", body: 42 }),
+      /body must be a string when provided/,
+    );
+    await assert.rejects(
+      tracker.issues.createIssue({}, { title: "x", body: true }),
+      /body must be a string when provided/,
+    );
+    await assert.rejects(
+      tracker.issues.createIssue({}, { title: "x", body: { raw: "text" } }),
+      /body must be a string when provided/,
+    );
+  });
+
   // PR 9 R8 (Copilot): empty / whitespace templateName was silently
   // treated as "no template" (falsy), ignoring the caller's
   // intent. Now rejected at the boundary.
