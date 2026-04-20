@@ -68,9 +68,9 @@ The interview's cadence question picks which umbrella rhythm fits your project:
 
 Teams that don't coordinate releases with umbrella issues (solo dev on tag-based continuous deploy, milestone-only workflows) answer `no` to the release-umbrella question in the interview. The agent omits `trackers.release` from the generated config; `release-tracker` halts silently and `dev-loop` skips the link-umbrella step.
 
-## Things the interview does not ask (yet)
+## Multi-repo workspaces
 
-- **Workspace multi-repo dispatch.** The schema reserves `workspace.members[]` for projects where siblings dirs have their own git repos with different trackers, but the bootstrap interview does not yet prompt for members, and the dispatcher routes everything through the top-level `trackers.*`. A follow-up release wires the per-member lookup. If you need multi-repo support today, add the `workspace.members[]` block by hand after bootstrap.
+For projects where sibling directories have their own git repos and possibly different trackers (e.g., a Jira-tracked library next to a GitHub-tracked app), the interview asks you to declare each member: project-relative path, short name, and its own dev tracker (plus optional release tracker). The runtime dispatcher (`pickTrackerForMember` / `resolveMemberFromPath`) routes each operation through the owning member deepest-first: a file under `libs/shared/x.ts` resolves to the `libs/shared` member. For files that don't match any nested member, include an explicit member with path `.` in `workspace.members[]` to catch them as the root; without one, unmatched files fall back to the top-level `trackers.dev` instead. Single-repo projects answer `no` and keep the single-tracker path with zero config overhead.
 
 ## Quick start
 
@@ -86,7 +86,7 @@ Then in Claude Code, ask Claude to run the agent, for example:
 Run the agent-staff-engineer and help me set it up for this project.
 ```
 
-On first run, the agent detects that `.claude/ops.config.json` is missing and self-bootstraps: it runs its own installer, launches the interactive interview (nine topics covering release cadence, team size and push principals, e2e setup, which tracker hosts dev issues (GitHub / Jira / Linear / GitLab) plus the target coordinates, whether you coordinate releases with umbrella issues (and if so, which tracker hosts them), whether to customise branch naming, additional repos to observe, observation depth, compliance context, optional project-specific rules to seed), writes `ops.config.json`, generates thin wrapper files at the canonical Claude Code locations, and hands control back.
+On first run, the agent detects that `.claude/ops.config.json` is missing and self-bootstraps: it runs its own installer, launches the interactive interview (ten topics covering release cadence, team size and push principals, e2e setup, which tracker hosts dev issues (GitHub / Jira / Linear / GitLab) plus the target coordinates, whether you coordinate releases with umbrella issues (and if so, which tracker hosts them), whether to customise branch naming, whether this is a multi-repo workspace (and if so, each member's path + tracker binding), additional repos to observe, observation depth, compliance context, optional project-specific rules to seed), writes `ops.config.json`, generates thin wrapper files at the canonical Claude Code locations, and hands control back.
 
 On every later invocation the agent acts on your request directly, guided by the configured rules.
 

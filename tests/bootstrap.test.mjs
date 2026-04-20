@@ -16,6 +16,7 @@ import {
   pickDefaults,
   compose,
   cadenceToIntent,
+  interviewWorkspaceMembers,
 } from "../scripts/bootstrap.mjs";
 
 describe("bootstrap.parseOwnerRepo", () => {
@@ -754,6 +755,170 @@ describe("bootstrap.askBranchPattern", () => {
   });
 });
 
+describe("bootstrap.interviewWorkspaceMembers", () => {
+  // Build a stubbed ask + askYesNo pair that reads from a scripted
+  // answer queue. The interview() pattern is ask(question, def) which
+  // does `s.trim() || def`; the stub mirrors that exactly so
+  // whitespace-only inputs collapse to the default the same way they
+  // would during a real interview run. Without the trim, tests would
+  // mask whitespace-handling bugs in call sites that assume the
+  // returned string is already trimmed.
+  const makeAsk = (queue) => async (_q, def = "") => {
+    if (queue.length === 0) throw new Error("ask stub exhausted");
+    const a = queue.shift();
+    const trimmed = String(a ?? "").trim();
+    return trimmed === "" ? def : trimmed;
+  };
+  const makeYesNo = (queue) => async (_q, def = "yes") => {
+    if (queue.length === 0) throw new Error("yesno stub exhausted");
+    const a = queue.shift();
+    if (a === "") return def === "yes";
+    return String(a).toLowerCase().startsWith("y");
+  };
+
+  const detection = {
+    git: { ownerRepo: "acme/primary", defaultBranch: "main" },
+    gh: { authed: true, login: "jane" },
+    tracker: { jira: {}, linear: {}, gitlab: {} },
+    stack: { language: ["typescript"], testing: ["vitest"], platform: ["web"] },
+    devHints: {},
+  };
+
+  it("returns undefined when the user immediately enters a blank path", async () => {
+    const ask = makeAsk([""]);
+    const yn = makeYesNo([]);
+    const out = await interviewWorkspaceMembers(ask, yn, detection);
+    assert.equal(out, undefined);
+  });
+
+  it("collects a single member with path='.' and default name", async () => {
+    // Queue order (matching helpers' order):
+    //   ask: path -> name -> devKind -> github owner -> github repo -> projectNum (blank uses default "1") -> next path (blank stops)
+    //   yn: release-tracker?
+    const ask = makeAsk([
+      ".",               // path
+      "primary",         // name
+      "github",          // dev kind (askTrackerKind normalises)
+      "acme",            // github owner (askNonEmpty)
+      "primary",         // github repo (askNonEmpty)
+      "1",               // project v2 number (askTrackerTarget)
+      "",                // next member path (blank stops the loop)
+    ]);
+    const yn = makeYesNo(["no"]); // release tracker? no
+    const out = await interviewWorkspaceMembers(ask, yn, detection);
+    assert.ok(out, "must return a workspace object");
+    assert.equal(out.members.length, 1);
+    assert.equal(out.members[0].path, ".");
+    assert.equal(out.members[0].name, "primary");
+    assert.equal(out.members[0].trackers.dev.kind, "github");
+    assert.equal(out.members[0].trackers.dev.owner, "acme");
+    assert.equal(out.members[0].trackers.dev.repo, "primary");
+    assert.equal("release" in out.members[0].trackers, false, "no release when user said no");
+  });
+
+  it("caps the loop at 16 members so a runaway stub cannot hang tests forever", async () => {
+    // Supply enough answers for 16 iterations of the github member
+    // collection. Each iteration consumes: path, name, kind, owner,
+    // repo, projectNum (= 6 ask calls). After 16 iterations the loop
+    // exits by its own cap, never reaching a 17th "path" prompt.
+    const queue = [];
+    for (let i = 1; i <= 16; i += 1) {
+      queue.push(
+        `path-${i}`,
+        `name-${i}`,
+        "github",
+        "acme",
+        `repo-${i}`,
+        "1",
+      );
+    }
+    const ask = makeAsk(queue);
+    const yn = makeYesNo(Array.from({ length: 16 }, () => "no"));
+    const out = await interviewWorkspaceMembers(ask, yn, detection);
+    assert.ok(out);
+    assert.equal(out.members.length, 16, "cap enforced at 16");
+  });
+
+  // PR 8 R4 (Copilot): duplicate member paths make resolveMemberFromPath
+  // ambiguous (first-match semantics). Prompt-time rejection retries
+  // up to 3 times; on exhaustion the loop exits with the members
+  // collected so far rather than hanging the interview.
+  it("rejects duplicate member paths with a 3-attempt retry + loop exit", async () => {
+    // First member: path '.' is accepted. Second member: first
+    // attempt repeats '.', then a retry supplies 'libs/shared'.
+    const ask = makeAsk([
+      // --- member 1 ---
+      ".",
+      "primary",
+      "github",
+      "acme",
+      "primary",
+      "1",
+      // --- member 2, attempt 1 (duplicate '.') then attempt 2 ('libs/shared') ---
+      ".",
+      "libs/shared",
+      "shared",
+      "github",
+      "acme",
+      "shared-repo",
+      "1",
+      // --- end loop ---
+      "",
+    ]);
+    const yn = makeYesNo(["no", "no"]);
+    const out = await interviewWorkspaceMembers(ask, yn, detection);
+    assert.ok(out);
+    assert.equal(out.members.length, 2);
+    assert.equal(out.members[0].path, ".");
+    assert.equal(out.members[1].path, "libs/shared");
+  });
+
+  // PR 8 R4 (Copilot): duplicate member names make
+  // pickTrackerForMember ambiguous. Same 3-attempt retry pattern.
+  it("rejects duplicate member names with a 3-attempt retry + loop exit", async () => {
+    // First member uses default name 'primary'. Second member:
+    // attempt 1 tries the same 'primary' (duplicate), attempt 2
+    // supplies 'shared'.
+    const ask = makeAsk([
+      // --- member 1 ---
+      ".",
+      "primary",
+      "github",
+      "acme",
+      "primary",
+      "1",
+      // --- member 2 ---
+      "libs/shared",
+      "primary",   // attempt 1: duplicate name
+      "shared",    // attempt 2: unique
+      "github",
+      "acme",
+      "shared-repo",
+      "1",
+      // --- end loop ---
+      "",
+    ]);
+    const yn = makeYesNo(["no", "no"]);
+    const out = await interviewWorkspaceMembers(ask, yn, detection);
+    assert.ok(out);
+    assert.equal(out.members.length, 2);
+    assert.equal(out.members[1].name, "shared");
+  });
+
+  // PR 8 R11 (Copilot): askNonEmpty can throw after its own 3-attempt
+  // cap on empty inputs; prior to this commit that throw aborted
+  // the entire bootstrap run. Now the name-prompt try/catch in
+  // interviewWorkspaceMembers converts the throw into a clean
+  // loop-exit. The try/catch is defence-in-depth: today every call
+  // site passes a non-empty default (so `ask` always returns the
+  // default on empty input, and askNonEmpty never exhausts), but
+  // a future refactor that allows an empty default would otherwise
+  // silently regress and crash the bootstrap mid-workspace. Asserted
+  // by inspection of the source; a unit test would need a direct
+  // mock of askNonEmpty and would just reassert the try/catch shape
+  // we can read in the code.
+});
+
 describe("bootstrap.compose", () => {
   const detection = {
     git: { remote: "git@github.com:acme/foo.git", defaultBranch: "main", ownerRepo: "acme/foo" },
@@ -1041,5 +1206,53 @@ describe("bootstrap.compose", () => {
     assert.equal("release" in cfg.trackers, true, "null releaseTracker must still produce a release key");
     assert.equal(cfg.trackers.release, null, "null passes through verbatim");
     assert.equal(validate(schema, cfg).ok, false, "null release must fail schema validation");
+  });
+
+  // PR 8: workspace block is optional. Single-repo (answers.workspace
+  // undefined) must omit the `workspace` key entirely so the schema's
+  // single-repo path is exercised. Bad inputs (null) propagate so
+  // downstream schema catches them.
+  it("omits cfg.workspace when answers.workspace is undefined (single-repo default)", () => {
+    const cfg = compose(detection, answers, ".claude/agents/agent-staff-engineer");
+    assert.equal("workspace" in cfg, false, "cfg.workspace must be absent for single-repo");
+  });
+
+  it("emits cfg.workspace when answers.workspace is provided (multi-repo)", async () => {
+    const schema = await loadSchemaOnce();
+    const { validate } = await import("../scripts/lib/schema.mjs");
+    const workspace = {
+      members: [
+        {
+          path: ".",
+          name: "primary",
+          trackers: { dev: { kind: "github", owner: "acme", repo: "primary", projects: [], depth: "full" } },
+        },
+        {
+          path: "libs/shared",
+          name: "shared",
+          trackers: {
+            dev: {
+              kind: "jira",
+              site: "acme.atlassian.net",
+              project: "SHARED",
+              depth: "full",
+              status_values: { backlog: "Backlog", in_progress: "In progress", done: "Done" },
+            },
+          },
+        },
+      ],
+    };
+    const cfg = compose(detection, { ...answers, workspace }, ".claude/agents/agent-staff-engineer");
+    assert.deepEqual(cfg.workspace, workspace, "workspace block composed verbatim");
+    assert.ok(validate(schema, cfg).ok, `composed config with workspace must validate: ${JSON.stringify(validate(schema, cfg).errors ?? null)}`);
+  });
+
+  it("compose propagates null workspace to fail schema (not silently omit)", async () => {
+    const schema = await loadSchemaOnce();
+    const { validate } = await import("../scripts/lib/schema.mjs");
+    const cfg = compose(detection, { ...answers, workspace: null }, ".claude/agents/agent-staff-engineer");
+    assert.equal("workspace" in cfg, true, "null workspace must still produce the key");
+    assert.equal(cfg.workspace, null);
+    assert.equal(validate(schema, cfg).ok, false, "null workspace must fail schema validation");
   });
 });

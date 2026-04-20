@@ -30,9 +30,9 @@
 //
 
 import { readFile, readdir, rm } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
@@ -55,6 +55,7 @@ import { ensureGitignore } from "./lib/gitignore.mjs";
 import { injectManagedBlock, removeManagedBlock } from "./lib/inject.mjs";
 import { getAgentPrefix, prefixed } from "./lib/agentName.mjs";
 import { portableRef, resolvePortable } from "./lib/bundleRef.mjs";
+import { normaliseMemberPath } from "./lib/trackers/dispatcher.mjs";
 
 // Managed-block markers used to own a region inside a project-authored
 // CLAUDE.md. Any content outside these two lines belongs to the user and the
@@ -346,6 +347,234 @@ if (opsConfig.wiki?.required) {
   const provider = opsConfig.wiki.provider ?? "@ctxr/skill-llm-wiki";
   const found = await waitForRequiredSkillOrExit(provider, TARGET);
   process.stdout.write(`wiki provider: ${provider} found at ${portableRef(found, TARGET)}\n`);
+}
+
+// Workspace member preflight: when the config declares multi-repo
+// workspace members, every declared path MUST exist on disk before
+// install proceeds. A missing member path almost always means the
+// user committed a config from a teammate's checkout or renamed a
+// directory after bootstrap; either way the runtime dispatch
+// (pickTrackerForMember, resolveMemberFromPath) has nothing to match
+// against and every call that targets the missing member throws at
+// use time. Fail here with a pointed list so the user fixes the
+// typo / clones the sibling before anything else runs. Non-fatal
+// when `workspace` is absent (single-repo projects).
+if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.length > 0) {
+  const missing = [];
+  const invalid = [];
+  // Duplicate-detection maps: a hand-edited config can bypass
+  // bootstrap's prompt-time rejection and reintroduce duplicates
+  // that make runtime dispatch ambiguous. Track both names and
+  // canonicalised paths so a second occurrence can flag both
+  // originals without having to re-scan the array.
+  const seenNames = new Map();
+  const seenPaths = new Map();
+  // Compute TARGET's realpath once up front rather than per member.
+  // Besides saving syscalls, this also means any error reporting
+  // the user sees about TARGET (e.g. "TARGET realpath failed") is
+  // identical across members. A realpath failure on TARGET aborts
+  // the preflight entirely since every subsequent containment check
+  // would have no safe baseline to compare against.
+  const resolvedTargetOnce = resolve(TARGET);
+  let realTargetOnce;
+  try {
+    realTargetOnce = realpathSync(resolvedTargetOnce);
+  } catch (e) {
+    process.stderr.write(
+      `\nERROR: cannot realpath install TARGET '${resolvedTargetOnce}': ${e?.message ?? e}. Fix the target path or re-run with --target pointing at an accessible directory.\n`,
+    );
+    process.exit(1);
+  }
+  for (let memberIdx = 0; memberIdx < opsConfig.workspace.members.length; memberIdx += 1) {
+    const member = opsConfig.workspace.members[memberIdx];
+    // Malformed entries (null, non-object, or missing/non-string
+    // path) would otherwise silently skip the validation phase and
+    // land at dispatch time as a vague "not a tracker" throw. Treat
+    // them as invalid up-front with a pointed message so the user
+    // sees exactly which index is broken. install.mjs does not
+    // schema-validate an existing ops.config.json, so this is the
+    // only guard against a bad hand-edit slipping through.
+    if (!member || typeof member !== "object" || Array.isArray(member)) {
+      invalid.push({
+        name: "<missing>",
+        path: "<missing>",
+        reason: `workspace.members[${memberIdx}] is not an object (got ${member === null ? "null" : Array.isArray(member) ? "array" : typeof member})`,
+      });
+      continue;
+    }
+    if (typeof member.path !== "string" || member.path.length === 0) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: typeof member.path === "string" ? member.path : `<${typeof member.path}>`,
+        reason: `workspace.members[${memberIdx}].path must be a non-empty string`,
+      });
+      continue;
+    }
+    // Run member.path through the canonical normaliser so absolute
+    // paths, Windows drive prefixes, and `..` traversal are rejected
+    // up front. `join(TARGET, absPath)` would let an absolute path
+    // silently escape TARGET and check a location outside the
+    // project; the normaliser catches that before it can happen.
+    let normalisedRel;
+    try {
+      normalisedRel = normaliseMemberPath(member.path, `workspace member '${member.name ?? "<unnamed>"}' path`, { allowRoot: true });
+    } catch (e) {
+      invalid.push({ name: member.name ?? "<unnamed>", path: member.path, reason: e.message });
+      continue;
+    }
+    // Duplicate-path check (post-normalisation so `libs/shared`
+    // and `./libs/shared/` are caught as duplicates of each other).
+    // Hand-edited configs can reintroduce duplicates that bootstrap
+    // rejects at prompt time; runtime dispatch would first-match
+    // and silently route through the wrong member.
+    if (seenPaths.has(normalisedRel)) {
+      const firstIdx = seenPaths.get(normalisedRel);
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `path normalises to '${normalisedRel}' which duplicates members[${firstIdx}]; every workspace member must have a unique canonical path`,
+      });
+      continue;
+    }
+    seenPaths.set(normalisedRel, memberIdx);
+    // Validate member.name BEFORE the duplicate-name check. A
+    // missing/empty/non-string name is a schema violation the
+    // schema would catch, but install.mjs does not re-validate an
+    // existing ops.config.json, so a hand-edit that strips a name
+    // would otherwise be silently skipped by both
+    // resolveMemberFromPath (guards on `typeof m.name === "string"`)
+    // and pickTrackerForMember (looks up by name equality). Fail
+    // preflight with a pointed error instead.
+    if (typeof member.name !== "string" || member.name.length === 0) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `workspace.members[${memberIdx}].name must be a non-empty string`,
+      });
+      continue;
+    }
+    // Duplicate-name check. Same rationale as path: first-match
+    // dispatch would silently pick whichever entry came first.
+    if (seenNames.has(member.name)) {
+      const firstIdx = seenNames.get(member.name);
+      invalid.push({
+        name: member.name,
+        path: member.path,
+        reason: `name '${member.name}' duplicates members[${firstIdx}]; every workspace member must have a unique name`,
+      });
+      continue;
+    }
+    seenNames.set(member.name, memberIdx);
+    // After normalisation, resolve under TARGET. Defence-in-depth:
+    // recompute the absolute path with `resolve` and assert it
+    // stays under TARGET. Use `path.relative` for the containment
+    // check rather than string-prefix-with-"/" because the latter
+    // is POSIX-specific; on Windows `resolve` returns
+    // backslash-separated paths, so a "/" prefix check would
+    // always report escape for non-root members and block every
+    // valid multi-repo install. Cross-platform rule: the relative
+    // path from resolvedTarget to absolute must be either empty
+    // (same dir) OR not absolute AND not start with a ".." segment.
+    // Reuse the hoisted `resolvedTargetOnce` instead of re-computing
+    // `resolve(TARGET)` per member; the value is constant over the
+    // loop so the redundant syscalls were pure overhead.
+    const absolute = resolve(TARGET, normalisedRel);
+    const rel = relative(resolvedTargetOnce, absolute);
+    const escapes =
+      isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`) || rel.startsWith("../");
+    if (escapes) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `resolved path '${absolute}' escapes target '${resolvedTargetOnce}'`,
+      });
+      continue;
+    }
+    if (!existsSync(absolute)) {
+      missing.push({ name: member.name ?? "<unnamed>", path: member.path, absolute });
+      continue;
+    }
+    // The workspace contract treats members as directory subtrees
+    // (resolveMemberFromPath walks file-path prefixes against
+    // member.path). A plain file at the member path would pass the
+    // exists check but produce garbage at runtime when the agent
+    // tries to resolve files "under" it. Assert directory-shape
+    // here; treat a non-directory as invalid rather than missing so
+    // the error message is unambiguous.
+    let isDir = false;
+    try {
+      isDir = statSync(absolute).isDirectory();
+    } catch {
+      // Race between existsSync and statSync (deleted during
+      // install). Treat as missing rather than invalid.
+      missing.push({ name: member.name ?? "<unnamed>", path: member.path, absolute });
+      continue;
+    }
+    if (!isDir) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `resolved path '${absolute}' exists but is not a directory (workspace members must be directory subtrees)`,
+      });
+      continue;
+    }
+    // Symlink escape check: the earlier lexical containment check
+    // catches 'libs/../..' and absolute paths, but a symlink at the
+    // resolved location can still point outside TARGET. Resolve the
+    // actual filesystem location via realpath and re-check
+    // containment on the real paths. `realTargetOnce` was computed
+    // before the loop (TARGET itself may sit behind a symlink, as
+    // on macOS where /var -> /private/var, so the comparison has to
+    // happen apples-to-apples) so only the member's realpath is
+    // computed per iteration. Member realpath failures are treated
+    // as "cannot verify safety" and surface as invalid rather than
+    // silently trusting the lexical check.
+    let realAbs;
+    try {
+      realAbs = realpathSync(absolute);
+    } catch (e) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `cannot resolve real path (${e?.message ?? e}); aborting rather than trusting lexical containment`,
+      });
+      continue;
+    }
+    const realRel = relative(realTargetOnce, realAbs);
+    const realEscapes =
+      isAbsolute(realRel) || realRel === ".." || realRel.startsWith(`..${sep}`) || realRel.startsWith("../");
+    if (realEscapes) {
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `member path resolves to '${realAbs}' which is outside '${realTargetOnce}' (symlink escape)`,
+      });
+    }
+  }
+  if (invalid.length > 0) {
+    process.stderr.write(
+      `\nERROR: ops.config.json declares workspace members with invalid paths:\n`,
+    );
+    for (const m of invalid) {
+      process.stderr.write(`  - '${m.name}' at '${m.path}': ${m.reason}\n`);
+    }
+    process.stderr.write(
+      `\nMember paths must be project-relative POSIX strings (e.g. '.', 'libs/shared'). Absolute paths, Windows drive prefixes, and '..' traversal are all refused because the runtime dispatcher cannot route through them safely. Fix \`workspace.members\` in ops.config.json.\n`,
+    );
+    process.exit(1);
+  }
+  if (missing.length > 0) {
+    process.stderr.write(
+      `\nERROR: ops.config.json declares workspace members whose paths do not exist on disk:\n`,
+    );
+    for (const m of missing) {
+      process.stderr.write(`  - '${m.name}' at '${m.path}' (expected ${portableRef(m.absolute, TARGET)})\n`);
+    }
+    process.stderr.write(
+      `\nEither (a) clone / create those directories at the listed paths, or (b) remove the affected entries from \`workspace.members\` in ops.config.json. The runtime dispatcher refuses to route through a member whose working tree is absent.\n`,
+    );
+    process.exit(1);
+  }
 }
 
 /**

@@ -3,7 +3,7 @@
 // Interactive interview backing the bootstrap-ops-config skill.
 // Two phases:
 //   1) Detection (silent reads): git, gh, codebase heuristics.
-//   2) Interview (8 topics): user input wins over heuristics when they conflict.
+//   2) Interview (10 topics): user input wins over heuristics when they conflict.
 // Produces:
 //   <target>/.claude/ops.config.json
 //   <target>/.claude/.bootstrap-answers.json
@@ -29,6 +29,7 @@ import {
   safeRealpathOrExit,
 } from "./lib/fsx.mjs";
 import { ghExec, ghAuthReady } from "./lib/ghExec.mjs";
+import { normaliseMemberPath } from "./lib/trackers/dispatcher.mjs";
 import { validate } from "./lib/schema.mjs";
 import { diffLines } from "./lib/diff.mjs";
 
@@ -456,7 +457,7 @@ async function interview(rl, d, _bundleRef) {
     return s.split(",").map((x) => x.trim()).filter(Boolean);
   };
 
-  process.stdout.write("interview (9 topics). Enter accepts the default shown in brackets.\n");
+  process.stdout.write("interview (10 topics). Enter accepts the default shown in brackets.\n");
   process.stdout.write("Note: on GitHub, only the review namespace is implemented today (used by skills/pr-iteration); issues / projects / labels namespaces are stubbed. Jira / Linear / GitLab backends accept the config but EVERY op (read or write) throws NotSupportedError until their real impls land.\n\n");
 
   const cadence = await ask(
@@ -525,8 +526,24 @@ async function interview(rl, d, _bundleRef) {
     }
   }
 
+  // Multi-repo workspace. Most projects live in a single repo and
+  // answer "no"; teams with sibling directories that each have their
+  // own git origin + tracker (mid-migration monorepos, toolchain
+  // workspaces, Jira-tracked lib next to a GitHub-tracked app) say
+  // yes and bind per-member trackers. Runtime dispatch for these
+  // members is in `scripts/lib/trackers/dispatcher.mjs` via
+  // `pickTrackerForMember` and `resolveMemberFromPath`.
+  const hasWorkspace = await askYesNo(
+    "7. Multi-repo workspace? Say yes if sibling directories in this project have their OWN git origins with possibly-different trackers (e.g. a Jira-tracked library next to a GitHub-tracked app). Most projects are single-repo and say no",
+    "no"
+  );
+  let workspace;
+  if (hasWorkspace) {
+    workspace = await interviewWorkspaceMembers(ask, askYesNo, d);
+  }
+
   const observedReposStr = await ask(
-    "7. Additional observed GitHub repos (owner/name), comma-separated, blank for none",
+    "8. Additional observed GitHub repos (owner/name), comma-separated, blank for none",
     ""
   );
   const defaultDepth = await ask(
@@ -536,7 +553,7 @@ async function interview(rl, d, _bundleRef) {
   const observed = parseObservedGithubRepos(observedReposStr, defaultDepth);
 
   const regimes = await askCsv(
-    "8. Compliance regimes: gdpr,ccpa,soc2,pci,hipaa,mhmda,appi,pipa,lgpd or 'none'",
+    "9. Compliance regimes: gdpr,ccpa,soc2,pci,hipaa,mhmda,appi,pipa,lgpd or 'none'",
     "none"
   );
   const dataClasses = await askCsv(
@@ -544,7 +561,7 @@ async function interview(rl, d, _bundleRef) {
     "none"
   );
   const seedProductRules = await askYesNo(
-    "9. Seed any project-specific rules now? (you can add later via adapt-system)",
+    "10. Seed any project-specific rules now? (you can add later via adapt-system)",
     "no"
   );
 
@@ -558,6 +575,7 @@ async function interview(rl, d, _bundleRef) {
     devTracker,
     releaseTracker,
     branchPatterns,
+    workspace,
     observed,
     // defaultDepth lives as a local variable only: its single use is
     // parseObservedGithubRepos() above, which consumes it inline to
@@ -708,6 +726,111 @@ export async function askBranchPattern(ask, label, defaultValue) {
     `bootstrap: could not obtain a valid ${label} after ${MAX_ATTEMPTS} attempts; keeping the default '${defaultValue}'.\n`,
   );
   return defaultValue;
+}
+
+/**
+ * Interview loop for `workspace.members[]`. Called only when the user
+ * answered "yes" to the multi-repo workspace question. Collects one
+ * member per iteration until the user enters an empty path. Each
+ * member gets a `path`, `name`, and its own tracker binding(s).
+ *
+ * The returned object matches the schema's `workspace` block shape
+ * exactly: `{ members: [{ path, name, trackers: { dev, release? } }] }`.
+ * Returns `undefined` when the user bailed before providing a single
+ * valid member (treat as "actually no workspace" and drop the block).
+ *
+ * Exported so tests can exercise the loop in isolation without
+ * driving the full `interview()` run.
+ */
+export async function interviewWorkspaceMembers(ask, askYesNo, d) {
+  const members = [];
+  process.stdout.write(
+    "   Enter workspace members one at a time. Blank path ends the loop.\n"
+    + "   Each member needs a path (project-relative, use '.' for the primary repo),\n"
+    + "   a short name, and its own dev tracker.\n"
+  );
+  for (let idx = 1; idx <= 16; idx += 1) {
+    let path = null;
+    // Validate the member path at prompt time so users catch typos
+    // (absolute paths, parent-traversal, Windows backslashes that
+    // would never match POSIX diff input) before the config is
+    // written. Also reject duplicate member paths (post-normalisation):
+    // two members with the same canonical path make resolveMemberFromPath
+    // ambiguous (first-match semantics). Up to 3 attempts; if the user
+    // can't produce a valid path, break the loop rather than hang the
+    // interview.
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const raw = (await ask(`   member ${idx} path (blank to finish)`, "")).trim();
+      if (!raw) { path = null; break; }
+      try {
+        // allowRoot so members can bind to the project root via "."
+        const candidate = normaliseMemberPath(raw, `member ${idx} path`, { allowRoot: true });
+        if (members.some((m) => m.path === candidate)) {
+          throw new Error(`member ${idx} path '${candidate}' duplicates an earlier member`);
+        }
+        path = candidate;
+        break;
+      } catch (e) {
+        process.stderr.write(`${e.message} (attempt ${attempt}/3). Use project-relative POSIX paths like 'libs/shared' or '.' for the root repo; each path must be unique.\n`);
+      }
+    }
+    if (path === null) break;
+    // Members must have distinct names too. Runtime dispatch is keyed
+    // by member name and `pickTrackerForMember` hard-refuses on
+    // duplicate matches (after PR 8 R5), so catching duplicates here
+    // at prompt time gives users a clean error rather than a
+    // dispatch-time throw on some later invocation. Up to 3 retries;
+    // fall back to the loop-exit on exhausting retries.
+    let name = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      let candidate;
+      try {
+        candidate = await askNonEmpty(
+          ask,
+          `   member ${idx} name`,
+          path === "." ? "primary" : path.split("/").pop(),
+          "member name",
+        );
+      } catch (e) {
+        // askNonEmpty throws after its own internal 3-attempt cap
+        // on empty/whitespace answers. Don't let that abort the
+        // entire bootstrap run; surface the cause and fall through
+        // to the loop-exit the same way a duplicate-exhausted
+        // retry does (name stays null, outer break fires below).
+        process.stderr.write(`${e.message} Ending workspace-member collection.\n`);
+        break;
+      }
+      if (members.some((m) => m.name === candidate)) {
+        process.stderr.write(`member ${idx} name '${candidate}' duplicates an earlier member (attempt ${attempt}/3). Pick a different name.\n`);
+        continue;
+      }
+      name = candidate;
+      break;
+    }
+    if (name === null) break;
+    const devKind = await askTrackerKind(
+      ask,
+      `   member ${idx} dev tracker kind: github / jira / linear / gitlab`,
+      "github",
+    );
+    const devTracker = await askTrackerTarget(ask, devKind, "dev", d);
+    const memberTrackers = { dev: devTracker };
+    const hasRelease = await askYesNo(
+      `   member ${idx} also binds its own release tracker? (most members say no)`,
+      "no",
+    );
+    if (hasRelease) {
+      const releaseKind = await askTrackerKind(
+        ask,
+        `   member ${idx} release tracker kind (default: same as dev)`,
+        devKind,
+      );
+      memberTrackers.release = await askTrackerTarget(ask, releaseKind, "release", d, devTracker);
+    }
+    members.push({ path, name, trackers: memberTrackers });
+  }
+  if (members.length === 0) return undefined;
+  return { members };
 }
 
 /**
@@ -999,6 +1122,11 @@ export function pickDefaults(d) {
     // directly) hands callers a mutable plain object, matching what
     // the interactive path produces.
     branchPatterns: { ...DEFAULT_BRANCH_PATTERNS },
+    // --yes installs default to single-repo (no workspace block).
+    // Interactive users answer the multi-repo question and populate
+    // members explicitly; teams that need this on --yes can follow up
+    // with adapt-system or hand-edit `workspace.members[]`.
+    workspace: undefined,
     observed: [],
     regimes: ["none"],
     dataClasses: ["none"],
@@ -1161,6 +1289,13 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
       ...(a.releaseTracker === undefined ? {} : { release: a.releaseTracker }),
       observed: a.observed ?? [],
     },
+    // workspace is optional. Emitted only when the user said "yes" to
+    // the multi-repo question AND provided at least one member
+    // (interviewWorkspaceMembers returns undefined when the user
+    // bailed without adding any). Gate on `=== undefined` (not
+    // truthiness) so bad inputs surface via schema validation instead
+    // of silently dropping the block.
+    ...(a.workspace === undefined ? {} : { workspace: a.workspace }),
     labels: {
       type: ["feature", "bug", "task", "refactor", "docs", "chore"],
       area: [
