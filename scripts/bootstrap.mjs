@@ -783,12 +783,23 @@ export async function interviewWorkspaceMembers(ask, askYesNo, d) {
     // fall back to the loop-exit on exhausting retries.
     let name = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
-      const candidate = await askNonEmpty(
-        ask,
-        `   member ${idx} name`,
-        path === "." ? "primary" : path.split("/").pop(),
-        "member name",
-      );
+      let candidate;
+      try {
+        candidate = await askNonEmpty(
+          ask,
+          `   member ${idx} name`,
+          path === "." ? "primary" : path.split("/").pop(),
+          "member name",
+        );
+      } catch (e) {
+        // askNonEmpty throws after its own internal 3-attempt cap
+        // on empty/whitespace answers. Don't let that abort the
+        // entire bootstrap run; surface the cause and fall through
+        // to the loop-exit the same way a duplicate-exhausted
+        // retry does (name stays null, outer break fires below).
+        process.stderr.write(`${e.message} Ending workspace-member collection.\n`);
+        break;
+      }
       if (members.some((m) => m.name === candidate)) {
         process.stderr.write(`member ${idx} name '${candidate}' duplicates an earlier member (attempt ${attempt}/3). Pick a different name.\n`);
         continue;

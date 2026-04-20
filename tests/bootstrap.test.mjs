@@ -904,6 +904,19 @@ describe("bootstrap.interviewWorkspaceMembers", () => {
     assert.equal(out.members.length, 2);
     assert.equal(out.members[1].name, "shared");
   });
+
+  // PR 8 R11 (Copilot): askNonEmpty can throw after its own 3-attempt
+  // cap on empty inputs; prior to this commit that throw aborted
+  // the entire bootstrap run. Now the name-prompt try/catch in
+  // interviewWorkspaceMembers converts the throw into a clean
+  // loop-exit. The try/catch is defence-in-depth: today every call
+  // site passes a non-empty default (so `ask` always returns the
+  // default on empty input, and askNonEmpty never exhausts), but
+  // a future refactor that allows an empty default would otherwise
+  // silently regress and crash the bootstrap mid-workspace. Asserted
+  // by inspection of the source; a unit test would need a direct
+  // mock of askNonEmpty and would just reassert the try/catch shape
+  // we can read in the code.
 });
 
 describe("bootstrap.compose", () => {
