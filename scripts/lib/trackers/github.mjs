@@ -630,7 +630,7 @@ async function resolveLabelIds(owner, repo, names) {
     // the caller sees the real failure.
     if (!data?.repository) {
       throw new Error(
-        `github issues.resolveLabelIds: repository ${owner}/${repo} not found or permission denied`,
+        `github issues.resolveLabelIds: repository ${owner}/${repo} not found or inaccessible`,
       );
     }
     const labels = data.repository.labels;
