@@ -177,13 +177,31 @@ export function pickTrackerForMember(cfg, memberName, role = "dev") {
       `pickTrackerForMember: memberName='${memberName}' was requested but cfg.workspace.members is absent or empty`,
     );
   }
-  const member = members.find((m) => m && m.name === memberName);
-  if (!member) {
+  // Collect every member with the requested name rather than calling
+  // Array.find. Bootstrap already rejects duplicate names at prompt
+  // time, but a hand-edited config can reintroduce them; silently
+  // picking the first match would make dispatch ambiguous in a way
+  // that's almost impossible to debug at runtime. Treat duplicates as
+  // a hard error listing both offending entries (by index) so the
+  // user can fix the config.
+  const matches = [];
+  for (let i = 0; i < members.length; i += 1) {
+    const m = members[i];
+    if (m && m.name === memberName) matches.push({ member: m, index: i });
+  }
+  if (matches.length === 0) {
     const known = members.map((m) => m?.name).filter(Boolean).join(", ");
     throw new Error(
       `pickTrackerForMember: unknown workspace member '${memberName}' (known: ${known || "<none>"})`,
     );
   }
+  if (matches.length > 1) {
+    const collisions = matches.map(({ index }) => `members[${index}]`).join(", ");
+    throw new Error(
+      `pickTrackerForMember: duplicate workspace member name '${memberName}' makes dispatch ambiguous (${collisions})`,
+    );
+  }
+  const member = matches[0].member;
   const target = member.trackers?.[role];
   if (!target || typeof target !== "object" || Array.isArray(target)) {
     throw new Error(
@@ -205,16 +223,22 @@ export function pickTrackerForMember(cfg, memberName, role = "dev") {
  * path that contains the file (single-repo projects always return
  * null). Matching is deepest-first, so a file under `libs/shared/x.ts`
  * resolves to the `libs/shared` member even when `.` also declares
- * itself as a member. Path comparison is normalised (POSIX-style; trailing
- * slashes stripped) so `.` and `./` both match as the project root.
+ * itself as a member.
+ *
+ * **Root shorthand (`.` / `./`) applies to member.path normalisation
+ * only**, where a declared member with that path is canonicalised to
+ * `.` and becomes the weakest possible match. The `filePath` argument,
+ * in contrast, must be a real project-relative POSIX **file** path:
+ * inputs like `.` and `./` are rejected by
+ * `normaliseMemberPath(..., allowRoot=false)` because a "file" at the
+ * project root makes no sense for path-based dispatch.
  *
  * This helper is consumed by dev-loop / pr-iteration before they pick a
  * tracker: given the set of files changed on the current branch, the
  * agent picks the deepest containing member and dispatches through it.
- * Callers pass project-relative paths (no leading `/`, no `..` escape).
  *
  * @param {object} cfg       parsed ops.config.json
- * @param {string} filePath  project-relative POSIX path (no leading slash)
+ * @param {string} filePath  project-relative POSIX file path (no leading slash, no `..`, not the root shorthand `.`/`./`)
  * @returns {string|null}    matched member's name, or null
  */
 export function resolveMemberFromPath(cfg, filePath) {

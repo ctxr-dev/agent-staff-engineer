@@ -281,6 +281,27 @@ describe("pickTrackerForMember: workspace dispatch", () => {
       /role must be "dev" or "release"/,
     );
   });
+
+  // PR 8 R5 (Copilot): pickTrackerForMember previously used
+  // `Array.find` which silently picks the first match if the
+  // config somehow ended up with duplicate member names (hand-edit
+  // after bootstrap's prompt-time rejection). Now hard-refuses with
+  // a pointed error listing both colliding indices so the user
+  // sees exactly which entries clash.
+  it("throws on duplicate workspace member names (defence for hand-edited configs)", () => {
+    const cfg = {
+      workspace: {
+        members: [
+          { path: ".", name: "primary", trackers: { dev: { kind: "github", owner: "a", repo: "x", projects: [] } } },
+          { path: "lib", name: "primary", trackers: { dev: { kind: "github", owner: "b", repo: "y", projects: [] } } },
+        ],
+      },
+    };
+    assert.throws(
+      () => pickTrackerForMember(cfg, "primary"),
+      /duplicate workspace member name 'primary'.*members\[0\].*members\[1\]/s,
+    );
+  });
 });
 
 describe("resolveMemberFromPath: workspace resolution", () => {

@@ -362,7 +362,15 @@ if (opsConfig.wiki?.required) {
 if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.length > 0) {
   const missing = [];
   const invalid = [];
-  for (const member of opsConfig.workspace.members) {
+  // Duplicate-detection maps: a hand-edited config can bypass
+  // bootstrap's prompt-time rejection and reintroduce duplicates
+  // that make runtime dispatch ambiguous. Track both names and
+  // canonicalised paths so a second occurrence can flag both
+  // originals without having to re-scan the array.
+  const seenNames = new Map();
+  const seenPaths = new Map();
+  for (let memberIdx = 0; memberIdx < opsConfig.workspace.members.length; memberIdx += 1) {
+    const member = opsConfig.workspace.members[memberIdx];
     if (!member || typeof member.path !== "string") continue;
     // Run member.path through the canonical normaliser so absolute
     // paths, Windows drive prefixes, and `..` traversal are rejected
@@ -375,6 +383,35 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
     } catch (e) {
       invalid.push({ name: member.name ?? "<unnamed>", path: member.path, reason: e.message });
       continue;
+    }
+    // Duplicate-path check (post-normalisation so `libs/shared`
+    // and `./libs/shared/` are caught as duplicates of each other).
+    // Hand-edited configs can reintroduce duplicates that bootstrap
+    // rejects at prompt time; runtime dispatch would first-match
+    // and silently route through the wrong member.
+    if (seenPaths.has(normalisedRel)) {
+      const firstIdx = seenPaths.get(normalisedRel);
+      invalid.push({
+        name: member.name ?? "<unnamed>",
+        path: member.path,
+        reason: `path normalises to '${normalisedRel}' which duplicates members[${firstIdx}]; every workspace member must have a unique canonical path`,
+      });
+      continue;
+    }
+    seenPaths.set(normalisedRel, memberIdx);
+    // Duplicate-name check. Same rationale as path: first-match
+    // dispatch would silently pick whichever entry came first.
+    if (typeof member.name === "string" && member.name.length > 0) {
+      if (seenNames.has(member.name)) {
+        const firstIdx = seenNames.get(member.name);
+        invalid.push({
+          name: member.name,
+          path: member.path,
+          reason: `name '${member.name}' duplicates members[${firstIdx}]; every workspace member must have a unique name`,
+        });
+        continue;
+      }
+      seenNames.set(member.name, memberIdx);
     }
     // After normalisation, resolve under TARGET. Defence-in-depth:
     // recompute the absolute path with `resolve` and assert it
