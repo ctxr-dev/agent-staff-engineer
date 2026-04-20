@@ -710,6 +710,25 @@ describe("github issues.createIssue", skipOpts, () => {
     );
   });
 
+  // PR 9 R8 (Copilot): empty / whitespace templateName was silently
+  // treated as "no template" (falsy), ignoring the caller's
+  // intent. Now rejected at the boundary.
+  it("rejects empty / whitespace / non-string templateName", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.createIssue({}, { title: "x", templateName: "" }),
+      /templateName must be a non-empty string when supplied/,
+    );
+    await assert.rejects(
+      tracker.issues.createIssue({}, { title: "x", templateName: "   " }),
+      /templateName must be a non-empty string when supplied/,
+    );
+    await assert.rejects(
+      tracker.issues.createIssue({}, { title: "x", templateName: 42 }),
+      /templateName must be a non-empty string when supplied/,
+    );
+  });
+
   // PR 9 R1 (Copilot): milestone / assignees were documented but not
   // implemented. Rather than silently dropping them, the method now
   // refuses to accept the keys at all.
@@ -829,6 +848,57 @@ describe("github issues.updateIssueStatus", skipOpts, () => {
     await assert.rejects(
       tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "ready" }),
       /has no native mapping/,
+    );
+  });
+
+  // PR 9 R8 (Copilot): whitespace-only status used to pass the
+  // length check and fail later with the less-actionable
+  // "no native mapping" error.
+  it("rejects whitespace-only status at the boundary", async () => {
+    const tracker = makeGithubTracker(makeProjectTarget());
+    await assert.rejects(
+      tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "   " }),
+      /status must be a non-empty string key/,
+    );
+  });
+
+  // PR 9 R8 (Copilot): status with surrounding whitespace now
+  // trims cleanly and finds the map entry.
+  it("trims whitespace around status before looking up the map", async () => {
+    const tracker = makeGithubTracker(makeProjectTarget());
+    const { result } = await withFakeGhSequence(
+      ["status_field_query", "status_items_current_backlog", "update_field_ok"],
+      () => tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "  in_progress  " }),
+    );
+    assert.equal(result.changed, true, "padded status must trim and succeed");
+  });
+
+  // PR 9 R8 (Copilot): projects[0].number used to only check
+  // typeof === "number"; NaN/Infinity/decimal slipped through and
+  // failed later in GraphQL. Now asserted as positive integer.
+  it("rejects invalid projects[0].number (NaN, decimal, zero) at runtime", async () => {
+    const make = (badNumber) => makeGithubTracker({
+      kind: "github",
+      owner: "acme",
+      repo: "widgets",
+      depth: "full",
+      projects: [{
+        owner: "acme",
+        number: badNumber,
+        status_values: { backlog: "Backlog", in_progress: "In progress", done: "Done" },
+      }],
+    });
+    await assert.rejects(
+      make(NaN).issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
+      /projects\[0\]\.number must be a positive integer/,
+    );
+    await assert.rejects(
+      make(1.5).issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
+      /projects\[0\]\.number must be a positive integer/,
+    );
+    await assert.rejects(
+      make(0).issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
+      /projects\[0\]\.number must be a positive integer/,
     );
   });
 

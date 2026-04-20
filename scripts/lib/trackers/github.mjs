@@ -688,7 +688,9 @@ async function githubGetIssue(trackerTarget, ctx, payload) {
 /**
  * Paginated issue list. Filters:
  *   - state: "OPEN" | "CLOSED" | "ALL" (default: OPEN). Mapped to
- *     GitHub's `issues(states: ...)` arg; "ALL" omits the filter.
+ *     GitHub's `issues(states: ...)` arg; "ALL" passes an explicit
+ *     `states: [OPEN, CLOSED]` (the connection's server-side default
+ *     is [OPEN], so omitting the arg would silently behave as OPEN).
  *   - labels: string[]. Client-side filter after the page fetch
  *     (GitHub's Issue.labels arg supports only exact-match on a
  *     single label, and `issues(labels:)` is unavailable on the
@@ -1021,6 +1023,19 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
   // Render body from template when requested. The caller injects the
   // loader (keeps the tracker filesystem-pure for tests + parallel
   // platforms). Template vars come from ctx.templateVars.
+  //
+  // Validate `templateName` at the boundary when supplied: a non-
+  // null non-string value or a whitespace-only string is almost
+  // always a caller bug, and the previous `if (templateName)` test
+  // silently treated empty / whitespace as "no template" and fell
+  // back to the raw `body`, producing a hard-to-debug output.
+  if (templateName !== null && templateName !== undefined) {
+    if (typeof templateName !== "string" || templateName.trim().length === 0) {
+      throw new TypeError(
+        `github issues.createIssue: templateName must be a non-empty string when supplied; got ${JSON.stringify(templateName)}`,
+      );
+    }
+  }
   let finalBody = body;
   if (templateName) {
     if (typeof ctx?.templateLoader !== "function") {
@@ -1104,11 +1119,14 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
  */
 async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
   const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
-  const { issueNumber, status } = payload ?? {};
+  const { issueNumber, status: rawStatus } = payload ?? {};
   requirePositiveInt(issueNumber, "issueNumber");
-  if (typeof status !== "string" || status.length === 0) {
-    throw new TypeError("github issues.updateIssueStatus: status must be a non-empty string key");
+  if (typeof rawStatus !== "string" || rawStatus.trim().length === 0) {
+    throw new TypeError("github issues.updateIssueStatus: status must be a non-empty string key (whitespace-only rejected)");
   }
+  // Trim so whitespace around the key doesn't miss the status_values
+  // map (e.g. user typed `"in_progress "` in the config by mistake).
+  const status = rawStatus.trim();
   // Refuse Done per the human-gate contract.
   if (status === "done") {
     throw new Error(
@@ -1117,9 +1135,18 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
   }
   const target = trackerTarget;
   const project = target?.projects?.[0];
-  if (!project || typeof project.number !== "number") {
+  if (!project) {
     throw new Error(
       "github issues.updateIssueStatus: tracker target has no projects[0] binding; cannot resolve Project v2 item",
+    );
+  }
+  // The schema types `project.number` as integer >= 1, but the
+  // runtime must also guard against hand-edited configs producing
+  // non-integer / NaN / Infinity values that would otherwise fail
+  // later in the GraphQL call with a less-actionable error.
+  if (!Number.isInteger(project.number) || project.number <= 0) {
+    throw new TypeError(
+      `github issues.updateIssueStatus: tracker target projects[0].number must be a positive integer; got ${JSON.stringify(project.number)}`,
     );
   }
   const nativeStatusName = project.status_values?.[status];
@@ -1170,7 +1197,12 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
     );
   }
   const projectNumber = project.number;
-  const projectOwner = project.owner || owner;
+  // Nullish-coalesce rather than `||` so an explicit empty string
+  // in `project.owner` (hand-edited config) surfaces downstream
+  // instead of silently routing to the repo's owner. Matches the
+  // resolveRepoCoords pattern that fixed the equivalent footgun
+  // on ctx.owner/repo earlier in this PR.
+  const projectOwner = project.owner ?? owner;
   // Compound query: resolve issue's project item, the project's
   // Status field node id, the option id for the target name, and
   // the current value — all in one round trip. The `statusField`
