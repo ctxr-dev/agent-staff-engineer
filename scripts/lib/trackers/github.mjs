@@ -447,26 +447,29 @@ function requirePositiveInt(value, label) {
 }
 
 /**
- * Fetch an issue's node ID and current label set for a given issue
- * number. Used as a prerequisite by every mutation-shaped method
- * (comment, relabel, update-status) that needs the GraphQL node ID.
+ * Fetch an issue's GraphQL node id AND its full current label set.
+ * Used by every mutation-shaped method (comment, relabel,
+ * update-status) that needs the node id; the paginated label fetch
+ * additionally backs `relabelIssue`'s delta computation (skipping
+ * labels the issue already has) so callers don't get a no-op
+ * mutation or, worse, re-add an existing label.
  *
- * Returns `null` if the issue doesn't exist (caller decides whether
- * that's an error). Throws on transport / authorization failures via
- * the underlying ghGraphqlQuery path.
- */
-
-/**
- * Fetch an issue's GraphQL node id + its full label set. Labels are
- * paginated (GitHub's max is 100 per page): an issue carrying more
- * than that would otherwise silently truncate, breaking
- * `relabelIssue`'s idempotency contract (a missing-from-first-page
- * label could be re-added, or a stale one left behind). Hard cap at
- * 20 pages = 2000 labels per issue; anything beyond that is
- * pathological and throws rather than silently truncating.
+ * Labels are paginated at GitHub's 100-per-page max with a hard
+ * cap of 20 pages (= 2000 labels per issue). An issue beyond that
+ * is pathological and throws rather than silently truncating.
  *
- * Returns `null` when the issue doesn't exist (caller decides whether
- * that's an error).
+ * Returns `null` when the issue doesn't exist on a repo that does
+ * exist (caller decides whether that's an error). Throws with a
+ * pointed error when the repo itself is missing / inaccessible —
+ * distinguishes that case from "issue not found" so callers don't
+ * misdiagnose auth / targeting problems.
+ *
+ * Name note: this helper returns more than just the id (id + full
+ * label list + title/state/number). Kept as `fetchIssueNodeId` for
+ * git-blame continuity across this PR's review iterations; a
+ * follow-up rename to `fetchIssueWithLabels` is cheap to do once
+ * this PR merges and no more Copilot rounds depend on the symbol
+ * name.
  */
 async function fetchIssueNodeId(owner, repo, issueNumber) {
   const query = `
@@ -501,7 +504,16 @@ async function fetchIssueNodeId(owner, repo, issueNumber) {
       number: issueNumber,
       labelsAfter,
     });
-    const issue = data?.repository?.issue ?? null;
+    // Distinguish "repo absent / inaccessible" from "issue absent
+    // on an existing repo". GraphQL returns repository=null for
+    // the first case (no errors block) and that used to surface
+    // downstream as the misleading "issue not found" message.
+    if (!data?.repository) {
+      throw new Error(
+        `github issues.fetchIssueNodeId: repository ${owner}/${repo} not found or inaccessible`,
+      );
+    }
+    const issue = data.repository.issue ?? null;
     if (!issue) return null;
     issueShape = issueShape ?? { id: issue.id, number: issue.number, title: issue.title, state: issue.state };
     allLabelNodes.push(...(issue.labels?.nodes ?? []));
@@ -622,7 +634,16 @@ async function githubGetIssue(trackerTarget, ctx, payload) {
     }
   `;
   const data = await ghGraphqlQuery(query, { owner, name: repo, number: issueNumber });
-  const issue = data?.repository?.issue;
+  // Distinguish repo-missing / inaccessible from issue-missing:
+  // GraphQL returns repository=null (no errors) when the repo is
+  // absent or the caller lacks read access; collapsing that into
+  // "issue not found" misdirects debugging.
+  if (!data?.repository) {
+    throw new Error(
+      `github issues.getIssue: repository ${owner}/${repo} not found or inaccessible`,
+    );
+  }
+  const issue = data.repository.issue;
   if (!issue) {
     throw new Error(`github issues.getIssue: issue #${issueNumber} not found in ${owner}/${repo}`);
   }
@@ -1029,7 +1050,21 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
       `github issues.updateIssueStatus: status '${status}' has no native mapping in projects[0].status_values`,
     );
   }
-  const statusField = project.status_field || "Status";
+  // statusField: default to "Status" ONLY when project.status_field
+  // is nullish (absent). A present-but-empty / non-string value is
+  // a schema violation that the runtime should surface, not
+  // silently coerce to the default — the earlier `|| "Status"`
+  // form would mask misconfigurations like `status_field: ""` or
+  // `status_field: null` and then update the wrong field.
+  const rawStatusField = project.status_field;
+  if (rawStatusField !== undefined && rawStatusField !== null) {
+    if (typeof rawStatusField !== "string" || rawStatusField.trim().length === 0) {
+      throw new Error(
+        `github issues.updateIssueStatus: projects[0].status_field must be a non-empty string when provided; got ${JSON.stringify(rawStatusField)}`,
+      );
+    }
+  }
+  const statusField = rawStatusField ?? "Status";
   // statusField flows through an ops.config.json string that the
   // user (or adapt-system) supplies. Validate it as a simple field
   // identifier (letters, digits, space, underscore, dash) before

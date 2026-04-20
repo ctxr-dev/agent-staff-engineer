@@ -46,6 +46,9 @@ case "$FAKE_GH_FIXTURE" in
   issue_not_found)
     printf '%s' '{"data":{"repository":{"issue":null}}}'
     ;;
+  repo_null)
+    printf '%s' '{"data":{"repository":null}}'
+    ;;
   comment_added)
     printf '%s' '{"data":{"addComment":{"commentEdge":{"node":{"id":"IC_new"}}}}}'
     ;;
@@ -225,6 +228,21 @@ describe("github issues.comment", skipOpts, () => {
       /owner .* is required/,
     );
   });
+
+  // PR 9 R4 (Copilot): fetchIssueNodeId previously collapsed repo
+  // absence (repository=null) into a misleading "issue not found".
+  // Now distinguishes: repo-null throws "repository ... not found";
+  // issue-null on an existing repo still surfaces as "issue not found".
+  it("throws 'repository not found' when the repo is missing or inaccessible", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "missing" });
+    await assert.rejects(
+      withFakeGhSequence(
+        ["repo_null"],
+        () => tracker.issues.comment({}, { issueNumber: 42, body: "x" }),
+      ),
+      /repository acme\/missing not found or inaccessible/,
+    );
+  });
 });
 
 // -------------------------------------------------------------------
@@ -269,6 +287,20 @@ describe("github issues.getIssue", skipOpts, () => {
         () => tracker.issues.getIssue({}, { issueNumber: 7 }),
       ),
       /more than 100 labels.*truncated/s,
+    );
+  });
+
+  // PR 9 R4 (Copilot): getIssue's repo-null path used to surface as
+  // "issue not found", which misled debugging when the real cause
+  // was a missing / inaccessible repo. Now distinguishes explicitly.
+  it("throws 'repository not found or inaccessible' when repository is null", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "missing" });
+    await assert.rejects(
+      withFakeGhSequence(
+        ["repo_null"],
+        () => tracker.issues.getIssue({}, { issueNumber: 7 }),
+      ),
+      /repository acme\/missing not found or inaccessible/,
     );
   });
 });
@@ -731,5 +763,52 @@ describe("github issues.updateIssueStatus", skipOpts, () => {
       tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
       /unsafe status_field/,
     );
+  });
+
+  // PR 9 R4 (Copilot): the earlier `status_field || "Status"` form
+  // silently fell back on empty string / non-string, masking
+  // misconfigurations like `status_field: ""`. Now present-but-
+  // invalid values throw explicitly; nullish-only values fall
+  // back to the default.
+  it("rejects present-but-empty status_field (no silent default fallback)", async () => {
+    const tracker = makeGithubTracker({
+      kind: "github",
+      owner: "acme",
+      repo: "widgets",
+      depth: "full",
+      projects: [{
+        owner: "acme",
+        number: 3,
+        status_field: "",
+        status_values: { backlog: "B", in_progress: "P", done: "D" },
+      }],
+    });
+    await assert.rejects(
+      tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
+      /status_field must be a non-empty string when provided/,
+    );
+  });
+
+  it("falls back to 'Status' when status_field is absent", async () => {
+    // Target omits status_field entirely; schema validation in real
+    // configs applies `default: "Status"` via Ajv, but the runtime
+    // must also handle the absent case. The fixture is non-in-status
+    // so we exercise the full update path.
+    const tracker = makeGithubTracker({
+      kind: "github",
+      owner: "acme",
+      repo: "widgets",
+      depth: "full",
+      projects: [{
+        owner: "acme",
+        number: 3,
+        status_values: { backlog: "Backlog", in_progress: "In progress", done: "Done" },
+      }],
+    });
+    const { result } = await withFakeGhSequence(
+      ["status_field_query", "status_items_current_backlog", "update_field_ok"],
+      () => tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
+    );
+    assert.equal(result.changed, true);
   });
 });
