@@ -53,7 +53,13 @@ case "$FAKE_GH_FIXTURE" in
     printf '%s' '{"data":{"repository":{"issue":{"id":"I_full","number":7,"title":"hello","body":"body text","state":"OPEN","url":"https://github.com/acme/widgets/issues/7","createdAt":"2026-04-20T00:00:00Z","closedAt":null,"author":{"login":"jane"},"assignees":{"nodes":[{"login":"alice"}]},"labels":{"nodes":[{"name":"bug"}]},"milestone":{"number":3,"title":"v1","state":"OPEN"}}}}}'
     ;;
   list_one_page)
-    printf '%s' '{"data":{"repository":{"issues":{"nodes":[{"id":"I_1","number":1,"title":"first","state":"OPEN","url":"u/1","createdAt":"2026-04-20T00:00:00Z","labels":{"nodes":[{"name":"bug"},{"name":"area/backend"}]},"milestone":{"number":3}},{"id":"I_2","number":2,"title":"second","state":"OPEN","url":"u/2","createdAt":"2026-04-19T00:00:00Z","labels":{"nodes":[{"name":"feat"}]},"milestone":null}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
+    printf '%s' '${JSON.stringify({data:{repository:{issues:{nodes:[{id:"I_1",number:1,title:"first",state:"OPEN",url:"u/1",createdAt:"2026-04-20T00:00:00Z",labels:{nodes:[{name:"bug"},{name:"area/backend"}],pageInfo:{hasNextPage:false}},milestone:{number:3}},{id:"I_2",number:2,title:"second",state:"OPEN",url:"u/2",createdAt:"2026-04-19T00:00:00Z",labels:{nodes:[{name:"feat"}],pageInfo:{hasNextPage:false}},milestone:null}],pageInfo:{hasNextPage:false,endCursor:null}}}}})}'
+    ;;
+  list_repo_not_found)
+    printf '%s' '{"data":{"repository":null}}'
+    ;;
+  list_truncated_labels)
+    printf '%s' '${JSON.stringify({data:{repository:{issues:{nodes:[{id:"I_1",number:1,title:"huge",state:"OPEN",url:"u/1",createdAt:"2026-04-20T00:00:00Z",labels:{nodes:[{name:"x"}],pageInfo:{hasNextPage:true}},milestone:null}],pageInfo:{hasNextPage:false,endCursor:null}}}}})}'
     ;;
   labels_all_found)
     printf '%s' '{"data":{"repository":{"labels":{"nodes":[{"id":"L_bug","name":"bug"},{"id":"L_area","name":"area/backend"},{"id":"L_new","name":"priority/high"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'
@@ -277,6 +283,36 @@ describe("github issues.listIssues", skipOpts, () => {
       /state must be/,
     );
   });
+
+  // PR 9 R1 (Copilot): listIssues previously assumed repository is
+  // non-null. When the repo doesn't exist or the caller lacks
+  // access, GraphQL returns repository=null, which used to throw
+  // a generic TypeError. Now a pointed error.
+  it("throws a pointed error when the repo is missing or inaccessible", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "missing" });
+    await assert.rejects(
+      withFakeGhSequence(
+        ["list_repo_not_found"],
+        () => tracker.issues.listIssues({}, {}),
+      ),
+      /repository acme\/missing not found or inaccessible/,
+    );
+  });
+
+  // PR 9 R1 (Copilot): labels were fetched with first:20; an issue
+  // with >20 labels would silently return a truncated list,
+  // breaking client-side label filters. Now fail loud when the
+  // labels connection reports hasNextPage=true.
+  it("refuses to return a truncated label list on a heavily-labeled issue", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      withFakeGhSequence(
+        ["list_truncated_labels"],
+        () => tracker.issues.listIssues({}, {}),
+      ),
+      /more than 100 labels.*truncated/s,
+    );
+  });
 });
 
 // -------------------------------------------------------------------
@@ -334,6 +370,44 @@ describe("github issues.relabelIssue", skipOpts, () => {
         }),
       ),
       /labels not found.*'nonexistent'/s,
+    );
+  });
+
+  // PR 9 R1 (Copilot): duplicates in add[] or remove[] previously
+  // produced duplicate label IDs in the mutation input. The method
+  // now dedupes within each side before building labelIds.
+  it("dedupes within add / remove arrays before the mutation", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    // Queue: fetchIssueNodeId, labels page, addLabelsToLabelable.
+    // priority/high is unique on the issue; passing it twice should
+    // still produce only one addLabels call with one ID.
+    const { log } = await withFakeGhSequence(
+      ["issue_node_id", "labels_all_found", "add_labels_ok"],
+      () => tracker.issues.relabelIssue({}, {
+        issueNumber: 42,
+        add: ["priority/high", "priority/high"],
+      }),
+    );
+    const addCall = log.trim().split("\n")[2];
+    // The addLabels mutation's labelIds array should contain L_new
+    // exactly once, not twice. Asserting on character count of the
+    // ID is the simplest proxy.
+    const occurrences = (addCall.match(/L_new/g) || []).length;
+    assert.equal(occurrences, 1, "dedupe should leave one L_new in the mutation");
+  });
+
+  // PR 9 R1 (Copilot): a name appearing in both add AND remove is
+  // contradictory and now rejected at the boundary. Silently
+  // picking one direction would mask a bug in the caller's plan.
+  it("rejects a label that appears in both add and remove", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.relabelIssue({}, {
+        issueNumber: 42,
+        add: ["bug"],
+        remove: ["bug"],
+      }),
+      /in both add and remove/,
     );
   });
 });
@@ -429,6 +503,21 @@ describe("github issues.createIssue", skipOpts, () => {
       /non-empty string/,
     );
   });
+
+  // PR 9 R1 (Copilot): milestone / assignees were documented but not
+  // implemented. Rather than silently dropping them, the method now
+  // refuses to accept the keys at all.
+  it("rejects milestone / assignees keys (not implemented on this namespace yet)", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.createIssue({}, { title: "x", milestone: { number: 3 } }),
+      /not supported on this namespace yet/,
+    );
+    await assert.rejects(
+      tracker.issues.createIssue({}, { title: "x", assignees: ["alice"] }),
+      /not supported on this namespace yet/,
+    );
+  });
 });
 
 // -------------------------------------------------------------------
@@ -499,6 +588,31 @@ describe("github issues.updateIssueStatus", skipOpts, () => {
     await assert.rejects(
       tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
       /projects\[0\] binding/,
+    );
+  });
+
+  // PR 9 R1 (Copilot): status_field previously flowed straight into
+  // the query string. A name with quotes / newlines / fancy unicode
+  // would silently corrupt the GraphQL query. Now validated against
+  // a safe allow-list (letters / digits / space / _ / -) before
+  // being inlined (via JSON.stringify for quoting safety).
+  it("rejects an unsafe status_field value before running the query", async () => {
+    const badTarget = {
+      kind: "github",
+      owner: "acme",
+      repo: "widgets",
+      depth: "full",
+      projects: [{
+        owner: "acme",
+        number: 3,
+        status_field: 'Status") { id } dangerous {',
+        status_values: { backlog: "B", in_progress: "P", done: "D" },
+      }],
+    };
+    const tracker = makeGithubTracker(badTarget);
+    await assert.rejects(
+      tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
+      /unsafe status_field/,
     );
   });
 });
