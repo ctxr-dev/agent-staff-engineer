@@ -430,6 +430,60 @@ describe("github issues.listIssues", skipOpts, () => {
     );
   });
 
+  // PR 9 R12 (Copilot): the earlier owner regex
+  // `^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$` accepted consecutive
+  // hyphens AND trailing hyphens, which GitHub itself rejects. Now
+  // enforces: starts AND ends alphanumeric, no `--`, length 1-39.
+  it("rejects owner with consecutive hyphens", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({ owner: "a--b" }, {}),
+      /owner must match GitHub's owner-name rules/,
+    );
+  });
+
+  it("rejects owner with a trailing hyphen", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({ owner: "acme-" }, {}),
+      /owner must match GitHub's owner-name rules/,
+    );
+  });
+
+  it("rejects owner with a leading hyphen", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({ owner: "-acme" }, {}),
+      /owner must match GitHub's owner-name rules/,
+    );
+  });
+
+  it("accepts owner with single interior hyphens", async () => {
+    // "a-b-c" is valid; runs listIssues happy path. No new
+    // fixture needed: we just check the boundary lets this
+    // through by reaching the gh call (and failing on the
+    // unknown-fixture fallback, which proves validation passed).
+    const tracker = makeGithubTracker({ owner: "a-b-c", repo: "widgets" });
+    // The fake-gh fallback fixture returns {"data":null,"errors":[...]}
+    // which ghGraphqlExec surfaces as GhGraphqlError. The key
+    // assertion is that we reached the gh call (no boundary
+    // rejection), so an error containing "fake gh unknown fixture"
+    // (or equivalent transport error) indicates success past
+    // validation.
+    await assert.rejects(
+      withFakeGhSequence([""], () => tracker.issues.listIssues({}, {})),
+      /fake gh unknown fixture|gh api graphql/i,
+    );
+  });
+
+  it("rejects owner longer than 39 characters", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.listIssues({ owner: "a".repeat(40) }, {}),
+      /owner must match GitHub's owner-name rules/,
+    );
+  });
+
   // PR 9 R5 (Copilot): listIssues silently ignored non-array labels
   // and accepted NaN/Infinity milestone.number, which filtered out
   // everything without surfacing the caller bug.

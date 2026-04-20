@@ -409,14 +409,19 @@ async function countUnresolvedBeyondFirstPage({ owner, repo, prNumber }, startCu
  * this provider was constructed with. Throws if neither source has both
  * fields, since every `issues.*` method needs them.
  */
-// GitHub owner/repo name regexes. Owner is 1-39 chars, alphanumeric
-// and single hyphens (GitHub's documented constraint). Repo is 1-100
-// chars, alphanumeric + `-` + `_` + `.` (observed + docs; the server
-// has additional rules we don't reproduce). These are stricter than
-// "any non-empty string" and close the Windows shell-injection
-// surface (ghExec currently uses `shell: true` on some platforms);
-// no legitimate caller ever needs a character outside the allow-list.
-const GITHUB_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+// GitHub owner/repo name regexes. Owner is 1-39 chars, must start
+// AND end with an alphanumeric, and may contain SINGLE hyphens
+// between alphanumerics (no consecutive `--`, no leading or trailing
+// `-`). That mirrors GitHub's published username/org-name rules.
+// Repo is 1-100 chars, alphanumeric + `-` + `_` + `.` (observed +
+// docs; the server has additional rules we don't reproduce).
+// These are stricter than "any non-empty string" and close the
+// Windows shell-injection surface (ghExec currently uses
+// `shell: true` on some platforms); no legitimate caller ever needs
+// a character outside the allow-list. The length cap is enforced
+// by a lookahead so the structural rule and the length rule stay
+// in one expression.
+const GITHUB_OWNER_RE = /^(?=.{1,39}$)[A-Za-z0-9](?:-?[A-Za-z0-9])*$/;
 const GITHUB_REPO_RE  = /^[A-Za-z0-9._-]{1,100}$/;
 
 function resolveRepoCoords(ctx, trackerTarget) {
