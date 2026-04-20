@@ -982,6 +982,17 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
       "github issues.createIssue: 'milestone' and 'assignees' are not supported on this namespace yet; apply them via a follow-up mutation (PR 10 will add the reconcile surface)",
     );
   }
+  // Validate templateName here at the input boundary (before any
+  // network calls) so a caller bug surfaces immediately without
+  // first burning a dedupe search against the gh API. Matches the
+  // title/labels/milestone/assignees rejections above.
+  if (templateName !== null && templateName !== undefined) {
+    if (typeof templateName !== "string" || templateName.trim().length === 0) {
+      throw new TypeError(
+        `github issues.createIssue: templateName must be a non-empty string when supplied; got ${JSON.stringify(templateName)}`,
+      );
+    }
+  }
   // Dedupe: search open issues by exact title. GitHub's search is
   // ranked + substring-based, so an exact match may not appear on
   // the first page of results even when there are only a handful
@@ -1023,19 +1034,7 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
   // Render body from template when requested. The caller injects the
   // loader (keeps the tracker filesystem-pure for tests + parallel
   // platforms). Template vars come from ctx.templateVars.
-  //
-  // Validate `templateName` at the boundary when supplied: a non-
-  // null non-string value or a whitespace-only string is almost
-  // always a caller bug, and the previous `if (templateName)` test
-  // silently treated empty / whitespace as "no template" and fell
-  // back to the raw `body`, producing a hard-to-debug output.
-  if (templateName !== null && templateName !== undefined) {
-    if (typeof templateName !== "string" || templateName.trim().length === 0) {
-      throw new TypeError(
-        `github issues.createIssue: templateName must be a non-empty string when supplied; got ${JSON.stringify(templateName)}`,
-      );
-    }
-  }
+  // (templateName type/shape was validated at the input boundary above.)
   let finalBody = body;
   if (templateName) {
     if (typeof ctx?.templateLoader !== "function") {
