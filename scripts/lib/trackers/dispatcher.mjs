@@ -327,9 +327,23 @@ export function normaliseMemberPath(input, label, opts = {}) {
     // e.g. "////" or ".////" that didn't match rootOnly above.
     throw new Error(`normaliseMemberPath: ${label} collapses to empty after normalisation (got '${input}')`);
   }
-  const parts = stripped.split("/");
+  // Collapse consecutive separators ("libs//shared" -> "libs/shared")
+  // and drop interior "." segments ("libs/./shared" -> "libs/shared").
+  // Without this the normaliser would accept inputs that look fine
+  // at bootstrap time but never match a real git-diff file path at
+  // runtime (diffs always emit canonical POSIX with single slashes
+  // and no "./" segments), breaking resolveMemberFromPath silently.
+  const parts = stripped.split("/").filter((seg) => seg !== "" && seg !== ".");
+  if (parts.length === 0) {
+    // Input was composed entirely of "." and "/" segments (e.g.
+    // "././", ".//./"). That's semantically the root member; honour
+    // allowRoot here the same way as the early rootOnly shortcut so
+    // a caller can't sneak a "sort-of root" input past the guard.
+    if (allowRoot) return ".";
+    throw new Error(`normaliseMemberPath: ${label} collapses to empty after normalisation (got '${input}')`);
+  }
   if (parts.includes("..")) {
     throw new Error(`normaliseMemberPath: ${label} must not contain '..' (got '${input}')`);
   }
-  return stripped;
+  return parts.join("/");
 }

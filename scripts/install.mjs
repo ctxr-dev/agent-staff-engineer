@@ -32,7 +32,7 @@
 import { readFile, readdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
@@ -369,20 +369,29 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
     // up front. `join(TARGET, absPath)` would let an absolute path
     // silently escape TARGET and check a location outside the
     // project; the normaliser catches that before it can happen.
-    let relative;
+    let normalisedRel;
     try {
-      relative = normaliseMemberPath(member.path, `workspace member '${member.name ?? "<unnamed>"}' path`, { allowRoot: true });
+      normalisedRel = normaliseMemberPath(member.path, `workspace member '${member.name ?? "<unnamed>"}' path`, { allowRoot: true });
     } catch (e) {
       invalid.push({ name: member.name ?? "<unnamed>", path: member.path, reason: e.message });
       continue;
     }
     // After normalisation, resolve under TARGET. Defence-in-depth:
     // recompute the absolute path with `resolve` and assert it
-    // stays under TARGET. A mid-normaliser bug or a clever
-    // symlink would otherwise get through the first check.
-    const absolute = resolve(TARGET, relative);
+    // stays under TARGET. Use `path.relative` for the containment
+    // check rather than string-prefix-with-"/" because the latter
+    // is POSIX-specific; on Windows `resolve` returns
+    // backslash-separated paths, so a "/" prefix check would
+    // always report escape for non-root members and block every
+    // valid multi-repo install. Cross-platform rule: the relative
+    // path from resolvedTarget to absolute must be either empty
+    // (same dir) OR not absolute AND not start with a ".." segment.
+    const absolute = resolve(TARGET, normalisedRel);
     const resolvedTarget = resolve(TARGET);
-    if (absolute !== resolvedTarget && !absolute.startsWith(resolvedTarget + "/")) {
+    const rel = relative(resolvedTarget, absolute);
+    const escapes =
+      isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`) || rel.startsWith("../");
+    if (escapes) {
       invalid.push({
         name: member.name ?? "<unnamed>",
         path: member.path,

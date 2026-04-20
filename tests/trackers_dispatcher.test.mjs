@@ -439,4 +439,36 @@ describe("normaliseMemberPath: the canonical path normaliser", () => {
       assert.match(e.message, /member 'shared' path/);
     }
   });
+
+  // PR 8 R2 (Copilot): consecutive separators ("libs//shared") and
+  // interior "." segments ("libs/./shared") were accepted verbatim,
+  // but real git-diff paths never contain them. A member.path like
+  // "libs//shared" would then never match "libs/shared/x.ts" at
+  // runtime. Canonicalise to a single "/" with no "." segments.
+  it("collapses consecutive slashes to a single separator", () => {
+    assert.equal(normaliseMemberPath("libs//shared", "x"), "libs/shared");
+    assert.equal(normaliseMemberPath("libs///shared///x", "x"), "libs/shared/x");
+  });
+
+  it("drops interior '.' segments", () => {
+    assert.equal(normaliseMemberPath("libs/./shared", "x"), "libs/shared");
+    assert.equal(normaliseMemberPath("a/./b/./c", "x"), "a/b/c");
+  });
+
+  it("normalises mixed backslash+double-slash+'.' inputs", () => {
+    assert.equal(normaliseMemberPath("libs\\\\shared/./x", "x"), "libs/shared/x");
+  });
+
+  it("treats './././' as a rootOnly collapse (allowRoot only)", () => {
+    assert.equal(normaliseMemberPath("././", "x", { allowRoot: true }), ".");
+    assert.throws(() => normaliseMemberPath("././", "x"), /collapses to empty/);
+  });
+
+  // Regression: now that the normaliser collapses '//' and '.'
+  // segments, resolveMemberFromPath should transparently accept
+  // caller inputs with those artefacts and still resolve correctly.
+  it("resolveMemberFromPath accepts inputs with '//' and '.' segments", () => {
+    assert.equal(resolveMemberFromPath(WORKSPACE_CFG, "libs//shared/x.ts"), "shared");
+    assert.equal(resolveMemberFromPath(WORKSPACE_CFG, "libs/./shared/x.ts"), "shared");
+  });
 });
