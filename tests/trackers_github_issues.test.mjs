@@ -77,7 +77,7 @@ case "$FAKE_GH_FIXTURE" in
     printf '%s' '{"data":{"removeLabelsFromLabelable":{"labelable":{"id":"I_abc"}}}}'
     ;;
   search_dedupe_hit)
-    printf '%s' '${JSON.stringify({data:{search:{nodes:[{id:"I_existing",number:99,title:"my title",state:"OPEN",repository:{nameWithOwner:"acme/widgets"}}],pageInfo:{hasNextPage:false,endCursor:null}}}})}'
+    printf '%s' '${JSON.stringify({data:{search:{nodes:[{id:"I_existing",number:99,title:"my title",state:"OPEN",url:"https://github.com/acme/widgets/issues/99",repository:{nameWithOwner:"acme/widgets"}}],pageInfo:{hasNextPage:false,endCursor:null}}}})}'
     ;;
   search_dedupe_miss)
     printf '%s' '${JSON.stringify({data:{search:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}})}'
@@ -559,6 +559,29 @@ describe("github issues.relabelIssue", skipOpts, () => {
       /in both add and remove/,
     );
   });
+
+  // PR 9 R6 (Copilot): non-string / whitespace-only entries in
+  // add/remove used to surface late as "label not found". Now
+  // rejected at the boundary with a pointed error.
+  it("rejects non-string entries in add[] / remove[]", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.relabelIssue({}, { issueNumber: 42, add: ["bug", 42] }),
+      /every add\[\] entry must be a non-empty string/,
+    );
+    await assert.rejects(
+      tracker.issues.relabelIssue({}, { issueNumber: 42, remove: [null] }),
+      /every remove\[\] entry must be a non-empty string/,
+    );
+  });
+
+  it("rejects whitespace-only entries in add[] / remove[]", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.relabelIssue({}, { issueNumber: 42, add: ["   "] }),
+      /every add\[\] entry must be a non-empty string/,
+    );
+  });
 });
 
 // -------------------------------------------------------------------
@@ -574,6 +597,11 @@ describe("github issues.createIssue", skipOpts, () => {
     );
     assert.equal(result.existed, true);
     assert.equal(result.number, 99);
+    // PR 9 R6 (Copilot): dedupe return shape matches create's
+    // shape so callers never have to branch on `existed` to read
+    // common fields like `url`.
+    assert.equal(result.url, "https://github.com/acme/widgets/issues/99");
+    assert.equal(typeof result.id, "string");
     // Only 1 gh call: the dedupe search. No createIssue mutation.
     assert.equal(log.trim().split("\n").length, 1);
   });
@@ -650,6 +678,22 @@ describe("github issues.createIssue", skipOpts, () => {
     await assert.rejects(
       tracker.issues.createIssue({}, { title: "   " }),
       /non-empty string/,
+    );
+  });
+
+  // PR 9 R6 (Copilot): invalid label entries in createIssue used
+  // to surface through the downstream relabelIssue call with a
+  // misleading "labels not found" message. Now rejected at the
+  // boundary so the error points at the createIssue call site.
+  it("rejects non-string / whitespace-only label entries on createIssue", async () => {
+    const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
+    await assert.rejects(
+      tracker.issues.createIssue({}, { title: "x", labels: ["bug", 42] }),
+      /every labels\[\] entry must be a non-empty string/,
+    );
+    await assert.rejects(
+      tracker.issues.createIssue({}, { title: "x", labels: ["   "] }),
+      /every labels\[\] entry must be a non-empty string/,
     );
   });
 
@@ -848,6 +892,21 @@ describe("github issues.updateIssueStatus", skipOpts, () => {
     await assert.rejects(
       tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
       /status_field must be a non-empty string when provided/,
+    );
+  });
+
+  // PR 9 R6 (Copilot): updateIssueStatus's items query also used
+  // to collapse repository=null into "issue not found", masking
+  // auth / targeting failures. Now distinguishes explicitly.
+  it("throws 'repository not found' on updateIssueStatus when repo is null", async () => {
+    const tracker = makeGithubTracker(makeProjectTarget());
+    // Sequence: field query succeeds, items query returns repo=null.
+    await assert.rejects(
+      withFakeGhSequence(
+        ["status_field_query", "repo_null"],
+        () => tracker.issues.updateIssueStatus({}, { issueNumber: 42, status: "in_progress" }),
+      ),
+      /repository acme\/widgets not found or inaccessible/,
     );
   });
 

@@ -836,6 +836,21 @@ async function githubRelabelIssue(trackerTarget, ctx, payload) {
   if (!Array.isArray(rawAdd) || !Array.isArray(rawRemove)) {
     throw new TypeError("github issues.relabelIssue: add and remove must be arrays of label names");
   }
+  // Validate every label-name entry at the boundary so non-string /
+  // whitespace-only inputs surface as a clear input error rather
+  // than a misleading "labels not found" further down when
+  // resolveLabelIds can't match them.
+  const validateLabelArray = (arr, key) => {
+    for (const l of arr) {
+      if (typeof l !== "string" || l.trim().length === 0) {
+        throw new TypeError(
+          `github issues.relabelIssue: every ${key}[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
+        );
+      }
+    }
+  };
+  validateLabelArray(rawAdd, "add");
+  validateLabelArray(rawRemove, "remove");
   // Dedupe within each side. Duplicates in the caller array would
   // produce duplicate label IDs in the GraphQL mutation input, which
   // GitHub accepts but is redundant work at best; at worst a future
@@ -940,6 +955,17 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
   if (!Array.isArray(labels)) {
     throw new TypeError("github issues.createIssue: labels must be an array of label names");
   }
+  // Validate each label entry here so the failure points at the
+  // createIssue call rather than surfacing later through the
+  // relabelIssue delegation with a less-actionable "labels not
+  // found" message.
+  for (const l of labels) {
+    if (typeof l !== "string" || l.trim().length === 0) {
+      throw new TypeError(
+        `github issues.createIssue: every labels[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
+      );
+    }
+  }
   // Catch callers still passing the old fields: silent drop would
   // produce an issue without the requested assignee / milestone and
   // leave the caller wondering why the bind didn't happen.
@@ -958,7 +984,7 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
   const dedupeQuery = `
     query($q: String!, $after: String) {
       search(query: $q, type: ISSUE, first: 100, after: $after) {
-        nodes { ... on Issue { id number title state repository { nameWithOwner } } }
+        nodes { ... on Issue { id number title state url repository { nameWithOwner } } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -981,7 +1007,10 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
     dedupeAfter = pageInfo.endCursor;
   }
   if (match) {
-    return { id: match.id, number: match.number, existed: true };
+    // Return the same shape as the create path: { id, number, url,
+    // existed, labelError? }. Callers can read `result.url`
+    // unconditionally without branching on `existed`.
+    return { id: match.id, number: match.number, url: match.url, existed: true };
   }
   // Render body from template when requested. The caller injects the
   // loader (keeps the tracker filesystem-pure for tests + parallel
@@ -1009,7 +1038,7 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
   const repoData = await ghGraphqlQuery(repoQuery, { owner, name: repo });
   const repoId = repoData?.repository?.id;
   if (!repoId) {
-    throw new Error(`github issues.createIssue: repository ${owner}/${repo} not found`);
+    throw new Error(`github issues.createIssue: repository ${owner}/${repo} not found or inaccessible`);
   }
   // createIssue mutation. Labels are applied in a separate step below
   // because the mutation's labelIds input wants node IDs, not names,
@@ -1209,7 +1238,15 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
       issueNumber,
       after,
     });
-    const issue = data?.repository?.issue;
+    // Distinguish repo-absent from issue-absent on the items query.
+    // Without this, a missing / inaccessible repo would surface as
+    // "issue not found", masking the real auth / targeting failure.
+    if (!data?.repository) {
+      throw new Error(
+        `github issues.updateIssueStatus: repository ${owner}/${repo} not found or inaccessible`,
+      );
+    }
+    const issue = data.repository.issue;
     if (!issue) {
       throw new Error(`github issues.updateIssueStatus: issue #${issueNumber} not found in ${owner}/${repo}`);
     }
