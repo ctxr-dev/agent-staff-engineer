@@ -903,17 +903,18 @@ async function githubCreateIssue(trackerTarget, ctx, payload) {
   if (!created?.id) {
     throw new Error("github issues.createIssue: createIssue response missing issue.id");
   }
-  // Apply labels + assignees + milestone best-effort. Any failure
-  // surfaces but the issue has already been created, so the return
-  // value still includes the created number so the caller can
-  // retry / manually patch.
+  // Apply labels best-effort. Any failure surfaces but the issue
+  // has already been created, so the return value still includes
+  // the created number so the caller can retry / manually patch
+  // labels without re-creating the issue.
   if (labels.length > 0) {
     await githubRelabelIssue({ owner, repo }, { owner, repo }, {
       issueNumber: created.number,
       add: labels,
     });
   }
-  // Assignees + milestone: left as future work. Tests lock on the
+  // Assignees + milestone: left as future work; the payload guard
+  // above refuses to accept those keys today. Tests lock on the
   // create + labels path for PR 9; PR 10's labels.* + projects.*
   // namespaces will revisit the broader reconcile semantics that
   // cover assignee resolution (which needs a users(first) query).
