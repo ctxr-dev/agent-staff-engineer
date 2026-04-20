@@ -509,6 +509,38 @@ function requirePositiveInt(value, label) {
 }
 
 /**
+ * Resolve just the owner login (no repo required) for `projects.*`
+ * and `labels.*` methods that don't need a repo binding.
+ * `resolveRepoCoords` is issues-specific (requires repo AND
+ * prefixes errors with "github issues"); using it for projects
+ * would force callers to supply an unrelated `ctx.repo` and emit
+ * misleading errors.
+ *
+ * Falls back to `trackerTarget.owner` when `ctx.owner` is absent.
+ * Validates the resolved owner against the same GitHub owner
+ * allow-list `resolveRepoCoords` uses.
+ */
+function resolveOwnerOnly(ctx, trackerTarget, nsLabel) {
+  const validString = (v) => typeof v === "string" && v.trim().length > 0;
+  if (ctx?.owner !== undefined && ctx?.owner !== null && !validString(ctx.owner)) {
+    throw new TypeError(
+      `github ${nsLabel}: ctx.owner must be a non-empty string when supplied; got ${JSON.stringify(ctx.owner)}`,
+    );
+  }
+  const rawOwner = ctx?.owner ?? trackerTarget?.owner;
+  if (!validString(rawOwner)) {
+    throw new TypeError(`github ${nsLabel}: ctx.owner (or target.owner) is required`);
+  }
+  const owner = rawOwner.trim();
+  if (!GITHUB_OWNER_RE.test(owner)) {
+    throw new TypeError(
+      `github ${nsLabel}: owner must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(owner)}`,
+    );
+  }
+  return { owner };
+}
+
+/**
  * Fetch an issue's GraphQL node id AND its full current label set.
  * Currently used by `relabelIssue` only: it needs the node id for
  * the add/remove mutations, and the paginated label fetch backs
@@ -1603,9 +1635,10 @@ async function fetchAllRepoLabels(owner, repo) {
 
 /**
  * Compute a reconcile plan: what labels need to be added, edited, or
- * deprecated so the repo matches the declared taxonomy. Exported
- * for tests; callable without any network by passing the fetched
- * current labels directly.
+ * deprecated so the repo matches the declared taxonomy. Callable
+ * without any network by passing the fetched current labels directly.
+ * Module-local today (not exported); tests exercise it via the
+ * public `reconcileLabels` entry point.
  *
  * @param {Array<{name:string, color?:string, description?:string}>} declared
  *   Desired labels. `name` is the match key; `color` and `description`
@@ -1699,10 +1732,14 @@ async function githubReconcileLabels(trackerTarget, ctx, payload) {
       "github labels.reconcileLabels: taxonomy must be an array of {name, color?, description?}",
     );
   }
-  // Boundary-validate each taxonomy entry. Name is required; color
-  // is optional but must match the 6-hex format when present;
-  // description is optional string.
+  // Boundary-validate + canonicalise each taxonomy entry. Trim the
+  // name at the boundary and keep the canonical form everywhere
+  // downstream (seen-set dedup, computeLabelReconcilePlan, mutation
+  // payloads). "bug" and "bug " are the same label; treating them
+  // as different would bypass the duplicate check and create a
+  // second label on the repo.
   const seen = new Set();
+  const normalisedTaxonomy = [];
   for (const entry of taxonomy) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       throw new TypeError(
@@ -1714,21 +1751,23 @@ async function githubReconcileLabels(trackerTarget, ctx, payload) {
         `github labels.reconcileLabels: entry.name must be a non-empty string; got ${JSON.stringify(entry.name)}`,
       );
     }
-    if (seen.has(entry.name)) {
+    const name = entry.name.trim();
+    if (seen.has(name)) {
       throw new Error(
-        `github labels.reconcileLabels: duplicate entry name '${entry.name}' in taxonomy`,
+        `github labels.reconcileLabels: duplicate entry name '${name}' in taxonomy`,
       );
     }
-    seen.add(entry.name);
+    seen.add(name);
     normaliseLabelColor(entry.color); // throws on bad format; return value ignored here
     if (entry.description !== undefined && entry.description !== null && typeof entry.description !== "string") {
       throw new TypeError(
         `github labels.reconcileLabels: entry.description must be a string or null when provided; got ${JSON.stringify(entry.description)}`,
       );
     }
+    normalisedTaxonomy.push({ ...entry, name });
   }
   const current = await fetchAllRepoLabels(owner, repo);
-  const plan = computeLabelReconcilePlan(taxonomy, current, { allowDeprecate });
+  const plan = computeLabelReconcilePlan(normalisedTaxonomy, current, { allowDeprecate });
   if (!apply) {
     return { mode: "dry-run", plan };
   }
@@ -1952,12 +1991,20 @@ async function resolveProjectNodeId(owner, projectNumber) {
  *
  * Returns `{items: [{id, type, content, fieldValues}], hasNextPage, endCursor}`.
  * `content` is the linked Issue / PR / DraftIssue summary; fieldValues
- * is a map of `fieldName -> value` for the item. Field values are
- * rendered as scalar strings / numbers / ISO dates to match the
- * shape listIssues uses.
+ * is a map of `fieldName -> value` for the item. Values are
+ * normalised per field type: text / number / date fields return
+ * scalar strings / numbers / ISO dates; richer field types return
+ * structured objects — single-select `{name, optionId}`, iteration
+ * `{title, startDate, duration}`. Callers that want a flat scalar
+ * form should project each value via its field's known type.
+ *
+ * `hasNextPage` is `true` when either the server reports
+ * `hasNextPage: true` on its pageInfo, OR when the `limit` cap
+ * truncated the result; either way `endCursor` points to the next
+ * item past the current window so a caller can resume from there.
  */
 async function githubListProjectItems(trackerTarget, ctx, payload) {
-  const { owner } = resolveRepoCoords(ctx, trackerTarget);
+  const { owner } = resolveOwnerOnly(ctx, trackerTarget, "projects.listProjectItems");
   const { projectNumber, projectOwner, first = 100, after = null, limit = 500 } = payload ?? {};
   requirePositiveInt(projectNumber, "projectNumber");
   if (!Number.isInteger(first) || first <= 0 || first > 100) {
@@ -2013,7 +2060,13 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
   `;
   const out = [];
   let cursor = after;
-  const MAX_PAGES = 20;
+  // Derive the page cap from `effectiveLimit / first` so a caller
+  // passing `first: 10, limit: 500` doesn't trip at item 200. Keep
+  // a floor of 20 as a safety buffer: GitHub's Projects v2 API can
+  // legally return fewer than `first` items per page (eg when field
+  // values are cached differently), so the best-case math alone
+  // would reject a request that would actually succeed.
+  const MAX_PAGES = Math.max(20, Math.ceil(effectiveLimit / first));
   let page = 0;
   let finalCursor = null;
   let finalHasNext = false;
@@ -2061,7 +2114,12 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
     if (!finalHasNext) break;
     cursor = finalCursor;
   }
-  return { items: out, hasNextPage: finalHasNext && out.length < effectiveLimit, endCursor: finalCursor };
+  // `hasNextPage` reflects the server's pageInfo only. When the
+  // `limit` cap truncated the window, `finalCursor` still points
+  // past the last returned item so callers can resume from there;
+  // suppressing `hasNextPage` in that case would hide the fact that
+  // more items exist.
+  return { items: out, hasNextPage: finalHasNext, endCursor: finalCursor };
 }
 
 /**
@@ -2091,7 +2149,7 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
  * `clearProjectField` helper is a follow-up.
  */
 async function githubUpdateProjectField(trackerTarget, ctx, payload) {
-  const { owner } = resolveRepoCoords(ctx, trackerTarget);
+  const { owner } = resolveOwnerOnly(ctx, trackerTarget, "projects.updateProjectField");
   const { projectNumber, projectOwner, itemId, field, value, apply = false } = payload ?? {};
   requirePositiveInt(projectNumber, "projectNumber");
   if (typeof itemId !== "string" || itemId.trim().length === 0) {
@@ -2104,14 +2162,31 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
       `github projects.updateProjectField: field must be a non-empty string; got ${JSON.stringify(field)}`,
     );
   }
+  const canonicalField = field.trim();
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError(
       "github projects.updateProjectField: value must be a plain object with one of {text, number, date, singleSelect}",
     );
   }
-  // Locate the project binding in the target so we can enforce the
-  // declared-fields guard.
-  const ownerLogin = projectOwner ?? owner;
+  // Trim + validate projectOwner at the boundary (mirrors
+  // reconcileProjectFields + listProjectItems), then canonicalise so
+  // the declared-project lookup and the network calls see the same
+  // string "acme" and "acme " is not treated as a different owner.
+  let ownerLogin;
+  if (projectOwner === undefined || projectOwner === null) {
+    ownerLogin = owner;
+  } else if (typeof projectOwner !== "string" || projectOwner.trim().length === 0) {
+    throw new TypeError(
+      `github projects.updateProjectField: projectOwner must be a non-empty string when supplied; got ${JSON.stringify(projectOwner)}`,
+    );
+  } else {
+    ownerLogin = projectOwner.trim();
+  }
+  if (!GITHUB_OWNER_RE.test(ownerLogin)) {
+    throw new TypeError(
+      `github projects.updateProjectField: projectOwner must match GitHub owner rules; got ${JSON.stringify(ownerLogin)}`,
+    );
+  }
   const declared = (trackerTarget?.projects ?? []).find(
     (p) => p?.number === projectNumber && (p.owner ?? owner) === ownerLogin,
   );
@@ -2123,11 +2198,15 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
   const declaredFields = Array.isArray(declared.fields) ? declared.fields : [];
   // Status is always implicitly managed via updateIssueStatus; allow
   // it without requiring it in `fields`. Any OTHER field must be in
-  // `fields`.
+  // `fields`. Compare on the canonicalised (trimmed) field name so
+  // " Status " and "Status" match the declared entry.
   const implicitFields = new Set([declared.status_field ?? "Status"]);
-  if (!implicitFields.has(field) && !declaredFields.includes(field)) {
+  const declaredFieldsSet = new Set(
+    declaredFields.map((n) => (typeof n === "string" ? n.trim() : n)),
+  );
+  if (!implicitFields.has(canonicalField) && !declaredFieldsSet.has(canonicalField)) {
     throw new Error(
-      `github projects.updateProjectField: field '${field}' is not declared in trackers.projects[#${projectNumber}].fields (declared: ${declaredFields.join(", ") || "<none>"})`,
+      `github projects.updateProjectField: field '${canonicalField}' is not declared in trackers.projects[#${projectNumber}].fields (declared: ${declaredFields.join(", ") || "<none>"})`,
     );
   }
   // Validate the value shape at the boundary — BEFORE any network call.
@@ -2165,10 +2244,29 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
   }
   // Resolve the project + field + (if single-select) option IDs.
   const { id: projectId, fields: fieldNodes } = await resolveProjectNodeId(ownerLogin, projectNumber);
-  const fieldNode = fieldNodes.find((f) => f && f.name === field);
+  const fieldNode = fieldNodes.find((f) => f && f.name === canonicalField);
   if (!fieldNode?.id) {
     throw new Error(
-      `github projects.updateProjectField: field '${field}' not found on Project v2 #${projectNumber}`,
+      `github projects.updateProjectField: field '${canonicalField}' not found on Project v2 #${projectNumber}`,
+    );
+  }
+  // Guard against writing the wrong value kind to the wrong field
+  // shape. GitHub would reject the mutation with a GraphQL error,
+  // but doing the check locally avoids burning a call and produces
+  // a more pointed message. `dataType` comes from ProjectV2FieldCommon
+  // on `resolveProjectNodeId`; ITERATION fields don't yet round-trip
+  // through this method so they fall through to the "no matching
+  // kind" branch.
+  const kindToDataType = {
+    text: "TEXT",
+    number: "NUMBER",
+    date: "DATE",
+    singleSelect: "SINGLE_SELECT",
+  };
+  const expectedDataType = kindToDataType[kind];
+  if (fieldNode.dataType && expectedDataType && fieldNode.dataType !== expectedDataType) {
+    throw new TypeError(
+      `github projects.updateProjectField: field '${canonicalField}' has dataType ${fieldNode.dataType}, but value kind '${kind}' expects dataType ${expectedDataType}`,
     );
   }
   // Build the value expression based on which key is set.
@@ -2185,7 +2283,7 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
     if (!opt?.id) {
       const avail = options.map((o) => o.name).join(", ") || "<none>";
       throw new Error(
-        `github projects.updateProjectField: option '${value.singleSelect}' not found on field '${field}' (available: ${avail})`,
+        `github projects.updateProjectField: option '${value.singleSelect}' not found on field '${canonicalField}' (available: ${avail})`,
       );
     }
     valueInput = `{ singleSelectOptionId: ${JSON.stringify(opt.id)} }`;
@@ -2195,7 +2293,7 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
       `github projects.updateProjectField: unknown value kind '${kind}'; expected text / number / date / singleSelect`,
     );
   }
-  const mutationArgs = { projectId, itemId, fieldId: fieldNode.id, field, kind };
+  const mutationArgs = { projectId, itemId, fieldId: fieldNode.id, field: canonicalField, kind };
   if (!apply) {
     return { mode: "dry-run", mutationArgs };
   }
@@ -2228,7 +2326,7 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
  * the UI first; this method never invents option lists.
  */
 async function githubReconcileProjectFields(trackerTarget, ctx, payload) {
-  const { owner } = resolveRepoCoords(ctx, trackerTarget);
+  const { owner } = resolveOwnerOnly(ctx, trackerTarget, "projects.reconcileProjectFields");
   const { projectNumber, projectOwner, declared, apply = false } = payload ?? {};
   requirePositiveInt(projectNumber, "projectNumber");
   if (!Array.isArray(declared)) {
@@ -2236,14 +2334,34 @@ async function githubReconcileProjectFields(trackerTarget, ctx, payload) {
       "github projects.reconcileProjectFields: declared must be an array of field names (strings)",
     );
   }
+  // Trim + dedupe at the boundary. "Priority" and "Priority " are the
+  // same field; counting them as distinct would treat the trailing
+  // space as "missing" on the board and try to re-create it. First
+  // occurrence wins so callers still get a deterministic `missing` /
+  // `present` order.
+  const seen = new Set();
+  const normalisedDeclared = [];
   for (const n of declared) {
     if (typeof n !== "string" || n.trim().length === 0) {
       throw new TypeError(
         `github projects.reconcileProjectFields: declared[] entries must be non-empty strings; got ${JSON.stringify(n)}`,
       );
     }
+    const canonical = n.trim();
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    normalisedDeclared.push(canonical);
   }
-  const ownerLogin = projectOwner ?? owner;
+  let ownerLogin;
+  if (projectOwner === undefined || projectOwner === null) {
+    ownerLogin = owner;
+  } else if (typeof projectOwner !== "string" || projectOwner.trim().length === 0) {
+    throw new TypeError(
+      `github projects.reconcileProjectFields: projectOwner must be a non-empty string when supplied; got ${JSON.stringify(projectOwner)}`,
+    );
+  } else {
+    ownerLogin = projectOwner.trim();
+  }
   if (!GITHUB_OWNER_RE.test(ownerLogin)) {
     throw new TypeError(
       `github projects.reconcileProjectFields: projectOwner must match GitHub owner rules; got ${JSON.stringify(ownerLogin)}`,
@@ -2251,8 +2369,8 @@ async function githubReconcileProjectFields(trackerTarget, ctx, payload) {
   }
   const { id: projectId, fields: existingFields } = await resolveProjectNodeId(ownerLogin, projectNumber);
   const existingNames = new Set(existingFields.map((f) => f?.name).filter(Boolean));
-  const missing = declared.filter((n) => !existingNames.has(n.trim()));
-  const present = declared.filter((n) => existingNames.has(n.trim()));
+  const missing = normalisedDeclared.filter((n) => !existingNames.has(n));
+  const present = normalisedDeclared.filter((n) => existingNames.has(n));
   if (!apply) {
     return { mode: "dry-run", projectNumber, missing, present };
   }
@@ -2269,7 +2387,7 @@ async function githubReconcileProjectFields(trackerTarget, ctx, payload) {
         }
       }
     `;
-    await ghGraphqlMutation(mutation, { projectId, name: name.trim() });
+    await ghGraphqlMutation(mutation, { projectId, name });
     created.push(name);
   }
   return { mode: "applied", projectNumber, missing, present, created };
