@@ -437,7 +437,7 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
       continue;
     }
     seenPaths.set(normalisedRel, memberIdx);
-    // Validate member.name BEFORE the duplicate check. A
+    // Validate member.name BEFORE the duplicate-name check. A
     // missing/empty/non-string name is a schema violation the
     // schema would catch, but install.mjs does not re-validate an
     // existing ops.config.json, so a hand-edit that strips a name

@@ -159,7 +159,7 @@ function makeTracker(kind, target) {
  * tracker, omit it from `workspace.members[]` entirely.
  *
  * @param {object} cfg          parsed ops.config.json
- * @param {string|null} memberName  workspace member name, or null for root
+ * @param {string|null|undefined} memberName  workspace member name, or null/undefined to trigger fallback to project-level `pickTracker`
  * @param {"dev"|"release"} [role="dev"]
  * @returns {{ tracker: object, kind: string, memberName: string|null }}
  */
