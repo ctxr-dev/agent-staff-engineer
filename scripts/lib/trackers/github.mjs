@@ -1,13 +1,15 @@
 // lib/trackers/github.mjs
-// GitHub implementation of the Tracker contract. The review namespace
-// is fully implemented against `gh api graphql` mutations captured in
-// skills/pr-iteration/runbook.md (requestReviews, reviewThreads,
-// resolveReviewThread, statusCheckRollup). The issues / projects /
-// labels namespaces are currently stubbed; the github-sync contract
-// (skills/tracker-sync/SKILL.md on this branch, formerly github-sync)
-// still governs those operations at the agent-runtime level. They
-// will move onto this Tracker surface as the skill's prose operations
-// get wired into code.
+// GitHub implementation of the Tracker contract. Two namespaces
+// are fully implemented:
+//   - review.*  against the `requestReviews`, `reviewThreads`,
+//     `resolveReviewThread`, `statusCheckRollup` GraphQL mutations
+//     captured in skills/pr-iteration/runbook.md (backs skills/pr-iteration).
+//   - issues.*  six methods (create, update-status, comment, relabel,
+//     get, list) backing every bundle skill that consumes
+//     tracker-sync.issues.* at runtime (dev-loop, regression-handler,
+//     adapt-system, release-tracker's downstream flows).
+// The remaining two namespaces, projects.* and labels.*, are stubbed
+// and throw NotSupportedError; PR 10 wires them onto this file.
 //
 // Why GraphQL and not REST for review: the runbook's step 4 documents
 // that the REST `POST /repos/.../requested_reviewers` endpoint silently
@@ -45,20 +47,40 @@ export function makeGithubTracker(target = {}) {
     resolveThread: githubResolveThread,
     ciStateOnHead: githubCiStateOnHead,
   };
-  // Construction-time coverage assert: if REVIEW_METHODS grows a new
-  // entry and this file forgets to wire it, fail loudly here rather
-  // than letting the skill hit a bare `x is not a function` at runtime.
-  const missing = REVIEW_METHODS.filter((m) => typeof review[m] !== "function");
-  if (missing.length > 0) {
+  // issues.* methods need access to the tracker's construction-time
+  // target (owner/repo defaults, projects[0] for status mapping).
+  // Wrap the module-level implementations as closures that capture
+  // `target`, rather than relying on `this` binding, so destructured
+  // callers (`const {comment} = tracker.issues`) keep working.
+  const issues = {
+    createIssue: (ctx, payload) => githubCreateIssue(target, ctx, payload),
+    updateIssueStatus: (ctx, payload) => githubUpdateIssueStatus(target, ctx, payload),
+    comment: (ctx, payload) => githubComment(target, ctx, payload),
+    relabelIssue: (ctx, payload) => githubRelabelIssue(target, ctx, payload),
+    getIssue: (ctx, payload) => githubGetIssue(target, ctx, payload),
+    listIssues: (ctx, payload) => githubListIssues(target, ctx, payload),
+  };
+  // Construction-time coverage assert: if REVIEW_METHODS (or the
+  // issues list in TRACKER_NAMESPACES) grows a new entry and this
+  // file forgets to wire it, fail loudly here rather than letting
+  // the skill hit a bare `x is not a function` at runtime.
+  const missingReview = REVIEW_METHODS.filter((m) => typeof review[m] !== "function");
+  if (missingReview.length > 0) {
     throw new Error(
-      `makeGithubTracker: missing review methods [${missing.join(", ")}]; wire them or update REVIEW_METHODS`,
+      `makeGithubTracker: missing review methods [${missingReview.join(", ")}]; wire them or update REVIEW_METHODS`,
+    );
+  }
+  const missingIssues = TRACKER_NAMESPACES.issues.filter((m) => typeof issues[m] !== "function");
+  if (missingIssues.length > 0) {
+    throw new Error(
+      `makeGithubTracker: missing issues methods [${missingIssues.join(", ")}]; wire them or update TRACKER_NAMESPACES.issues`,
     );
   }
   return {
     kind: "github",
     target,
     review,
-    issues: makeStubNamespace("github", "issues"),
+    issues,
     projects: makeStubNamespace("github", "projects"),
     labels: makeStubNamespace("github", "labels"),
   };
@@ -366,4 +388,1121 @@ async function countUnresolvedBeyondFirstPage({ owner, repo, prNumber }, startCu
     after = rt.pageInfo.endCursor ?? null;
   }
   return unresolved;
+}
+
+// ============================================================================
+// issues.* namespace (PR 9)
+//
+// Each method takes the common `ctx = { owner, repo }` runtime fields
+// (falling back to the tracker's constructor-time `target.owner` / `target.repo`
+// when `ctx` omits them) plus a method-specific payload object. The
+// implementations make one or more `gh api graphql` calls via
+// ghGraphqlQuery / ghGraphqlMutation from ghExec.mjs, matching the
+// `review` namespace's transport. Rationale-per-method in the JSDoc blocks
+// below. See `skills/tracker-sync/SKILL.md` for the skill-level contract.
+// ============================================================================
+
+// Shared utilities -----------------------------------------------------------
+
+/**
+ * Pull `owner` + `repo` out of ctx, falling back to the tracker target
+ * this provider was constructed with. Throws if neither source has both
+ * fields, since every `issues.*` method needs them.
+ */
+// GitHub owner/repo name regexes. Owner is 1-39 chars, must start
+// AND end with an alphanumeric, and may contain SINGLE hyphens
+// between alphanumerics (no consecutive `--`, no leading or trailing
+// `-`). That mirrors GitHub's published username/org-name rules.
+// Repo is 1-100 chars, alphanumeric + `-` + `_` + `.` (observed +
+// docs; the server has additional rules we don't reproduce).
+// These are stricter than "any non-empty string" and close the
+// Windows shell-injection surface (ghExec currently uses
+// `shell: true` on some platforms); no legitimate caller ever needs
+// a character outside the allow-list. The length cap is enforced
+// by a lookahead so the structural rule and the length rule stay
+// in one expression.
+const GITHUB_OWNER_RE = /^(?=.{1,39}$)[A-Za-z0-9](?:-?[A-Za-z0-9])*$/;
+const GITHUB_REPO_RE  = /^[A-Za-z0-9._-]{1,100}$/;
+
+function resolveRepoCoords(ctx, trackerTarget) {
+  // Explicit-invalid detection: a caller who passes
+  //   ctx.owner = ""  or  ctx.owner = "   "
+  // is almost always expressing a bug in their own code, not asking
+  // for the tracker default. Raise here so the failure surfaces at
+  // the call site. The `||` shortcut would silently fall through to
+  // target.owner and send the mutation somewhere the caller didn't
+  // intend. Whitespace-only values are treated the same as empty:
+  // trim before the length check.
+  const validString = (v) => typeof v === "string" && v.trim().length > 0;
+  const assertIfPresent = (key, v) => {
+    if (v === undefined || v === null) return; // permit fallthrough
+    if (!validString(v)) {
+      throw new TypeError(
+        `github issues: ctx.${key} must be a non-empty string when supplied; got ${JSON.stringify(v)}`,
+      );
+    }
+  };
+  assertIfPresent("owner", ctx?.owner);
+  assertIfPresent("repo", ctx?.repo);
+  // Nullish-coalesce so ctx.owner/repo wins when set (already
+  // validated above), else the target's value wins. Only when
+  // both are absent does the final check below throw.
+  const rawOwner = ctx?.owner ?? trackerTarget?.owner;
+  const rawRepo = ctx?.repo ?? trackerTarget?.repo;
+  if (!validString(rawOwner)) {
+    throw new TypeError("github issues: ctx.owner (or target.owner) is required");
+  }
+  if (!validString(rawRepo)) {
+    throw new TypeError("github issues: ctx.repo (or target.repo) is required");
+  }
+  // Trim first, then validate against GitHub's name constraints.
+  // This both canonicalises whitespace-padded config and closes
+  // the shell-injection surface on platforms where ghExec uses
+  // shell: true (Windows). An unusable repo name would have
+  // failed at the GraphQL layer anyway; reject here with a
+  // clearer error and no side effects.
+  const owner = rawOwner.trim();
+  const repo = rawRepo.trim();
+  if (!GITHUB_OWNER_RE.test(owner)) {
+    throw new TypeError(
+      `github issues: owner must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(owner)}`,
+    );
+  }
+  if (!GITHUB_REPO_RE.test(repo)) {
+    throw new TypeError(
+      `github issues: repo must match GitHub's repo-name rules (1-100 chars, alphanumeric + '.' + '-' + '_'); got ${JSON.stringify(repo)}`,
+    );
+  }
+  return { owner, repo };
+}
+
+/** Validate an integer issue number at the input boundary. */
+function requirePositiveInt(value, label) {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new TypeError(`github issues: ${label} must be a positive integer; got ${JSON.stringify(value)}`);
+  }
+}
+
+/**
+ * Fetch an issue's GraphQL node id AND its full current label set.
+ * Currently used by `relabelIssue` only: it needs the node id for
+ * the add/remove mutations, and the paginated label fetch backs
+ * the delta computation (skipping labels the issue already has) so
+ * callers don't get a no-op mutation or, worse, re-add an existing
+ * label. `comment` uses the lighter `fetchIssueIdOnly` helper since
+ * it only needs the id; `updateIssueStatus` fetches directly via
+ * its own compound project-item query. The "used by comment /
+ * update-status" phrasing earlier in PR 9's history was pre-R14;
+ * see git-blame if you need the full migration path.
+ *
+ * Labels are paginated at GitHub's 100-per-page max with a hard
+ * cap of 20 pages (= 2000 labels per issue). An issue beyond that
+ * is pathological and throws rather than silently truncating.
+ *
+ * Returns `null` when the issue doesn't exist on a repo that does
+ * exist (caller decides whether that's an error). Throws with a
+ * pointed error when the repo itself is missing / inaccessible —
+ * distinguishes that case from "issue not found" so callers don't
+ * misdiagnose auth / targeting problems.
+ *
+ * Name note: this helper returns more than just the id (id + full
+ * label list + title/state/number). Kept as `fetchIssueNodeId` for
+ * git-blame continuity across this PR's review iterations; a
+ * follow-up rename to `fetchIssueWithLabels` is cheap to do once
+ * this PR merges and no more Copilot rounds depend on the symbol
+ * name.
+ */
+async function fetchIssueNodeId(owner, repo, issueNumber) {
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!, $labelsAfter: String) {
+      repository(owner: $owner, name: $name) {
+        issue(number: $number) {
+          id number title state
+          labels(first: 100, after: $labelsAfter) {
+            nodes { id name }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }
+  `;
+  const MAX_LABEL_PAGES = 20;
+  let labelsAfter = null;
+  let page = 0;
+  let issueShape = null;
+  const allLabelNodes = [];
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    page += 1;
+    if (page > MAX_LABEL_PAGES) {
+      throw new Error(
+        `github issues.fetchIssueNodeId: issue #${issueNumber} has more than ${MAX_LABEL_PAGES * 100} labels; refusing to paginate further`,
+      );
+    }
+    const data = await ghGraphqlQuery(query, {
+      owner,
+      name: repo,
+      number: issueNumber,
+      labelsAfter,
+    });
+    // Distinguish "repo absent / inaccessible" from "issue absent
+    // on an existing repo". GraphQL returns repository=null for
+    // the first case (no errors block) and that used to surface
+    // downstream as the misleading "issue not found" message.
+    if (!data?.repository) {
+      throw new Error(
+        `github issues.fetchIssueNodeId: repository ${owner}/${repo} not found or inaccessible`,
+      );
+    }
+    const issue = data.repository.issue ?? null;
+    if (!issue) return null;
+    issueShape = issueShape ?? { id: issue.id, number: issue.number, title: issue.title, state: issue.state };
+    allLabelNodes.push(...(issue.labels?.nodes ?? []));
+    if (!issue.labels?.pageInfo?.hasNextPage) break;
+    labelsAfter = issue.labels.pageInfo.endCursor;
+  }
+  return { ...issueShape, labels: { nodes: allLabelNodes } };
+}
+
+/**
+ * Lightweight variant: fetch only the issue's GraphQL node ID (plus
+ * the id/number/title/state echo) WITHOUT paginating labels. Used
+ * by methods that don't need the label set (`comment`). Saves N
+ * extra GraphQL calls on heavily-labeled issues.
+ *
+ * Same repo-null vs issue-null distinction as `fetchIssueNodeId`.
+ * Returns `null` when the issue doesn't exist on a real repo;
+ * throws on repo-absent / inaccessible.
+ */
+async function fetchIssueIdOnly(owner, repo, issueNumber) {
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        issue(number: $number) { id number title state }
+      }
+    }
+  `;
+  const data = await ghGraphqlQuery(query, { owner, name: repo, number: issueNumber });
+  if (!data?.repository) {
+    throw new Error(
+      `github issues.fetchIssueIdOnly: repository ${owner}/${repo} not found or inaccessible`,
+    );
+  }
+  return data.repository.issue ?? null;
+}
+
+/**
+ * Resolve an array of label names to their GraphQL node IDs within a
+ * given repo. Returns a Map of name -> id for the labels that exist;
+ * any unknown label name is collected into `missing[]` for the caller
+ * to surface. Pagination is bounded by GitHub's 100-labels-per-page
+ * limit; repos with >100 labels walk through a `labels(first:100, after:...)`
+ * page loop here rather than silently truncating.
+ */
+async function resolveLabelIds(owner, repo, names) {
+  const wanted = new Set(names);
+  const found = new Map();
+  let after = null;
+  const query = `
+    query($owner: String!, $name: String!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        labels(first: 100, after: $after) {
+          nodes { id name }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  `;
+  const MAX_PAGES = 20;
+  let page = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    page += 1;
+    if (page > MAX_PAGES) {
+      throw new Error(
+        `github issues.resolveLabelIds: repo ${owner}/${repo} has more than ${MAX_PAGES * 100} labels; refusing to paginate further`,
+      );
+    }
+    const data = await ghGraphqlQuery(query, { owner, name: repo, after });
+    // repository can be null when the repo doesn't exist or the
+    // caller lacks access; a bare `data.repository.labels` would
+    // then throw an unrelated TypeError. Throw a pointed error so
+    // the caller sees the real failure.
+    if (!data?.repository) {
+      throw new Error(
+        `github issues.resolveLabelIds: repository ${owner}/${repo} not found or inaccessible`,
+      );
+    }
+    const labels = data.repository.labels;
+    for (const l of labels.nodes) {
+      if (wanted.has(l.name)) found.set(l.name, l.id);
+      if (found.size === wanted.size) break;
+    }
+    if (found.size === wanted.size) break;
+    if (!labels.pageInfo?.hasNextPage) break;
+    after = labels.pageInfo.endCursor;
+  }
+  const missing = names.filter((n) => !found.has(n));
+  return { found, missing };
+}
+
+// issues.comment -------------------------------------------------------------
+
+async function githubComment(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { issueNumber, body } = payload ?? {};
+  requirePositiveInt(issueNumber, "issueNumber");
+  if (typeof body !== "string" || body.length === 0) {
+    throw new TypeError("github issues.comment: body must be a non-empty string");
+  }
+  // Use the lightweight id-only fetch: posting a comment only
+  // needs the issue node id, so paginating the full label set
+  // (as fetchIssueNodeId does) would burn up to 20 extra
+  // GraphQL pages on a heavily-labeled issue for no gain.
+  const issue = await fetchIssueIdOnly(owner, repo, issueNumber);
+  if (!issue) {
+    throw new Error(`github issues.comment: issue #${issueNumber} not found in ${owner}/${repo}`);
+  }
+  const mutation = `
+    mutation($subjectId: ID!, $body: String!) {
+      addComment(input: { subjectId: $subjectId, body: $body }) {
+        commentEdge { node { id } }
+      }
+    }
+  `;
+  return ghGraphqlMutation(mutation, { subjectId: issue.id, body });
+}
+
+// issues.getIssue ------------------------------------------------------------
+
+async function githubGetIssue(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { issueNumber } = payload ?? {};
+  requirePositiveInt(issueNumber, "issueNumber");
+  // Fetch labels + assignees at GitHub's max page size (100) and
+  // guard truncation explicitly. Matching listIssues' fail-loud
+  // contract: a caller filtering by label or assignee list on a
+  // silently-truncated result gets wrong answers, which is worse
+  // than a surfaced error. If real projects ever hit 100+ labels
+  // or assignees per issue, we add pagination here as a focused
+  // follow-up rather than hiding the issue.
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        issue(number: $number) {
+          id number title body state url createdAt closedAt
+          author { login }
+          assignees(first: 100) {
+            nodes { login }
+            pageInfo { hasNextPage }
+          }
+          labels(first: 100) {
+            nodes { name }
+            pageInfo { hasNextPage }
+          }
+          milestone { number title state }
+        }
+      }
+    }
+  `;
+  const data = await ghGraphqlQuery(query, { owner, name: repo, number: issueNumber });
+  // Distinguish repo-missing / inaccessible from issue-missing:
+  // GraphQL returns repository=null (no errors) when the repo is
+  // absent or the caller lacks read access; collapsing that into
+  // "issue not found" misdirects debugging.
+  if (!data?.repository) {
+    throw new Error(
+      `github issues.getIssue: repository ${owner}/${repo} not found or inaccessible`,
+    );
+  }
+  const issue = data.repository.issue;
+  if (!issue) {
+    throw new Error(`github issues.getIssue: issue #${issueNumber} not found in ${owner}/${repo}`);
+  }
+  if (issue.labels?.pageInfo?.hasNextPage) {
+    throw new Error(
+      `github issues.getIssue: issue #${issueNumber} has more than 100 labels; refusing to return a truncated label list`,
+    );
+  }
+  if (issue.assignees?.pageInfo?.hasNextPage) {
+    throw new Error(
+      `github issues.getIssue: issue #${issueNumber} has more than 100 assignees; refusing to return a truncated assignee list`,
+    );
+  }
+  return {
+    id: issue.id,
+    number: issue.number,
+    title: issue.title,
+    body: issue.body ?? "",
+    state: issue.state, // OPEN | CLOSED
+    url: issue.url,
+    author: issue.author?.login ?? null,
+    createdAt: issue.createdAt,
+    closedAt: issue.closedAt,
+    assignees: issue.assignees.nodes.map((a) => a.login),
+    labels: issue.labels.nodes.map((l) => l.name),
+    milestone: issue.milestone
+      ? { number: issue.milestone.number, title: issue.milestone.title, state: issue.milestone.state }
+      : null,
+  };
+}
+
+// issues.listIssues ----------------------------------------------------------
+
+/**
+ * Paginated issue list. Filters:
+ *   - state: "OPEN" | "CLOSED" | "ALL" (default: OPEN). Mapped to
+ *     GitHub's `issues(states: ...)` arg; "ALL" passes an explicit
+ *     `states: [OPEN, CLOSED]` (the connection's server-side default
+ *     is [OPEN], so omitting the arg would silently behave as OPEN).
+ *   - labels: string[]. Client-side filter after the page fetch
+ *     (GitHub's Issue.labels arg supports only exact-match on a
+ *     single label, and `issues(labels:)` is unavailable on the
+ *     Repository connection via GraphQL).
+ *   - milestone: { number: int } | null — client-side filter.
+ *   - limit: int (default 100; hard max 1000 to match the review
+ *     namespace's pagination cap).
+ */
+async function githubListIssues(trackerTarget, ctx, payload = {}) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { state = "OPEN", labels = null, milestone = null, limit = 100 } = payload;
+  if (state !== "OPEN" && state !== "CLOSED" && state !== "ALL") {
+    throw new TypeError(`github issues.listIssues: state must be "OPEN", "CLOSED", or "ALL"; got ${JSON.stringify(state)}`);
+  }
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new TypeError(`github issues.listIssues: limit must be a positive integer; got ${JSON.stringify(limit)}`);
+  }
+  // Validate `labels` shape at the boundary. Non-array values used
+  // to be silently ignored (Array.isArray guard below); now throw
+  // so a caller passing a wrong type (string, object) sees the bug
+  // immediately instead of getting unfiltered results. Empty array
+  // is allowed and treated as "no label filter".
+  // Also normalise to the trimmed value so downstream equality
+  // comparisons use the canonical form. A caller-supplied "bug "
+  // would otherwise pass validation and then never match "bug"
+  // labels on the fetched issues.
+  let normalisedLabels = labels;
+  if (labels !== null && labels !== undefined) {
+    if (!Array.isArray(labels)) {
+      throw new TypeError(
+        `github issues.listIssues: labels must be an array of non-empty strings when provided; got ${typeof labels}`,
+      );
+    }
+    normalisedLabels = labels.map((l) => {
+      if (typeof l !== "string" || l.trim().length === 0) {
+        throw new TypeError(
+          `github issues.listIssues: every labels[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
+        );
+      }
+      return l.trim();
+    });
+  }
+  // Validate `milestone`. `null`/`undefined` means "no filter";
+  // otherwise it must be an object with a positive-integer `number`.
+  // The prior `typeof milestone.number === "number"` guard let
+  // NaN / Infinity through, which quietly filtered out everything.
+  if (milestone !== null && milestone !== undefined) {
+    if (typeof milestone !== "object" || Array.isArray(milestone)) {
+      throw new TypeError(
+        `github issues.listIssues: milestone must be null or an object with a positive integer 'number'; got ${typeof milestone}`,
+      );
+    }
+    if (!Number.isInteger(milestone.number) || milestone.number <= 0) {
+      throw new TypeError(
+        `github issues.listIssues: milestone.number must be a positive integer; got ${JSON.stringify(milestone.number)}`,
+      );
+    }
+  }
+  const HARD_CAP = 1000;
+  const effectiveLimit = Math.min(limit, HARD_CAP);
+  // Map "ALL" to an explicit both-states list. GitHub's
+  // Repository.issues connection defaults to [OPEN], so omitting
+  // the arg entirely (our earlier impl) meant "ALL" behaved
+  // identically to "OPEN" and never returned closed issues.
+  const statesArg = state === "ALL"
+    ? ", states: [OPEN, CLOSED]"
+    : `, states: [${state}]`;
+  const query = `
+    query($owner: String!, $name: String!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        issues(first: 100, after: $after${statesArg}, orderBy: { field: CREATED_AT, direction: DESC }) {
+          nodes {
+            id number title state url createdAt
+            labels(first: 100) {
+              nodes { name }
+              pageInfo { hasNextPage }
+            }
+            milestone { number }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  `;
+  const out = [];
+  let after = null;
+  const MAX_PAGES = 10;
+  let page = 0;
+  while (out.length < effectiveLimit) {
+    page += 1;
+    if (page > MAX_PAGES) {
+      throw new Error(
+        `github issues.listIssues: exceeded ${MAX_PAGES} pages for ${owner}/${repo}; tighten filters or raise the cap`,
+      );
+    }
+    const data = await ghGraphqlQuery(query, { owner, name: repo, after });
+    const conn = data?.repository?.issues;
+    if (!conn) {
+      // repository null when repo doesn't exist or caller lacks
+      // access. Throw a pointed error rather than the generic
+      // TypeError the .issues dereference would otherwise raise.
+      throw new Error(
+        `github issues.listIssues: repository ${owner}/${repo} not found or inaccessible`,
+      );
+    }
+    for (const n of conn.nodes) {
+      // Guard against label truncation: we fetch the first 100
+      // labels per issue (GitHub's max page size). An issue with
+      // >100 labels would silently omit the overflow, causing
+      // label-filter false negatives and incomplete `labels` in
+      // the result. Fail loud rather than lie about the data.
+      if (n.labels?.pageInfo?.hasNextPage) {
+        throw new Error(
+          `github issues.listIssues: issue #${n.number} has more than 100 labels; refusing to return a truncated label list`,
+        );
+      }
+      // Client-side filters. Label filter means "has every name in the
+      // filter array"; milestone means "same milestone number".
+      // Use the trimmed, canonical label array normalised above so
+      // whitespace in a caller input doesn't silently miss matches.
+      const nodeLabels = new Set(n.labels.nodes.map((l) => l.name));
+      if (Array.isArray(normalisedLabels) && normalisedLabels.length > 0) {
+        if (!normalisedLabels.every((l) => nodeLabels.has(l))) continue;
+      }
+      if (milestone && typeof milestone.number === "number") {
+        if (!n.milestone || n.milestone.number !== milestone.number) continue;
+      }
+      out.push({
+        id: n.id,
+        number: n.number,
+        title: n.title,
+        state: n.state,
+        url: n.url,
+        createdAt: n.createdAt,
+        labels: [...nodeLabels],
+        milestoneNumber: n.milestone?.number ?? null,
+      });
+      if (out.length >= effectiveLimit) break;
+    }
+    if (!conn.pageInfo?.hasNextPage) break;
+    after = conn.pageInfo.endCursor;
+  }
+  return out;
+}
+
+// issues.relabelIssue --------------------------------------------------------
+
+/**
+ * Add / remove labels on an existing issue. Either or both of `add`
+ * and `remove` may be supplied; empty arrays are allowed but result
+ * in no mutation call for that side. Unknown label names (not present
+ * on the repo) throw with a pointed message listing which ones
+ * missed, rather than silently succeeding.
+ */
+async function githubRelabelIssue(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { issueNumber, add: rawAdd = [], remove: rawRemove = [] } = payload ?? {};
+  requirePositiveInt(issueNumber, "issueNumber");
+  if (!Array.isArray(rawAdd) || !Array.isArray(rawRemove)) {
+    throw new TypeError("github issues.relabelIssue: add and remove must be arrays of label names");
+  }
+  // Validate every label-name entry at the boundary so non-string /
+  // whitespace-only inputs surface as a clear input error rather
+  // than a misleading "labels not found" further down when
+  // resolveLabelIds can't match them. Normalise to the trimmed
+  // value so downstream dedupe / overlap checks and label lookup
+  // operate on the canonical form (a caller's "bug " would
+  // otherwise defeat the delta semantics against existing labels).
+  const normaliseLabelArray = (arr, key) => arr.map((l) => {
+    if (typeof l !== "string" || l.trim().length === 0) {
+      throw new TypeError(
+        `github issues.relabelIssue: every ${key}[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
+      );
+    }
+    return l.trim();
+  });
+  const normalisedAdd = normaliseLabelArray(rawAdd, "add");
+  const normalisedRemove = normaliseLabelArray(rawRemove, "remove");
+  // Dedupe within each side. Duplicates in the caller array would
+  // produce duplicate label IDs in the GraphQL mutation input, which
+  // GitHub accepts but is redundant work at best; at worst a future
+  // API change could make it an error.
+  const add = [...new Set(normalisedAdd)];
+  const remove = [...new Set(normalisedRemove)];
+  // Reject a name appearing in BOTH add and remove: the caller's
+  // intent is contradictory. Silently resolving in one direction
+  // would mask a bug in the caller's plan; fail loud instead.
+  const overlap = add.filter((n) => remove.includes(n));
+  if (overlap.length > 0) {
+    throw new Error(
+      `github issues.relabelIssue: labels ${overlap.map((n) => `'${n}'`).join(", ")} are in both add and remove; caller intent is ambiguous`,
+    );
+  }
+  if (add.length === 0 && remove.length === 0) {
+    // Nothing to do. Match the idempotency contract: no-op is a
+    // successful return, not an error.
+    return { added: [], removed: [], issueNumber };
+  }
+  const issue = await fetchIssueNodeId(owner, repo, issueNumber);
+  if (!issue) {
+    throw new Error(`github issues.relabelIssue: issue #${issueNumber} not found in ${owner}/${repo}`);
+  }
+  const allNames = [...new Set([...add, ...remove])];
+  const { found, missing } = await resolveLabelIds(owner, repo, allNames);
+  if (missing.length > 0) {
+    throw new Error(
+      `github issues.relabelIssue: labels not found in ${owner}/${repo}: ${missing.map((m) => `'${m}'`).join(", ")}`,
+    );
+  }
+  // Filter add/remove down to labels the issue isn't already / is
+  // still in, so the result is a true delta (avoids a needless
+  // mutation on a re-run). Using the issue's current labels from
+  // fetchIssueNodeId.
+  const currentSet = new Set(issue.labels.nodes.map((l) => l.name));
+  const toAdd = add.filter((n) => !currentSet.has(n));
+  const toRemove = remove.filter((n) => currentSet.has(n));
+  if (toAdd.length > 0) {
+    const ids = toAdd.map((n) => JSON.stringify(found.get(n))).join(", ");
+    const mutation = `
+      mutation($labelableId: ID!) {
+        addLabelsToLabelable(input: { labelableId: $labelableId, labelIds: [${ids}] }) {
+          labelable { ... on Issue { id } }
+        }
+      }
+    `;
+    await ghGraphqlMutation(mutation, { labelableId: issue.id });
+  }
+  if (toRemove.length > 0) {
+    const ids = toRemove.map((n) => JSON.stringify(found.get(n))).join(", ");
+    const mutation = `
+      mutation($labelableId: ID!) {
+        removeLabelsFromLabelable(input: { labelableId: $labelableId, labelIds: [${ids}] }) {
+          labelable { ... on Issue { id } }
+        }
+      }
+    `;
+    await ghGraphqlMutation(mutation, { labelableId: issue.id });
+  }
+  return { added: toAdd, removed: toRemove, issueNumber };
+}
+
+// issues.createIssue ---------------------------------------------------------
+
+/**
+ * Create an issue with dedupe-by-title. Required fields: `title`. Optional:
+ *   - body: issue body (markdown).
+ *   - labels: array of existing label names. Resolved to IDs after
+ *     creation (GitHub's createIssue input only accepts label IDs,
+ *     not names, so we apply labels via addLabelsToLabelable in a
+ *     second mutation).
+ *   - templateName: caller-chosen template identifier, opaque to
+ *     this method. When set, the caller's `body` is ignored and
+ *     `ctx.templateLoader(templateName, ctx.templateVars ?? {})`
+ *     is invoked to produce the rendered body. Template rendering
+ *     lives at the caller so the tracker stays filesystem-pure.
+ *
+ * NOT supported on this namespace yet (PR 9 scope): `milestone`
+ * (needs a milestone-by-number resolve step before bind) and
+ * `assignees` (needs a users-by-login resolve step). Both were
+ * removed from the payload to avoid the "accepted but silently
+ * dropped" footgun. PR 10 reviews the broader reconcile surface
+ * that will land both in one go.
+ *
+ * Dedupe: before creating, the method lists open issues by the
+ * requested title (exact match). If one already exists, it is
+ * returned as-is without a create. This matches the skill-level
+ * idempotency contract documented in skills/tracker-sync/SKILL.md.
+ */
+async function githubCreateIssue(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  let {
+    title,
+    body = "",
+    labels = [],
+    templateName = null,
+  } = payload ?? {};
+  if (typeof title !== "string" || title.trim().length === 0) {
+    throw new TypeError("github issues.createIssue: title must be a non-empty string");
+  }
+  // Normalise to the trimmed form so dedupe (n.title === title) and
+  // the createIssue mutation both operate on the canonical value.
+  // Without this, an input of " my title " would pass validation
+  // but then mismatch any existing " my title" dedupe target, and
+  // the created issue would carry the leading/trailing whitespace.
+  title = title.trim();
+  // body is optional; empty string is fine. A non-string value
+  // (number, boolean, object) used to flow into the GraphQL mutation
+  // via `-F body=<value>`, which gh silently typed as number/boolean
+  // and then the server rejected with a generic "expected String"
+  // error. Validate here so the caller sees the actual bug.
+  if (typeof body !== "string") {
+    throw new TypeError(
+      `github issues.createIssue: body must be a string when provided; got ${JSON.stringify(body)}`,
+    );
+  }
+  if (!Array.isArray(labels)) {
+    throw new TypeError("github issues.createIssue: labels must be an array of label names");
+  }
+  // Validate each label entry here so the failure points at the
+  // createIssue call rather than surfacing later through the
+  // relabelIssue delegation with a less-actionable "labels not
+  // found" message. Normalise to the trimmed value and reassign
+  // labels so the downstream relabelIssue delegation applies the
+  // canonical names; otherwise "bug " would pass here and fail
+  // there.
+  labels = labels.map((l) => {
+    if (typeof l !== "string" || l.trim().length === 0) {
+      throw new TypeError(
+        `github issues.createIssue: every labels[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
+      );
+    }
+    return l.trim();
+  });
+  // Catch callers still passing the old fields: silent drop would
+  // produce an issue without the requested assignee / milestone and
+  // leave the caller wondering why the bind didn't happen.
+  if (payload && ("milestone" in payload || "assignees" in payload)) {
+    throw new Error(
+      "github issues.createIssue: 'milestone' and 'assignees' are not supported on this namespace yet; apply them via a follow-up mutation (PR 10 will add the reconcile surface)",
+    );
+  }
+  // Validate templateName here at the input boundary (before any
+  // network calls) so a caller bug surfaces immediately without
+  // first burning a dedupe search against the gh API. Matches the
+  // title/labels/milestone/assignees rejections above.
+  if (templateName !== null && templateName !== undefined) {
+    if (typeof templateName !== "string" || templateName.trim().length === 0) {
+      throw new TypeError(
+        `github issues.createIssue: templateName must be a non-empty string when supplied; got ${JSON.stringify(templateName)}`,
+      );
+    }
+    // Also validate ctx.templateLoader here at the input boundary
+    // (hoisted from the later "render body" block) so a caller
+    // supplying templateName without a loader fails fast — without
+    // first burning a dedupe search + repo-id lookup against the
+    // gh API. The call-site check is kept downstream as defence
+    // in depth but is now unreachable under normal flow.
+    if (typeof ctx?.templateLoader !== "function") {
+      throw new TypeError(
+        "github issues.createIssue: templateName was supplied but ctx.templateLoader is not a function",
+      );
+    }
+    // Normalise to the trimmed value so the downstream
+    // ctx.templateLoader call sees the canonical name. A caller's
+    // "issue.md " would otherwise pass validation and fail the
+    // template lookup with a less-actionable filesystem error.
+    templateName = templateName.trim();
+  }
+  // Dedupe: search open issues by exact title. GitHub's search is
+  // ranked + substring-based, so an exact match may not appear on
+  // the first page of results even when there are only a handful
+  // of issues with related titles. Paginate through up to
+  // DEDUPE_MAX_RESULTS before giving up; if no match is found
+  // within that window, create anyway (better to accept a tiny
+  // residual duplicate risk than to burn unbounded search quota).
+  const dedupeQuery = `
+    query($q: String!, $after: String) {
+      search(query: $q, type: ISSUE, first: 100, after: $after) {
+        nodes { ... on Issue { id number title state url repository { nameWithOwner } } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  `;
+  // Escape before embedding into the GitHub search phrase. Earlier
+  // impl only escaped `"`, but a title containing backslashes or
+  // control chars can still break the phrase and produce a failed
+  // dedupe. Normalise control chars (C0 + DEL) to spaces, escape
+  // backslash then quote (order matters), and collapse runs of
+  // whitespace so the search still matches the user-visible title
+  // up to GitHub's tokeniser. The client-side strict-equality
+  // filter (`n.title === title`) stays as the authoritative match.
+  // eslint-disable-next-line no-control-regex
+  const searchPhrase = String(title)
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\s+/g, " ")
+    .trim();
+  const q = `is:issue is:open repo:${owner}/${repo} in:title "${searchPhrase}"`;
+  const DEDUPE_MAX_RESULTS = 500;
+  let dedupeScanned = 0;
+  let dedupeAfter = null;
+  let match = null;
+  while (dedupeScanned < DEDUPE_MAX_RESULTS) {
+    const dupeData = await ghGraphqlQuery(dedupeQuery, { q, after: dedupeAfter });
+    const nodes = dupeData?.search?.nodes || [];
+    match = nodes.find(
+      (n) => n && n.title === title && n.repository?.nameWithOwner === `${owner}/${repo}`,
+    );
+    if (match) break;
+    dedupeScanned += nodes.length;
+    const pageInfo = dupeData?.search?.pageInfo;
+    if (!pageInfo?.hasNextPage || !pageInfo.endCursor || nodes.length === 0) break;
+    dedupeAfter = pageInfo.endCursor;
+  }
+  if (match) {
+    // Return the same shape as the create path: { id, number, url,
+    // existed, labelError? }. Callers can read `result.url`
+    // unconditionally without branching on `existed`.
+    return { id: match.id, number: match.number, url: match.url, existed: true };
+  }
+  // Render body from template when requested. The caller injects the
+  // loader (keeps the tracker filesystem-pure for tests + parallel
+  // platforms). Template vars come from ctx.templateVars.
+  // (templateName type/shape was validated at the input boundary above.)
+  let finalBody = body;
+  if (templateName) {
+    if (typeof ctx?.templateLoader !== "function") {
+      throw new TypeError(
+        "github issues.createIssue: templateName was supplied but ctx.templateLoader is not a function",
+      );
+    }
+    finalBody = await ctx.templateLoader(templateName, ctx.templateVars ?? {});
+    if (typeof finalBody !== "string") {
+      throw new TypeError(
+        "github issues.createIssue: ctx.templateLoader must return a string (rendered body)",
+      );
+    }
+  }
+  // Resolve the repository node ID for createIssue's input.
+  const repoQuery = `
+    query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) { id }
+    }
+  `;
+  const repoData = await ghGraphqlQuery(repoQuery, { owner, name: repo });
+  const repoId = repoData?.repository?.id;
+  if (!repoId) {
+    throw new Error(`github issues.createIssue: repository ${owner}/${repo} not found or inaccessible`);
+  }
+  // createIssue mutation. Labels are applied in a separate step below
+  // because the mutation's labelIds input wants node IDs, not names,
+  // and we want the caller to pass names.
+  const createMutation = `
+    mutation($repoId: ID!, $title: String!, $body: String!) {
+      createIssue(input: { repositoryId: $repoId, title: $title, body: $body }) {
+        issue { id number url }
+      }
+    }
+  `;
+  const createData = await ghGraphqlMutation(createMutation, { repoId, title, body: finalBody });
+  const created = createData?.createIssue?.issue;
+  if (!created?.id) {
+    throw new Error("github issues.createIssue: createIssue response missing issue.id");
+  }
+  // Apply labels best-effort. The issue was already created above,
+  // so a label-apply failure (missing label name, permission error,
+  // transient transport failure) must NOT lose the created issue's
+  // metadata. Catch and surface the failure on the return value so
+  // the caller sees both the success of the create AND the label
+  // failure, and can retry or manually patch labels without
+  // re-creating the issue.
+  let labelError = null;
+  if (labels.length > 0) {
+    try {
+      await githubRelabelIssue({ owner, repo }, { owner, repo }, {
+        issueNumber: created.number,
+        add: labels,
+      });
+    } catch (e) {
+      // Capture as a plain object so JSON.stringify surfaces the
+      // message (Error instances stringify to `{}` otherwise,
+      // losing the context a caller needs to retry / debug).
+      labelError = {
+        name: e?.name ?? "Error",
+        message: e?.message ?? String(e),
+      };
+    }
+  }
+  // Assignees + milestone: left as future work; the payload guard
+  // above refuses to accept those keys today. Tests lock on the
+  // create + labels path for PR 9; PR 10's labels.* + projects.*
+  // namespaces will revisit the broader reconcile semantics that
+  // cover assignee resolution (which needs a users(first) query).
+  const result = { id: created.id, number: created.number, url: created.url, existed: false };
+  if (labelError) result.labelError = labelError;
+  return result;
+}
+
+// issues.updateIssueStatus ---------------------------------------------------
+
+/**
+ * Move an issue's status on its bound Project v2. Refuses to set
+ * Done (the human-gate contract in rules/pr-workflow.md). No-op
+ * when the item is already in the requested status.
+ *
+ * `status` is one of the agent's vocabulary keys
+ * (backlog / ready / in_progress / in_review / done). Mapped to the
+ * Project v2 option name via `trackerTarget.projects[0].status_values`.
+ * Config must supply a dev project binding for this method to work;
+ * throws otherwise.
+ */
+async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { issueNumber, status: rawStatus } = payload ?? {};
+  requirePositiveInt(issueNumber, "issueNumber");
+  if (typeof rawStatus !== "string" || rawStatus.trim().length === 0) {
+    throw new TypeError("github issues.updateIssueStatus: status must be a non-empty string key (whitespace-only rejected)");
+  }
+  // Trim so whitespace around the key doesn't miss the status_values
+  // map (e.g. user typed `"in_progress "` in the config by mistake).
+  const status = rawStatus.trim();
+  // Refuse Done per the human-gate contract.
+  if (status === "done") {
+    throw new Error(
+      "github issues.updateIssueStatus: refusing to set status 'done'; that is a human gate (see rules/pr-workflow.md)",
+    );
+  }
+  const target = trackerTarget;
+  const project = target?.projects?.[0];
+  if (!project) {
+    throw new Error(
+      "github issues.updateIssueStatus: tracker target has no projects[0] binding; cannot resolve Project v2 item",
+    );
+  }
+  // The schema types `project.number` as integer >= 1, but the
+  // runtime must also guard against hand-edited configs producing
+  // non-integer / NaN / Infinity values that would otherwise fail
+  // later in the GraphQL call with a less-actionable error.
+  if (!Number.isInteger(project.number) || project.number <= 0) {
+    throw new TypeError(
+      `github issues.updateIssueStatus: tracker target projects[0].number must be a positive integer; got ${JSON.stringify(project.number)}`,
+    );
+  }
+  const rawNativeStatusName = project.status_values?.[status];
+  if (typeof rawNativeStatusName !== "string" || rawNativeStatusName.trim().length === 0) {
+    throw new Error(
+      `github issues.updateIssueStatus: status '${status}' has no native mapping in projects[0].status_values`,
+    );
+  }
+  // Normalise the mapped option name so the `field.options.find`
+  // below sees the canonical form. A config like
+  // `status_values: { in_progress: "In progress " }` would pass
+  // the schema's minLength check but then fail the option-name
+  // equality here with a misleading "option not found".
+  const nativeStatusName = rawNativeStatusName.trim();
+  // statusField: default to "Status" only when project.status_field
+  // is nullish (undefined / null), treating that as an absent
+  // value. A present-but-empty / non-string value is a schema
+  // violation that the runtime should surface, not silently coerce
+  // to the default — the earlier `|| "Status"` form would mask
+  // misconfigurations like `status_field: ""`, `status_field: 0`,
+  // or `status_field: false` and then update the wrong field.
+  const rawStatusField = project.status_field;
+  let normalisedStatusField;
+  if (rawStatusField !== undefined && rawStatusField !== null) {
+    if (typeof rawStatusField !== "string" || rawStatusField.trim().length === 0) {
+      throw new Error(
+        `github issues.updateIssueStatus: projects[0].status_field must be a non-empty string when provided; got ${JSON.stringify(rawStatusField)}`,
+      );
+    }
+    // Normalise to the trimmed form so the GraphQL query sees the
+    // canonical field name. A config with `status_field: "Status "`
+    // would otherwise pass validation and then fail with a
+    // misleading "field not found".
+    normalisedStatusField = rawStatusField.trim();
+  }
+  const statusField = normalisedStatusField ?? "Status";
+  // statusField flows through an ops.config.json string that the
+  // user (or adapt-system) supplies, and is interpolated into the
+  // GraphQL query as a double-quoted string literal via
+  // JSON.stringify below. The quoting is injection-safe for any
+  // Unicode string, so the runtime validation only needs to reject
+  // genuinely dangerous inputs: control characters (which the
+  // GraphQL server rejects as malformed), NUL (which truncates in
+  // some transports), and overly long strings (DoS guard). This is
+  // the smallest rule that matches the schema's `type: "string"`
+  // contract without silently refusing otherwise-valid GitHub
+  // Project v2 field names (which can include punctuation, emoji,
+  // etc.). A stricter rule would diverge from the schema and make
+  // otherwise-valid configs fail at runtime.
+  if (typeof statusField !== "string" || statusField.length === 0 || statusField.length > 256) {
+    throw new Error(
+      `github issues.updateIssueStatus: unsafe status_field (must be 1-256 chars); got length ${statusField?.length}`,
+    );
+  }
+  // Reject NUL and any C0 control character (0x00-0x1F + 0x7F).
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(statusField)) {
+    throw new Error(
+      `github issues.updateIssueStatus: unsafe status_field contains control characters`,
+    );
+  }
+  const projectNumber = project.number;
+  // project.owner is optional; when present, validate the same way
+  // ctx.owner/repo are validated: non-empty string, trimmed, passes
+  // GitHub's owner-name allow-list. Nullish fallthrough uses the
+  // parent tracker's owner (already validated by resolveRepoCoords
+  // above).
+  let projectOwner = owner;
+  if (project.owner !== undefined && project.owner !== null) {
+    if (typeof project.owner !== "string" || project.owner.trim().length === 0) {
+      throw new TypeError(
+        `github issues.updateIssueStatus: projects[0].owner must be a non-empty string when provided; got ${JSON.stringify(project.owner)}`,
+      );
+    }
+    const candidate = project.owner.trim();
+    if (!GITHUB_OWNER_RE.test(candidate)) {
+      throw new TypeError(
+        `github issues.updateIssueStatus: projects[0].owner must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(project.owner)}`,
+      );
+    }
+    projectOwner = candidate;
+  }
+  // Multi-step resolve, NOT a single compound round trip: first
+  // look up the project's Status field id + options once; then
+  // paginate the issue's projectItems to find the one bound to
+  // this project (and read its current value); finally fire the
+  // update mutation. The split is deliberate (PR 9 R3) because
+  // projectItems can have >100 entries and would otherwise force
+  // the field-lookup to refetch on every page. The `statusField`
+  // is interpolated inline (via JSON.stringify) because GitHub's
+  // GraphQL `fieldValueByName` and `field` args accept string
+  // literals only (no variable of type String is allowed there);
+  // the `${statusField}` value is gated by the validation above
+  // so that this is safe.
+  const quotedField = JSON.stringify(statusField); // double-quoted, escaped
+  // First: resolve the Project v2 field + options ONCE. These do
+  // not depend on the issue's projectItems, so hoisting them out
+  // of the projectItems loop keeps the query small per page.
+  const fieldQuery = `
+    query($projectOwner: String!, $projectNumber: Int!) {
+      repositoryOwner(login: $projectOwner) {
+        ... on ProjectV2Owner {
+          projectV2(number: $projectNumber) {
+            id
+            field(name: ${quotedField}) {
+              ... on ProjectV2SingleSelectField { id options { id name } }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const fieldData = await ghGraphqlQuery(fieldQuery, { projectOwner, projectNumber });
+  const projectV2 = fieldData?.repositoryOwner?.projectV2;
+  if (!projectV2?.id) {
+    throw new Error(
+      `github issues.updateIssueStatus: Project v2 #${projectNumber} not found under ${projectOwner}`,
+    );
+  }
+  const field = projectV2.field;
+  if (!field?.id) {
+    throw new Error(
+      `github issues.updateIssueStatus: field '${statusField}' not found on Project v2 #${projectNumber}`,
+    );
+  }
+  const option = field.options.find((o) => o.name === nativeStatusName);
+  if (!option) {
+    throw new Error(
+      `github issues.updateIssueStatus: option '${nativeStatusName}' (mapped from '${status}') not found on field '${statusField}'`,
+    );
+  }
+  // Second: paginate the issue's projectItems to find the one
+  // bound to our project. An issue linked to >20 projects would
+  // previously miss the target on the first-page-only fetch. Match
+  // on projectV2.id (owner-scoped number collisions possible).
+  const itemsQuery = `
+    query($owner: String!, $name: String!, $issueNumber: Int!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        issue(number: $issueNumber) {
+          id
+          projectItems(first: 100, after: $after) {
+            nodes {
+              id
+              project { id number }
+              fieldValueByName(name: ${quotedField}) {
+                ... on ProjectV2ItemFieldSingleSelectValue { optionId name }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }
+  `;
+  const MAX_PROJECT_ITEM_PAGES = 10;
+  let after = null;
+  let page = 0;
+  let projectItem = null;
+  let issueFound = false;
+  while (!projectItem) {
+    page += 1;
+    if (page > MAX_PROJECT_ITEM_PAGES) {
+      throw new Error(
+        `github issues.updateIssueStatus: issue #${issueNumber} is linked to more than ${MAX_PROJECT_ITEM_PAGES * 100} projects; refusing to paginate further`,
+      );
+    }
+    const data = await ghGraphqlQuery(itemsQuery, {
+      owner,
+      name: repo,
+      issueNumber,
+      after,
+    });
+    // Distinguish repo-absent from issue-absent on the items query.
+    // Without this, a missing / inaccessible repo would surface as
+    // "issue not found", masking the real auth / targeting failure.
+    if (!data?.repository) {
+      throw new Error(
+        `github issues.updateIssueStatus: repository ${owner}/${repo} not found or inaccessible`,
+      );
+    }
+    const issue = data.repository.issue;
+    if (!issue) {
+      throw new Error(`github issues.updateIssueStatus: issue #${issueNumber} not found in ${owner}/${repo}`);
+    }
+    issueFound = true;
+    projectItem = issue.projectItems.nodes.find(
+      (n) => n && n.project?.id === projectV2.id,
+    );
+    if (projectItem) break;
+    if (!issue.projectItems.pageInfo?.hasNextPage) break;
+    after = issue.projectItems.pageInfo.endCursor;
+  }
+  if (!issueFound) {
+    // Unreachable under the happy path (the loop always sets
+    // issueFound on its first iteration or throws). Defence in
+    // depth against a future refactor that changes control flow.
+    /* istanbul ignore next */
+    throw new Error(`github issues.updateIssueStatus: issue #${issueNumber} not found in ${owner}/${repo}`);
+  }
+  if (!projectItem?.id) {
+    throw new Error(
+      `github issues.updateIssueStatus: issue #${issueNumber} is not bound to Project v2 #${projectNumber}; add it to the project first`,
+    );
+  }
+  // Idempotency: no-op when the item is already in the target status.
+  const currentValue = projectItem.fieldValueByName;
+  if (currentValue && currentValue.optionId === option.id) {
+    return { issueNumber, status, changed: false, optionId: option.id };
+  }
+  const mutation = `
+    mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: $projectId
+        itemId: $itemId
+        fieldId: $fieldId
+        value: { singleSelectOptionId: $optionId }
+      }) {
+        projectV2Item { id }
+      }
+    }
+  `;
+  await ghGraphqlMutation(mutation, {
+    projectId: projectV2.id,
+    itemId: projectItem.id,
+    fieldId: field.id,
+    optionId: option.id,
+  });
+  return { issueNumber, status, changed: true, optionId: option.id };
 }
