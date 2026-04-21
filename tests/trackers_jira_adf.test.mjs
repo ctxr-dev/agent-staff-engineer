@@ -120,6 +120,22 @@ describe("markdownToAdf: thematic break", () => {
     const out = markdownToAdf("paragraph\n\n---\n\nafter");
     assert.equal(out.content[1].type, "rule");
   });
+
+  it("also maps *** and ___ to rule nodes", () => {
+    const starRule = markdownToAdf("p\n\n***\n\nq");
+    assert.equal(starRule.content[1].type, "rule");
+    const underRule = markdownToAdf("p\n\n___\n\nq");
+    assert.equal(underRule.content[1].type, "rule");
+  });
+});
+
+describe("markdownToAdf: bullet list markers", () => {
+  it("accepts `+` as a bullet marker alongside `-` and `*`", () => {
+    const out = markdownToAdf("+ one\n+ two");
+    assert.equal(out.content[0].type, "bulletList");
+    assert.equal(out.content[0].content.length, 2);
+    assert.equal(out.content[0].content[0].content[0].content[0].text, "one");
+  });
 });
 
 // ── Inline marks ────────────────────────────────────────────────────

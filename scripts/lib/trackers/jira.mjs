@@ -72,6 +72,35 @@ export function normalizeJiraBase(raw) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `https://${s}`;
 }
 
+/**
+ * Resolve the browse-URL base the tracker should use: prefer
+ * `target.site` (ops.config schema requires it), fall back to
+ * the `JIRA_BASE_URL` env (honoured by `defaultRest`). Returns
+ * null if neither is usable, so callers that build a browse URL
+ * can omit the field instead of embedding `https://undefined/`.
+ */
+function resolveBrowseBase(target) {
+  if (typeof target?.site === "string" && target.site.trim().length > 0) {
+    return normalizeJiraBase(target.site);
+  }
+  const envBase = process.env.JIRA_BASE_URL;
+  if (typeof envBase === "string" && envBase.trim().length > 0) {
+    return normalizeJiraBase(envBase);
+  }
+  return null;
+}
+
+/**
+ * Build the browse-URL fragment for a given issue key, or null when
+ * no base can be resolved. Keeps URL construction in one place so a
+ * missing base never leaks through as a broken `https://undefined/...`
+ * link on create / dedupe return values.
+ */
+function browseUrlForKey(target, key) {
+  const base = resolveBrowseBase(target);
+  return base ? `${base}/browse/${key}` : null;
+}
+
 async function defaultRest(
   method,
   path,
@@ -291,7 +320,7 @@ async function jiraCreateIssue(rest, target, caches, _ctx, payload) {
       return {
         id: hit.id,
         key: hit.key,
-        url: `${normalizeJiraBase(target.site)}/browse/${hit.key}`,
+        url: browseUrlForKey(target, hit.key),
         existed: true,
       };
     }
@@ -325,7 +354,7 @@ async function jiraCreateIssue(rest, target, caches, _ctx, payload) {
   return {
     id: String(created.id),
     key: created.key,
-    url: `${normalizeJiraBase(target.site)}/browse/${created.key}`,
+    url: browseUrlForKey(target, created.key),
     existed: false,
   };
 }
@@ -368,7 +397,12 @@ async function jiraUpdateIssueStatus(rest, target, _caches, _ctx, payload) {
   );
   const currentName = current?.fields?.status?.name;
   const currentKey = current?.fields?.status?.statusCategory?.key;
-  if (currentName && currentName.toLowerCase() === lower) {
+  // Normalise both sides the same way `pickTransition` does so a
+  // snake_case vocab key like `in_progress` no-ops correctly against
+  // a Jira status named "In Progress".
+  const normaliseStatusName = (s) =>
+    String(s ?? "").trim().replace(/_/g, " ").replace(/\s+/g, " ").toLowerCase();
+  if (currentName && normaliseStatusName(currentName) === normaliseStatusName(trimmedStatus)) {
     return { id: String(current.id), key: current.key, status: currentName, noop: true };
   }
 
@@ -417,15 +451,22 @@ async function jiraUpdateIssueStatus(rest, target, _caches, _ctx, payload) {
 }
 
 function pickTransition(transitions, requestedName) {
-  const lower = requestedName.toLowerCase();
+  // The agent's vocabulary keys are snake_case (`in_progress`,
+  // `in_review`), but Jira status and transition names are typically
+  // title-cased with spaces ("In Progress"). Normalise both sides so
+  // a caller passing `in_progress` matches a Jira status named
+  // "In Progress" without forcing the caller to know Jira's casing.
+  const normalise = (s) =>
+    String(s ?? "").trim().replace(/_/g, " ").replace(/\s+/g, " ").toLowerCase();
+  const target = normalise(requestedName);
   // Prefer a transition whose destination name matches; fall back to
   // a transition whose own name matches. This handles both shapes
   // seen in the wild: workflows where the transition is named after
   // the target ("In Review") and workflows where the transition is
   // an action ("Start review") that moves to a state.
   return (
-    transitions.find((t) => t.to?.name?.toLowerCase() === lower) ||
-    transitions.find((t) => t.name?.toLowerCase() === lower) ||
+    transitions.find((t) => normalise(t.to?.name) === target) ||
+    transitions.find((t) => normalise(t.name) === target) ||
     null
   );
 }

@@ -8,11 +8,11 @@
 //
 //   - paragraphs
 //   - ATX headings `#` ... `######`
-//   - bullet lists (`-` / `*`)
+//   - bullet lists (`-` / `*` / `+`)
 //   - ordered lists (`1.` / `2.` ...)
 //   - blockquotes (`>`)
 //   - fenced code blocks (```lang ... ```)
-//   - thematic break (`---` / `***`)
+//   - thematic break (`---` / `***` / `___`)
 //   - inline: bold (`**` / `__`), italic (`*` / `_`),
 //     strike (`~~`), inline code (backticks), link `[text](url)`,
 //     hard break (two trailing spaces before newline)

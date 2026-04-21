@@ -123,6 +123,49 @@ describe("jira issues.createIssue", () => {
     assert.equal(projectGets.length, 0, `expected zero GET /project on dedupe hit; got ${projectGets.length}`);
   });
 
+  it("returns url: null when neither target.site nor JIRA_BASE_URL can be resolved (no https://undefined leak)", async () => {
+    const previousEnv = process.env.JIRA_BASE_URL;
+    delete process.env.JIRA_BASE_URL;
+    try {
+      const api = mockRest([
+        route("POST", "/rest/api/3/search/jql", {
+          issues: [
+            { id: "1", key: "PLAT-1", fields: { summary: "Exact" } },
+          ],
+        }),
+      ]);
+      const tracker = makeJiraTracker({ project: "PLAT" }, { rest: api });
+      const result = await tracker.issues.createIssue({}, { title: "Exact" });
+      assert.equal(result.existed, true);
+      assert.equal(result.url, null, "url must be null when no base can be resolved, not 'https://undefined/browse/...'");
+    } finally {
+      if (previousEnv !== undefined) process.env.JIRA_BASE_URL = previousEnv;
+    }
+  });
+
+  it("falls back to JIRA_BASE_URL for browse url when target.site is absent", async () => {
+    const previousEnv = process.env.JIRA_BASE_URL;
+    process.env.JIRA_BASE_URL = "jira.internal";
+    try {
+      const api = mockRest([
+        route("POST", "/rest/api/3/search/jql", {
+          issues: [
+            { id: "1", key: "PLAT-9", fields: { summary: "Another" } },
+          ],
+        }),
+      ]);
+      const tracker = makeJiraTracker({ project: "PLAT" }, { rest: api });
+      const result = await tracker.issues.createIssue({}, { title: "Another" });
+      assert.equal(result.url, "https://jira.internal/browse/PLAT-9");
+    } finally {
+      if (previousEnv === undefined) {
+        delete process.env.JIRA_BASE_URL;
+      } else {
+        process.env.JIRA_BASE_URL = previousEnv;
+      }
+    }
+  });
+
   it("paginates dedupe when the exact match lives behind a tokenised first page", async () => {
     // JQL `summary ~ "..."` tokenises, so the first page may be full
     // of near-matches without the exact summary. The dedupe loop must
@@ -301,6 +344,37 @@ describe("jira issues.updateIssueStatus", () => {
     ]);
     const tracker = makeJiraTracker(TARGET, { rest: api });
     const result = await tracker.issues.updateIssueStatus({}, { issueId: "PLAT-1", status: "in progress" });
+    assert.equal(result.noop, true);
+  });
+
+  it("translates snake_case vocabulary keys to match spaced Jira names (e.g. 'in_progress' -> 'In Progress')", async () => {
+    const api = mockRest([
+      route("POST", "/rest/api/3/issue/PLAT-1/transitions", null),
+      route("GET", "/rest/api/3/issue/PLAT-1/transitions", {
+        transitions: [
+          { id: "10", name: "Start", to: { name: "In Progress", statusCategory: { key: "indeterminate" } } },
+          { id: "20", name: "Review", to: { name: "In Review", statusCategory: { key: "indeterminate" } } },
+        ],
+      }),
+      route("GET", "/rest/api/3/issue/PLAT-1", {
+        id: "1", key: "PLAT-1",
+        fields: { status: { name: "Backlog", statusCategory: { key: "new" } } },
+      }),
+    ]);
+    const tracker = makeJiraTracker(TARGET, { rest: api });
+    const result = await tracker.issues.updateIssueStatus({}, { issueId: "PLAT-1", status: "in_progress" });
+    assert.equal(result.transitionId, "10");
+  });
+
+  it("no-ops when current Jira status matches a snake_case vocab key (e.g. 'In Progress' vs 'in_progress')", async () => {
+    const api = mockRest([
+      route("GET", "/rest/api/3/issue/PLAT-1", {
+        id: "1", key: "PLAT-1",
+        fields: { status: { name: "In Progress", statusCategory: { key: "indeterminate" } } },
+      }),
+    ]);
+    const tracker = makeJiraTracker(TARGET, { rest: api });
+    const result = await tracker.issues.updateIssueStatus({}, { issueId: "PLAT-1", status: "in_progress" });
     assert.equal(result.noop, true);
   });
 
