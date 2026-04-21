@@ -52,7 +52,12 @@ describe("issueDiscovery.newSessionId", () => {
     const rand = Buffer.from([0xab, 0xcd]);
     const id = newSessionId({ now, rand });
     assert.equal(id, "20260421-123456-abcd");
-    assert.match(id, /^[0-9]{8}-[0-9]{6}-[A-Za-z0-9_-]{4,16}$/);
+    // Assert on the same strict shape the session-state schema
+    // pattern enforces (YYYYMMDD-HHMMSS-<4 lowercase hex>); the
+    // looser regex would have let a drift in newSessionId slip
+    // past the test while breaking schema validation on the first
+    // persisted session.
+    assert.match(id, /^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$/);
   });
 
   it("pads single-digit months / days / hours / minutes / seconds", () => {

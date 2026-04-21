@@ -30,6 +30,7 @@ import {
   atomicWriteJson,
   readJsonOrNull,
   isDirectory,
+  exists,
 } from "./fsx.mjs";
 
 // kebab-case ASCII; rejects slashes, dots, whitespace, unicode. Keeps
@@ -218,9 +219,13 @@ export async function listPendingSessions(target, domain) {
 
 /**
  * Rename a pending session to `<sessionId>.<outcome>.json` so it no
- * longer shows up in `listPendingSessions`. Idempotent: if the file
- * is already archived (or missing), returns null. Returns the new
- * absolute path on success.
+ * longer shows up in `listPendingSessions`. Idempotent on missing
+ * source (returns null) and on an archive that already exists at
+ * the destination (returns the existing destination path). Throws
+ * a pointed error when the source is still pending AND a different
+ * archive of the same session exists at the destination, because
+ * that pair means we'd either overwrite a prior archive (POSIX) or
+ * error opaquely (Windows) on the rename.
  *
  * `outcome` is caller-chosen (`completed`, `cancelled`, `timed-out`);
  * validated against OUTCOME_RE to keep filenames safe and scannable.
@@ -236,13 +241,28 @@ export async function archiveSession(target, domain, sessionId, outcome) {
   }
   const src = sessionPath(target, domain, sessionId);
   const dst = sessionPath(target, domain, sessionId, outcome);
-  try {
-    await rename(src, dst);
+  const [srcExists, dstExists] = await Promise.all([exists(src), exists(dst)]);
+  if (!srcExists && dstExists) {
+    // Archive already in place, source is gone. Idempotent
+    // success: return the existing destination path so a retry
+    // sees the same success as the first call.
     return dst;
-  } catch (err) {
-    if (err && err.code === "ENOENT") return null;
-    throw err;
   }
+  if (!srcExists && !dstExists) {
+    // Nothing to archive. Matches the prior ENOENT behaviour.
+    return null;
+  }
+  if (srcExists && dstExists) {
+    // Both exist. On POSIX rename would silently overwrite the
+    // prior archive; on Windows it errors opaquely. Refuse
+    // explicitly so the caller can inspect the state rather than
+    // either lose data or hit a cryptic EEXIST.
+    throw new Error(
+      `sessionState.archiveSession: destination already exists at ${dst} while source is still pending at ${src}; refusing to overwrite. Inspect both files and archive under a different outcome or remove the stale one first.`,
+    );
+  }
+  await rename(src, dst);
+  return dst;
 }
 
 /**
