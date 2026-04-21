@@ -79,11 +79,19 @@ A recompute against the same underlying state is a no-op write (the skill compar
 
 - Triggered by `tracker-sync` (via an event hook or explicit call) when linked issues change.
 - Called by `adapt-system` after a change to `labels.intent` values (adds, renames, or removals), to recreate or reconcile umbrellas.
+- Called by `issue-discovery` at Q5 (new-umbrella creation). `issue-discovery` invokes `release-tracker.createUmbrellaForIntent(intent, payload)` rather than going through `tracker-sync` directly, so release-tracker can recompute umbrella status as a side effect of the create.
 - Consumes `tracker-sync` for every read and write.
 
 ## Release umbrella creation
 
-Umbrellas are created by `tracker-sync.create_release_umbrella` when a new `labels.intent` value exists without a corresponding umbrella on any configured `trackers.release.projects[]` entry. Title template from `workflow.release.umbrella_title`. `release-tracker` verifies one umbrella exists per intent value and asks `tracker-sync` to create missing ones on approval.
+Umbrellas are created via `createUmbrellaForIntent(intent, payload)`, the skill's public entry point for callers that need to create an umbrella outside the normal `reconcile` flow. Today the two callers are:
+
+- `adapt-system`, when a change to `labels.intent` introduces a value without a corresponding umbrella on any configured `trackers.release.projects[]` entry.
+- `issue-discovery`, when the Q5 sub-interview collects a full umbrella payload from the user and asks to create one.
+
+`createUmbrellaForIntent` validates the payload, dispatches `tracker-sync.create_release_umbrella` (the low-level surface) with a body rendered from `workflow.release.umbrella_title` and `templates/issue-release.md`, and re-runs the skill's status computation against the new umbrella so the "Linked Dev Issues" block and `Status` field are correct from the first read. Callers must not call `tracker-sync.create_release_umbrella` directly; that invariant keeps the side-effect (status recompute) coupled with the write.
+
+`reconcile` itself still walks every configured `trackers.release.projects[]` entry and verifies one umbrella exists per intent value; it delegates to `createUmbrellaForIntent` to fill gaps on approval.
 
 ## Project contract
 

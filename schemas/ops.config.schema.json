@@ -412,6 +412,42 @@
               "description": "When the same path:line thread has been re-emitted by the reviewer on a superseded SHA (commonly 30-50% of Copilot threads after round 1 per the runbook), auto-resolve it after this many commits have landed without changing the underlying code. Set 0 to disable and require manual triage for every thread."
             }
           }
+        },
+        "issue_discovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Optional config for the issue-discovery intake interview (skills/issue-discovery/SKILL.md). Every key is optional; with no config the skill still runs using tracker + labels defaults. Populate via adapt-system's domain:* and audience:* cascades when the project gains new glossary terms or stakeholder names.",
+          "properties": {
+            "title_templates": {
+              "type": "array",
+              "description": "Preferred issue-title patterns, e.g. '<verb> <area>: <outcome>'. Placeholders: {verb}, {area}, {outcome}, {slug}. Surfaced at Q3b as proposal seeds; when absent, Q3b derives proposals from the user's intent plus the top-scoring area keyword.",
+              "items": { "type": "string", "minLength": 1 },
+              "default": []
+            },
+            "stakeholders": {
+              "type": "array",
+              "description": "Names or handles the skill surfaces at Q5.8 when creating a new release umbrella. Free-form strings; may be logins, team names, or email addresses.",
+              "items": { "type": "string", "minLength": 1 },
+              "default": []
+            },
+            "domain_glossary": {
+              "type": "object",
+              "additionalProperties": { "type": "string", "minLength": 1 },
+              "description": "Map of domain-specific term -> one-line definition. When a user's answer mentions a term, the skill prints the definition once so the conversation stays grounded. Example: { 'checkout': 'the cart-to-payment flow', 'waves': 'the release-umbrella grouping our team uses'}.",
+              "default": {}
+            },
+            "default_type": {
+              "type": ["string", "null"],
+              "enum": [null, "feature", "task", "refactor", "bug"],
+              "description": "Optional pre-selected option at Q3c. When set and the caller did not pre-fill type, the skill surfaces this as option 1 instead of 'feature'. null leaves the normal order.",
+              "default": null
+            },
+            "topic_confirmation": {
+              "type": "boolean",
+              "description": "Whether Q0 runs. Default true: the skill always restates its inferred intent before asking any downstream question. Set false only for testing; disabling Q0 in production means the skill is expected to infer intent from the user's first message rather than guess.",
+              "default": true
+            }
+          }
         }
       }
     },

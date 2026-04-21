@@ -21,9 +21,9 @@ Hard rule baked in: **the dev-loop never merges a PR and never sets a dev issue 
 
 ## Inputs
 
-- Issue reference (number or URL) on a `dev_project` with `depth` permitting writes.
+- Issue reference (number or URL) on a `dev_project` with `depth` permitting writes. When the input is absent, unresolvable, or the issue is in a state dev-loop refuses to work on (Done, closed without merge, `depth: read-only`), dev-loop halts its own state machine at entry and hands off to `skills/issue-discovery/SKILL.md`. dev-loop resumes only once `issue-discovery` returns a handoff tuple conforming to `schemas/issue-discovery-handoff.schema.json` (`{issueRef, umbrellaRef | null, memberName | null}` on success, or `{cancelled: true}` on user-cancel at Q6).
 - Optional work plan or acceptance-criteria override the user supplies up front.
-- Optional workspace member. For single-repo projects, omit (the skill routes through `trackers.dev`). For multi-repo projects (`workspace.members[]` present), the skill resolves the owning member by walking the diff's file paths through `resolveMemberFromPath(cfg, filePath)` before picking the tracker via `pickTrackerForMember(cfg, memberName, "dev")`. Deepest-first match wins; files outside any nested member fall back to a root member ONLY when `workspace.members[]` contains an entry whose normalised path is `.`. Without an explicit root member, `resolveMemberFromPath` returns `null` for unmatched files and the caller routes through the top-level `trackers.dev` instead.
+- Optional workspace member. For single-repo projects, omit (the skill routes through `trackers.dev`). For multi-repo projects (`workspace.members[]` present), the skill resolves the owning member by walking the diff's file paths through `resolveMemberFromPath(cfg, filePath)` before picking the tracker via `pickTrackerForMember(cfg, memberName, "dev")`. Deepest-first match wins; files outside any nested member fall back to a root member ONLY when `workspace.members[]` contains an entry whose normalised path is `.`. Without an explicit root member, `resolveMemberFromPath` returns `null` for unmatched files and the caller routes through the top-level `trackers.dev` instead. When `issue-discovery` supplies `memberName`, this resolution step is skipped in favour of the supplied value.
 
 ## Outputs
 
@@ -131,6 +131,7 @@ The ctxr-skill-code-review default is the recommended path. Projects opt out via
 
 ## Cross-skill handoffs
 
+- `issue-discovery`: invoked at entry when no resolvable issue reference was supplied. dev-loop halts its own state machine until the intake interview returns a handoff tuple (or a cancelled marker). See `rules/issue-discovery.md` for the three-clause contract the intake honours.
 - `tracker-sync`: open PR, request review, update issue status, post comments on the PR.
 - `release-tracker`: triggered by `tracker-sync` side-effects when a dev issue moves or links change.
 - `plan-keeper`: flip plan one-liner on gate crossings if `workflow.pr.update_plan_oneliner` is true.

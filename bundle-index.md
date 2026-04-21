@@ -22,6 +22,15 @@ When you add or remove a bundle doc, update this file in the same PR.
 
 Most skills are triggered by a concrete intent. Map the user's ask to the minimal doc set.
 
+### Discovering what to work on next (no issue ref yet)
+
+- [skills/issue-discovery/SKILL.md](skills/issue-discovery/SKILL.md): the staff-engineer intake interview the agent runs before any dev-loop.
+- [skills/issue-discovery/runbook.md](skills/issue-discovery/runbook.md): branch-by-branch Q&A script with exact wording and halt scenarios.
+- [rules/issue-discovery.md](rules/issue-discovery.md): the three-clause binding rule (never guess; 2-4 options plus custom; delegate writes to tracker-sync).
+- [rules/ambiguity-halt.md](rules/ambiguity-halt.md): minimum halt contract the interview sits on.
+- [memory-seeds/issue-discovery-posture.md](memory-seeds/issue-discovery-posture.md): memory seed for the intake posture.
+- [templates/issue-discovery-session.md](templates/issue-discovery-session.md): human-readable rendering of a session scratch file.
+
 ### Opening or driving a dev issue to "In review"
 
 - [skills/dev-loop/SKILL.md](skills/dev-loop/SKILL.md): the state machine (branch, edits, local review, self-review, push, PR open, issue -> In review, hand off to pr-iteration).
@@ -112,21 +121,23 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 
 ## By surface
 
-### Skills (8)
+### Skills (9)
 
 - [skills/adapt-system/SKILL.md](skills/adapt-system/SKILL.md): reshape config/labels/templates/rules/seeds on project-intent changes.
 - [skills/bootstrap-ops-config/SKILL.md](skills/bootstrap-ops-config/SKILL.md): interactive first-install interview.
 - [skills/dev-loop/SKILL.md](skills/dev-loop/SKILL.md): issue -> branch -> local review -> PR open -> In review.
+- [skills/issue-discovery/SKILL.md](skills/issue-discovery/SKILL.md): staff-engineer intake interview when no issue ref is supplied.
 - [skills/tracker-sync/SKILL.md](skills/tracker-sync/SKILL.md): sole tracker writer (github / jira / linear / gitlab); depth-gated per tracker target.
 - [skills/plan-keeper/SKILL.md](skills/plan-keeper/SKILL.md): plan folder / frontmatter / lifecycle.
 - [skills/pr-iteration/SKILL.md](skills/pr-iteration/SKILL.md): post-push loop until exit conditions hold.
 - [skills/regression-handler/SKILL.md](skills/regression-handler/SKILL.md): bug triage + linked-issue proposal.
 - [skills/release-tracker/SKILL.md](skills/release-tracker/SKILL.md): Release umbrella status computation.
 
-### Rules (10)
+### Rules (11)
 
 - [rules/adaptation.md](rules/adaptation.md): when to invoke adapt-system.
 - [rules/ambiguity-halt.md](rules/ambiguity-halt.md): halt-and-ask when state is weird.
+- [rules/issue-discovery.md](rules/issue-discovery.md): the three-clause intake rule (never guess; 2-4 options plus custom; delegate writes).
 - [rules/tracker-source-of-truth.md](rules/tracker-source-of-truth.md): the configured tracker(s) own state; local files are projections.
 - [rules/llm-wiki.md](rules/llm-wiki.md): project-side wiki read/write contract.
 - [rules/memory-hygiene.md](rules/memory-hygiene.md): project memory boundaries.
@@ -136,10 +147,11 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [rules/pr-workflow.md](rules/pr-workflow.md): PR state machine + two human gates.
 - [rules/review-loop.md](rules/review-loop.md): pre-push local review stages.
 
-### Templates (11)
+### Templates (12)
 
 - [templates/code-review-report.md](templates/code-review-report.md): fallback self-review artefact.
 - [templates/issue-bug.md](templates/issue-bug.md): bug issue body.
+- [templates/issue-discovery-session.md](templates/issue-discovery-session.md): human-readable render of an issue-discovery session scratch file.
 - [templates/issue-feature.md](templates/issue-feature.md): feature issue body.
 - [templates/issue-refactor.md](templates/issue-refactor.md): refactor issue body.
 - [templates/issue-release.md](templates/issue-release.md): release umbrella body.
@@ -150,10 +162,11 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [templates/regression-report.md](templates/regression-report.md): regression triage report.
 - [templates/release-readiness-checklist.md](templates/release-readiness-checklist.md): release-readiness artefact.
 
-### Memory seeds (9)
+### Memory seeds (10)
 
 - [memory-seeds/commit-style-conventional.md](memory-seeds/commit-style-conventional.md): conventional commits.
 - [memory-seeds/dash-free-writing.md](memory-seeds/dash-free-writing.md): no-dashes rule seed.
+- [memory-seeds/issue-discovery-posture.md](memory-seeds/issue-discovery-posture.md): intake posture; run issue-discovery before any dev-loop without an issue ref.
 - [memory-seeds/ops-config-usage.md](memory-seeds/ops-config-usage.md): cite the keys you used.
 - [memory-seeds/plan-lifecycle-moves.md](memory-seeds/plan-lifecycle-moves.md): plan lifecycle states + moves.
 - [memory-seeds/planning-parallel-agents.md](memory-seeds/planning-parallel-agents.md): Phase-1 parallel Explore.

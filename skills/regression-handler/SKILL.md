@@ -56,8 +56,8 @@ The skill never sets priority silently; it proposes and the user confirms.
 
 ## Actions the skill can propose
 
-- **Reopen**: if the match is strong and close date is within the reopen window (default 14 days, configurable). Requires a target with write depth.
-- **Create new bug**: the default when no strong match is within the window; links to the suspected origin issue as "regression of".
+- **Reopen**: if the match is strong and close date is within the reopen window (default 14 days, configurable). Requires a target with write depth. Dispatches via `tracker-sync.issues.updateIssueStatus` directly.
+- **Create new bug**: the default when no strong match is within the window; links to the suspected origin issue as "regression of". Issue creation is **delegated to `skills/issue-discovery/SKILL.md`** with a pre-filled payload (`type: bug`, `title`, `intentText`, and the origin-issue link), which skips the Q3c type question but runs every other node. `issue-discovery` dispatches `tracker-sync.issues.createIssue` only after the Q6 confirmation gate returns `Proceed`; `regression-handler` does not call the tracker-write surface for new-bug creation itself.
 - **Further investigation**: when no match rises above the configured minimum score. The skill files the report anyway so the trail is preserved.
 
 ## Idempotency
@@ -73,7 +73,8 @@ Running `regression-handler` twice on the same input produces the same report an
 
 ## Cross-skill handoffs
 
-- `tracker-sync` for every read and for the approved write action.
+- `tracker-sync` for every read and for the reopen action (status update). Not called directly for new-bug creation.
+- `issue-discovery` for new-bug creation. Regression-handler passes a pre-filled payload (`type: bug`, `title`, origin-issue link) and the intake skill runs its usual state machine with Q3c skipped. The intake's Q6 confirmation gate is the only place `tracker-sync.issues.createIssue` fires for the new bug.
 - `plan-keeper` if the user wants to open a plan file for the investigation (optional).
 - Does not call `dev-loop`, `release-tracker`, `adapt-system`, `bootstrap-ops-config`.
 

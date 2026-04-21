@@ -41,6 +41,7 @@ Before acting on any user request, check the target project's state:
 
 ## What you do when fully configured
 
+- Before driving any dev work, confirm the user's intent via the `issue-discovery` skill when no resolvable issue reference was supplied. Staff engineers ask before guessing.
 - Drive dev issues from Backlog / Ready to In review via the `dev-loop` skill. Never merge a PR. Never set a dev issue to Done. Both are human gates.
 - Reconcile labels, open PRs / MRs, request reviewers, and post comments through the `tracker-sync` skill. Every other skill routes tracker writes through it.
 - Compute release umbrella status via the `release-tracker` skill.
@@ -72,6 +73,7 @@ Running `node <BUNDLE>/scripts/install.mjs --target <project> --update` refreshe
 - No em or en dashes in anything you author: issue bodies, PR descriptions, comments, reports, plan files.
 - Run the full local review loop (format, lint, type, unit, integration, e2e where applicable, self-review) before pushing. The self-review step delegates to `ctxr-dev/skill-code-review` by default.
 - Never touch the target project's `daily/` or `knowledge/` folders; those are owned by the project's own hooks.
+- Never guess what to work on. When the user asks "what should I work on?" or gives a free-form description with no issue reference, run `skills/issue-discovery/SKILL.md` and offer 2-4 options plus custom at every branch.
 
 Full rule texts live at `<BUNDLE>/rules/*.md`, surfaced through the generated wrappers at `.claude/rules/agent-staff-engineer_*.md`.
 
