@@ -1831,9 +1831,14 @@ async function githubReconcileLabels(trackerTarget, ctx, payload) {
       vars.color = e.color;
     }
     if (e.description !== undefined) {
-      // Description is nullable; inline to preserve null semantics
-      // (GraphQL doesn't let a variable carry `null` for a nullable
-      // input cleanly without explicit type declaration).
+      // Description is nullable on updateLabel and we must be able
+      // to clear it explicitly. Inline rather than declaring a
+      // `$description: String` variable because `ghGraphqlExec`
+      // rejects non-string / non-number / non-boolean vars; passing
+      // `null` goes through as an omitted arg, which GraphQL reads
+      // as "don't change this field" instead of "set to null".
+      // Inlining preserves the set-to-null semantics a caller gets
+      // by passing `{description: null}` in the plan.
       parts.push(`description: ${e.description === null ? "null" : JSON.stringify(e.description)}`);
     }
     const parameterDecls = ["$id: ID!"];
@@ -1988,7 +1993,7 @@ async function githubRelabelBulk(trackerTarget, ctx, payload) {
     const { matching, truncated } = await scanIssuesCarryingLabel(from);
     if (truncated) {
       throw new Error(
-        `github labels.relabelBulk: scanning ${owner}/${repo} for issues carrying '${from}' reached the ${BULK_RELABEL_PAGE_SIZE * BULK_RELABEL_MAX_PAGES}-issue cap (${BULK_RELABEL_MAX_PAGES} pages) with more pages still available; refusing to bulk relabel because the match set may be truncated. Narrow the rename (e.g. apply per-area or close stale issues first) or raise the cap explicitly.`,
+        `github labels.relabelBulk: scanning ${owner}/${repo} for issues carrying '${from}' reached the ${BULK_RELABEL_PAGE_SIZE * BULK_RELABEL_MAX_PAGES}-issue cap (${BULK_RELABEL_MAX_PAGES} pages) with more pages still available; refusing to bulk relabel because the match set may be truncated. Narrow the rename (for example, run it per area or after closing stale issues), split the plan into multiple passes, or raise BULK_RELABEL_PAGE_SIZE / BULK_RELABEL_MAX_PAGES in code if a higher cap is required.`,
       );
     }
     const entryResult = { from, to, issues: matching.map((m) => m.number), changed: [] };
@@ -2203,7 +2208,7 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
     page += 1;
     if (page > MAX_PAGES) {
       throw new Error(
-        `github projects.listProjectItems: exceeded ${MAX_PAGES} pages for project #${projectNumber}; raise the cap or tighten the query`,
+        `github projects.listProjectItems: exceeded ${MAX_PAGES} pages for project #${projectNumber}; increase \`first\` (up to 100), lower \`limit\`, or resume paginating from the returned \`endCursor\` via \`after\``,
       );
     }
     // Cap per-request `first` to the remaining budget so the server
