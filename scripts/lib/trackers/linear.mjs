@@ -490,9 +490,10 @@ async function linearGetIssue(gql, _target, _caches, _ctx, payload) {
 }
 
 async function linearListIssues(gql, target, caches, _ctx, payload = {}) {
-  const { state, labels: filterLabels, first: rawFirst = 50 } = payload;
-  const first = typeof rawFirst === "number" && rawFirst > 0
-    ? Math.min(Math.floor(rawFirst), 1000)
+  const { state, labels: filterLabels, first: rawFirst, limit: rawLimit } = payload;
+  const rawCap = rawFirst ?? rawLimit ?? 50;
+  const first = typeof rawCap === "number" && rawCap > 0
+    ? Math.min(Math.floor(rawCap), 1000)
     : 50;
   const teamId = await resolveTeamId(gql, target, caches);
   // Default to open issues (non-completed, non-cancelled) matching GitHub's open-only default
@@ -661,7 +662,9 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
     ...unchanged.map((n) => ({ action: "unchanged", name: n })),
     ...deprecated.map((n) => ({ action: "deprecate", name: n })),
   ];
-  return { mode: apply ? "applied" : "dry-run", plan };
+  const result = { mode: apply ? "applied" : "dry-run", plan };
+  if (apply) result.applied = true;
+  return result;
 }
 
 async function linearRelabelBulk(gql, _target, caches, _ctx, payload) {
@@ -677,7 +680,7 @@ async function linearRelabelBulk(gql, _target, caches, _ctx, payload) {
     return { mode: apply ? "applied" : "dry-run", results: [] };
   }
   for (const entry of plan) {
-    if (!entry || typeof entry !== "object") {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       throw new TypeError(
         `linear labels.relabelBulk: each plan entry must be {from, to}; got ${JSON.stringify(entry)}`,
       );
