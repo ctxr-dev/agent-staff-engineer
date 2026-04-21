@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agent-staff-engineer.local/pr-iteration-state.schema.json",
+  "title": "PR iteration state",
+  "description": "Persisted state for one active PR iteration loop. Lives at .development/local/pr-iteration/<owner>__<repo>__<number>.json. Read/written by scripts/lib/pr-iteration/state.mjs; validated on read so corrupted files surface immediately rather than mid-tick with a TypeError.",
+  "type": "object",
+  "required": [
+    "prId",
+    "owner",
+    "repo",
+    "prNumber",
+    "prNodeId",
+    "botIds",
+    "botLogins",
+    "headSha",
+    "lastRound",
+    "intervalSeconds",
+    "lastPollResult",
+    "exitConditions",
+    "createdAt",
+    "updatedAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "prId": {
+      "type": "string",
+      "description": "Canonical PR identifier: <owner>/<repo>#<number>.",
+      "pattern": "^[A-Za-z0-9_.][A-Za-z0-9_.-]*/[A-Za-z0-9_.][A-Za-z0-9_.-]*#[0-9]+$"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repo": {
+      "type": "string",
+      "minLength": 1
+    },
+    "prNumber": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "memberName": {
+      "type": ["string", "null"],
+      "description": "Workspace member (multi-repo dispatch) or null for single-repo projects."
+    },
+    "prNodeId": {
+      "type": "string",
+      "description": "GitHub PR GraphQL node ID. Cached; recapturable if stale.",
+      "minLength": 1
+    },
+    "botIds": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Resolved GraphQL node IDs for the configured reviewer bots."
+    },
+    "botLogins": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Login names for the configured reviewer bots."
+    },
+    "headSha": {
+      "type": "string",
+      "description": "Last known HEAD SHA of the PR branch.",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "lastRound": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Last completed review round number. 0 means no rounds completed yet."
+    },
+    "nextWakeAt": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO 8601 timestamp for the next scheduled wakeup. Null if not yet scheduled."
+    },
+    "intervalSeconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 3600,
+      "description": "Seconds between wakeup ticks. Default 270 (inside the 5-min Anthropic prompt-cache window)."
+    },
+    "consecutiveWakes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Consecutive wakeups without forward progress (no fix round). Resets when the skill completes a fix round. Used by the safety cap to pause the loop after max_consecutive_wakes.",
+      "default": 0
+    },
+    "lastPollResult": {
+      "type": "object",
+      "required": ["ciState", "unresolvedCount", "reviewOnHead", "observedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "ciState": {
+          "type": "string",
+          "enum": ["SUCCESS", "FAILURE", "ERROR", "PENDING"]
+        },
+        "unresolvedCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reviewOnHead": {
+          "type": "boolean"
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "exitConditions": {
+      "type": "object",
+      "required": ["localReviewGo", "zeroUnresolvedOnHead", "ciSuccessOnHead"],
+      "additionalProperties": false,
+      "properties": {
+        "localReviewGo": { "type": "boolean" },
+        "zeroUnresolvedOnHead": { "type": "boolean" },
+        "ciSuccessOnHead": { "type": "boolean" }
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -50,9 +50,10 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 
 ### Iterating on review comments on an open PR
 
-- [skills/pr-iteration/SKILL.md](skills/pr-iteration/SKILL.md): the post-push loop orchestration.
+- [skills/pr-iteration/SKILL.md](skills/pr-iteration/SKILL.md): the post-push loop orchestration (autonomous wakeup-driven tick or legacy in-session poll).
 - [skills/pr-iteration/runbook.md](skills/pr-iteration/runbook.md): canonical how-to with GraphQL recipes.
 - [rules/pr-iteration.md](rules/pr-iteration.md): loop contract + exit conditions.
+- [rules/agent-boot.md](rules/agent-boot.md): session-start resume prompt for pending iteration loops.
 - [rules/ambiguity-halt.md](rules/ambiguity-halt.md): halt-and-ask contract when state is weird.
 - [templates/pr-iteration-report.md](templates/pr-iteration-report.md): per-round artefact.
 
@@ -136,9 +137,10 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [skills/regression-handler/SKILL.md](skills/regression-handler/SKILL.md): bug triage + linked-issue proposal.
 - [skills/release-tracker/SKILL.md](skills/release-tracker/SKILL.md): Release umbrella status computation.
 
-### Rules (12)
+### Rules (13)
 
 - [rules/adaptation.md](rules/adaptation.md): when to invoke adapt-system.
+- [rules/agent-boot.md](rules/agent-boot.md): session-start checks; scans for pending PR iteration loops and surfaces a resume prompt.
 - [rules/ambiguity-halt.md](rules/ambiguity-halt.md): halt-and-ask when state is weird.
 - [rules/issue-discovery.md](rules/issue-discovery.md): the three-clause intake rule (never guess; 2-4 options plus custom; delegate writes).
 - [rules/subagent-orchestration.md](rules/subagent-orchestration.md): the Captain/Soldier binding contract; when to delegate, roles, inherited invariants.

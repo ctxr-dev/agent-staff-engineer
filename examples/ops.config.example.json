@@ -141,7 +141,12 @@
       "bots": { "github": ["copilot-pull-request-reviewer"] },
       "poll_interval_seconds": 30,
       "poll_timeout_seconds": 1200,
-      "auto_resolve_stale_after_commits": 1
+      "auto_resolve_stale_after_commits": 1,
+      "autonomous": {
+        "enabled": true,
+        "default_interval_seconds": 270,
+        "max_consecutive_wakes": 96
+      }
     },
     "orchestration": {
       "enabled": true,

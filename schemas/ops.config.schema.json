@@ -410,6 +410,32 @@
               "minimum": 0,
               "default": 1,
               "description": "When the same path:line thread has been re-emitted by the reviewer on a superseded SHA (commonly 30-50% of Copilot threads after round 1 per the runbook), auto-resolve it after this many commits have landed without changing the underlying code. Set 0 to disable and require manual triage for every thread."
+            },
+            "autonomous": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Wakeup-driven autonomous iteration (PR 14). Replaces the in-session poll with a ScheduleWakeup loop that survives session close, compaction, and IDE restarts. Set enabled:false to restore the pre-PR-14 in-session poll behaviour.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "When false, step 4 uses the legacy in-session poll loop instead of ScheduleWakeup ticks."
+                },
+                "default_interval_seconds": {
+                  "type": "integer",
+                  "minimum": 60,
+                  "maximum": 3600,
+                  "default": 270,
+                  "description": "Seconds between wakeup ticks. 270 stays inside the 5-minute Anthropic prompt-cache window, avoiding the cache-miss cost ScheduleWakeup's docs warn about for >=300s. Honours a free-form user override (e.g. 'every 10 min')."
+                },
+                "max_consecutive_wakes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000,
+                  "default": 96,
+                  "description": "Safety cap: after this many consecutive wakeups without forward progress (no fix round), the loop writes a .paused sidecar and stops rescheduling. 96 * 270s is roughly 7.2 hours of elapsed wall time. Human deletes the .paused file to resume."
+                }
+              }
             }
           }
         },
