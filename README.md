@@ -45,18 +45,18 @@ These two decisions are always yours.
 
 ## Current implementation status
 
-The agent targets four tracker kinds; today only GitHub is backed by real implementations. Other kinds accept the config in the interview but surface a clean "not implemented yet" error on any operation.
+The agent targets four tracker kinds. GitHub and Linear have real implementations; Jira and GitLab are stubbed.
 
-| Capability                             | GitHub                                | Jira / Linear / GitLab |
-| -------------------------------------- | ------------------------------------- | ---------------------- |
-| Open PRs, iterate on review comments   | **works**                             | stub (`NotSupportedError`) |
-| Status moves, comments, issue create   | partial (works via legacy path; the new unified API is being ported) | stub |
-| Label taxonomy reconcile               | partial                               | stub |
-| Release umbrella status                | **works**                             | stub |
-| Regression lookups                     | **works**                             | stub |
-| Bootstrap interview + config           | **works**                             | **works** (config is valid; write-ops throw until real backends land) |
+| Capability                             | GitHub    | Linear                | Jira / GitLab |
+| -------------------------------------- | --------- | --------------------- | ------------- |
+| Open PRs, iterate on review comments   | **works** | stub (no native PR)   | stub          |
+| Status moves, comments, issue create   | **works** | **works**             | stub          |
+| Label taxonomy reconcile               | **works** | **works**             | stub          |
+| Release umbrella status                | **works** | stub                  | stub          |
+| Regression lookups                     | **works** | stub                  | stub          |
+| Bootstrap interview + config           | **works** | **works**             | **works** (config valid; write-ops throw until real backends land) |
 
-Real Jira / Linear / GitLab backends ship in follow-up releases. Today, the only **observed** (read-only) target kind the interview and runtime actually wire up is GitHub repos (for cross-repo lookups). The schema accepts observed Jira / Linear / GitLab entries, but every operation against them throws `NotSupportedError` because those backends are full stubs end-to-end: there's no path that reads from them either. Treat those kinds as "not implemented yet" full stop until the real backends land.
+Linear's `issues.*` and `labels.*` namespaces are fully implemented via Linear's GraphQL API (direct `fetch`, no SDK). Auth via `LINEAR_API_KEY` env var. The `review.*` namespace is stubbed because Linear has no native PR concept; configure `workflow.external_review.provider: "github"` for projects that host code on GitHub but track issues in Linear. Real Jira and GitLab backends ship in follow-up releases.
 
 ## Release models the interview supports
 
