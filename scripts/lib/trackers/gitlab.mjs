@@ -78,6 +78,7 @@ async function resolveLabelMap(api, target, caches) {
   if (caches.labelMap) return caches.labelMap;
   const pid = projectPath(target);
   const map = new Map();
+  let truncated = false;
   for (let page = 1; page <= MAX_PAGES; page++) {
     const labels = await api("GET", `/projects/${pid}/labels`, {
       query: { per_page: MAX_PER_PAGE, page },
@@ -87,6 +88,12 @@ async function resolveLabelMap(api, target, caches) {
       map.set(l.name.toLowerCase(), l);
     }
     if (labels.length < MAX_PER_PAGE) break;
+    if (page === MAX_PAGES) truncated = true;
+  }
+  if (truncated) {
+    throw new Error(
+      `GitLab: project has more than ${MAX_PAGES * MAX_PER_PAGE} labels; label resolution was truncated.`,
+    );
   }
   caches.labelMap = map;
   return map;
@@ -298,16 +305,21 @@ async function gitlabListIssues(api, target, caches, _ctx, payload = {}) {
     : 50;
   const pid = projectPath(target);
   const query = { state: "opened", per_page: Math.min(cap, MAX_PER_PAGE) };
-  if (state) {
+  if (state != null) {
+    if (typeof state !== "string") {
+      throw new TypeError("gitlab issues.listIssues: state must be a string");
+    }
     const lower = state.trim().toLowerCase();
     if (lower === "done" || lower === "closed") query.state = "closed";
   }
-  if (filterLabels?.length > 0) {
+  if (filterLabels != null) {
     if (!Array.isArray(filterLabels)) {
       throw new TypeError("gitlab issues.listIssues: labels must be an array");
     }
-    const resolved = await resolveLabelNames(api, target, caches, filterLabels);
-    query.labels = resolved.join(",");
+    if (filterLabels.length > 0) {
+      const resolved = await resolveLabelNames(api, target, caches, filterLabels);
+      query.labels = resolved.join(",");
+    }
   }
   const results = [];
   for (let page = 1; results.length < cap && page <= MAX_PAGES; page++) {
@@ -497,7 +509,8 @@ async function gitlabFetchUnresolvedThreads(api, target, _caches, _ctx, payload)
     });
     if (!Array.isArray(discussions) || discussions.length === 0) break;
     for (const d of discussions) {
-      const firstNote = d.notes?.[0];
+      if (!Array.isArray(d.notes) || d.notes.length === 0) continue;
+      const firstNote = d.notes[0];
       if (!firstNote?.resolvable) continue;
       const isUnresolved = d.notes.some((n) => n.resolvable && !n.resolved);
       if (!isUnresolved) continue;

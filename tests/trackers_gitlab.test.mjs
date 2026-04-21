@@ -313,9 +313,9 @@ describe("gitlab labels.relabelBulk", () => {
 // ── Target resolution ───────────────────────────────────────────────
 
 describe("gitlab target resolution", () => {
-  it("throws when namespace and repo are missing", () => {
+  it("throws when namespace and repo are missing", async () => {
     const tracker = makeGitlabTracker({}, { rest: mockRest([]) });
-    assert.rejects(
+    await assert.rejects(
       () => tracker.issues.listIssues({}),
       /requires target\.project_id or target\.namespace/,
     );
