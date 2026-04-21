@@ -44,7 +44,7 @@ const OUTCOME_RE = /^[a-z][a-z0-9-]{0,30}$/;
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const DOMAIN_RE = /^[a-z][a-z0-9-]{0,30}$/;
 
-function assertTargetAbs(target, label) {
+function assertTargetPath(target, label) {
   if (typeof target !== "string" || target.trim().length === 0) {
     throw new TypeError(`sessionState.${label}: target must be a non-empty string`);
   }
@@ -83,7 +83,7 @@ function sessionPath(target, domain, sessionId, suffix = "") {
  * Returns the absolute path the file was written to.
  */
 export async function writeSession(target, domain, sessionId, state) {
-  assertTargetAbs(target, "writeSession");
+  assertTargetPath(target, "writeSession");
   assertDomain(domain, "writeSession");
   assertSessionId(sessionId, "writeSession");
   if (state === null || typeof state !== "object" || Array.isArray(state)) {
@@ -103,7 +103,7 @@ export async function writeSession(target, domain, sessionId, state) {
  * caller sees a file-specific parse error rather than a silent null.
  */
 export async function readSession(target, domain, sessionId) {
-  assertTargetAbs(target, "readSession");
+  assertTargetPath(target, "readSession");
   assertDomain(domain, "readSession");
   assertSessionId(sessionId, "readSession");
   return readJsonOrNull(sessionPath(target, domain, sessionId));
@@ -121,7 +121,7 @@ export async function readSession(target, domain, sessionId) {
  * silently — callers can decide whether to log or to halt.
  */
 export async function listPendingSessions(target, domain) {
-  assertTargetAbs(target, "listPendingSessions");
+  assertTargetPath(target, "listPendingSessions");
   assertDomain(domain, "listPendingSessions");
   const dir = sessionDir(target, domain);
   if (!(await isDirectory(dir))) return [];
@@ -220,7 +220,7 @@ export async function listPendingSessions(target, domain) {
  * validated against OUTCOME_RE to keep filenames safe and scannable.
  */
 export async function archiveSession(target, domain, sessionId, outcome) {
-  assertTargetAbs(target, "archiveSession");
+  assertTargetPath(target, "archiveSession");
   assertDomain(domain, "archiveSession");
   assertSessionId(sessionId, "archiveSession");
   if (!OUTCOME_RE.test(outcome ?? "")) {
@@ -245,7 +245,7 @@ export async function archiveSession(target, domain, sessionId, outcome) {
  * the directory.
  */
 export function sessionDirFor(target, domain) {
-  assertTargetAbs(target, "sessionDirFor");
+  assertTargetPath(target, "sessionDirFor");
   assertDomain(domain, "sessionDirFor");
   return sessionDir(target, domain);
 }

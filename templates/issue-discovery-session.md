@@ -29,6 +29,7 @@ scalar placeholders:
 Human-readable rendering of a session scratch file under `.development/local/issue-discovery/{{ session_id }}.json`. The canonical state is the JSON; this template is what the agent prints when asked to show the session.
 
 - **Started:** {{ started_at }}
+- **Status:** `{{ status }}`
 - **Target project:** {{ tracker_target }}{{ member_suffix }}
 - **Current step:** `{{ current_step }}`
 - **Topic:** {{ intent_text }}
