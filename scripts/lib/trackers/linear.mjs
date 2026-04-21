@@ -352,8 +352,14 @@ async function linearRelabelIssue(gql, _target, caches, _ctx, payload) {
       "linear issues.relabelIssue: add and remove must be arrays of label names",
     );
   }
+  for (const name of [...add, ...remove]) {
+    if (typeof name !== "string" || name.trim().length === 0) {
+      throw new TypeError(
+        `linear issues.relabelIssue: every add/remove entry must be a non-empty string; got ${JSON.stringify(name)}`,
+      );
+    }
+  }
   if (add.length === 0 && remove.length === 0) {
-    // No-op: no delta requested
     return { id: issueId, labels: [], noop: true };
   }
   // Fetch current labels on the issue for delta semantics
@@ -434,9 +440,16 @@ async function linearListIssues(gql, target, caches, _ctx, payload = {}) {
     const stateId = await resolveStateId(gql, target, caches, state);
     filter.state = { id: { eq: stateId } };
   }
-  if (filterLabels?.length > 0) {
-    const labelIds = await resolveLabelIds(gql, caches, filterLabels);
-    filter.labels = { id: { in: labelIds } };
+  if (filterLabels != null) {
+    if (!Array.isArray(filterLabels)) {
+      throw new TypeError(
+        "linear issues.listIssues: labels filter must be an array of label names",
+      );
+    }
+    if (filterLabels.length > 0) {
+      const labelIds = await resolveLabelIds(gql, caches, filterLabels);
+      filter.labels = { id: { in: labelIds } };
+    }
   }
   const results = [];
   let cursor = null;
@@ -490,7 +503,11 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
   for (const want of taxonomy) {
     const name = typeof want === "string" ? want : want.name;
     const color = typeof want === "string" ? undefined : want.color;
-    if (!name || typeof name !== "string") continue;
+    if (!name || typeof name !== "string") {
+      throw new TypeError(
+        `linear labels.reconcileLabels: each taxonomy entry must have a non-empty string name; got ${JSON.stringify(want)}`,
+      );
+    }
     const existing = map.get(name.toLowerCase());
     if (existing) {
       if (color && existing.color !== color) {
