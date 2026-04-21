@@ -194,6 +194,19 @@ async function linearCreateIssue(gql, target, caches, _ctx, payload) {
       "linear issues.createIssue: body must be a string when provided",
     );
   }
+  if (!Array.isArray(labels)) {
+    throw new TypeError(
+      "linear issues.createIssue: labels must be an array of label names",
+    );
+  }
+  labels = labels.map((l) => {
+    if (typeof l !== "string" || l.trim().length === 0) {
+      throw new TypeError(
+        `linear issues.createIssue: every labels[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
+      );
+    }
+    return l.trim();
+  });
   const teamId = await resolveTeamId(gql, target, caches);
 
   // Dedupe: search open issues by exact title match
@@ -320,6 +333,15 @@ async function linearRelabelIssue(gql, _target, caches, _ctx, payload) {
   if (!issueId) {
     throw new TypeError("linear issues.relabelIssue: issueId is required");
   }
+  if (!Array.isArray(add) || !Array.isArray(remove)) {
+    throw new TypeError(
+      "linear issues.relabelIssue: add and remove must be arrays of label names",
+    );
+  }
+  if (add.length === 0 && remove.length === 0) {
+    // No-op: no delta requested
+    return { id: issueId, labels: [], noop: true };
+  }
   // Fetch current labels on the issue for delta semantics
   const currentData = await gql(
     `query($id: String!) {
@@ -331,15 +353,23 @@ async function linearRelabelIssue(gql, _target, caches, _ctx, payload) {
     (currentData?.issue?.labels?.nodes ?? []).map((l) => l.id),
   );
 
-  // Resolve add/remove to IDs
+  // Resolve add/remove to IDs; throw on unknown names (matches GitHub)
   const labelMap = await resolveLabelMap(gql, caches);
+  const missingAdd = [];
   for (const name of add) {
     const label = labelMap.get(name.toLowerCase());
     if (label) currentIds.add(label.id);
+    else missingAdd.push(name);
+  }
+  if (missingAdd.length > 0) {
+    throw new Error(
+      `linear issues.relabelIssue: labels not found for add: ${missingAdd.join(", ")}`,
+    );
   }
   for (const name of remove) {
     const label = labelMap.get(name.toLowerCase());
     if (label) currentIds.delete(label.id);
+    // Removing a label that doesn't exist in the map is a no-op (idempotent)
   }
 
   const labelIds = [...currentIds];

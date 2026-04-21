@@ -364,18 +364,12 @@ describe("linear labels.reconcileLabels", () => {
 // ── labels.relabelBulk ──────────────────────────────────────────────
 
 describe("linear labels.relabelBulk", () => {
-  it("applies labels to multiple issues (resilient to per-issue errors)", async () => {
-    let callCount = 0;
+  it("applies labels to a single issue", async () => {
     const gql = mockGraphql([
       fixture("issueLabels(", LABELS_RESPONSE),
-      // First issue succeeds, second throws
-      {
-        queryHint: "issueUpdate(",
-        data: (() => {
-          // Return data based on call count
-          return { issueUpdate: { success: true, issue: { id: "i1", identifier: "ENG-1" } } };
-        })(),
-      },
+      fixture("issueUpdate(", {
+        issueUpdate: { success: true, issue: { id: "i1", identifier: "ENG-1" } },
+      }),
     ]);
     const tracker = makeLinearTracker(TARGET, { graphql: gql });
     const result = await tracker.labels.relabelBulk({}, {
