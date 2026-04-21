@@ -3,7 +3,9 @@
 // fetch (Node >=20). No @linear/sdk dependency: respects the bundle's
 // zero-runtime-deps discipline.
 //
-// Auth: LINEAR_API_KEY environment variable (Bearer token).
+// Auth: LINEAR_API_KEY environment variable (passed as-is in the
+// Authorization header; Linear expects the raw API key, not a Bearer
+// prefix).
 //
 // Implemented namespaces:
 //   issues.*  — full (createIssue, updateIssueStatus, comment,
@@ -19,15 +21,11 @@ import {
 } from "./tracker.mjs";
 
 const LINEAR_API_URL = "https://api.linear.app/graphql";
+const MAX_LABEL_PAGES = 10;
+const MAX_LIST_PAGES = 10;
 
 // ── GraphQL helper ──────────────────────────────────────────────────
 
-/**
- * Default GraphQL caller using global fetch.
- * @param {string} query     GraphQL query or mutation
- * @param {object} variables
- * @returns {Promise<object>} response data
- */
 async function defaultGraphql(query, variables = {}) {
   const apiKey = process.env.LINEAR_API_KEY;
   if (!apiKey) {
@@ -59,11 +57,7 @@ async function defaultGraphql(query, variables = {}) {
 // ── Lazy caches (per tracker instance) ──────────────────────────────
 
 function createCaches() {
-  return {
-    teamId: null,
-    workflowStates: null,
-    labelMap: null,
-  };
+  return { teamId: null, workflowStates: null, labelMap: null };
 }
 
 async function resolveTeamId(gql, target, caches) {
@@ -83,9 +77,7 @@ async function resolveTeamId(gql, target, caches) {
     { key: teamKey },
   );
   const team = data?.teams?.nodes?.[0];
-  if (!team) {
-    throw new Error(`Linear team with key '${teamKey}' not found`);
-  }
+  if (!team) throw new Error(`Linear team with key '${teamKey}' not found`);
   caches.teamId = team.id;
   return team.id;
 }
@@ -101,16 +93,10 @@ async function resolveWorkflowStates(gql, target, caches) {
     }`,
     { teamId },
   );
-  const states = data?.workflowStates?.nodes ?? [];
-  caches.workflowStates = states;
-  return states;
+  caches.workflowStates = data?.workflowStates?.nodes ?? [];
+  return caches.workflowStates;
 }
 
-/**
- * Find a workflow state by name (case-insensitive) or by type keyword.
- * The agent's vocabulary keys (backlog, in_progress, done, etc.) map
- * to Linear state types (backlog, started, completed, etc.).
- */
 const STATUS_TYPE_MAP = {
   backlog: "backlog",
   ready: "unstarted",
@@ -121,21 +107,25 @@ const STATUS_TYPE_MAP = {
 };
 
 async function resolveStateId(gql, target, caches, statusName) {
+  if (typeof statusName !== "string" || statusName.trim().length === 0) {
+    throw new TypeError(
+      "linear resolveStateId: statusName must be a non-empty string",
+    );
+  }
+  const trimmed = statusName.trim();
   const states = await resolveWorkflowStates(gql, target, caches);
-  // Try exact name match first (case-insensitive)
   const byName = states.find(
-    (s) => s.name.toLowerCase() === statusName.toLowerCase(),
+    (s) => s.name.toLowerCase() === trimmed.toLowerCase(),
   );
   if (byName) return byName.id;
-  // Try type mapping
-  const mappedType = STATUS_TYPE_MAP[statusName.toLowerCase()];
+  const mappedType = STATUS_TYPE_MAP[trimmed.toLowerCase()];
   if (mappedType) {
     const byType = states.find((s) => s.type === mappedType);
     if (byType) return byType.id;
   }
   const available = states.map((s) => `${s.name} (${s.type})`).join(", ");
   throw new Error(
-    `Linear: no workflow state matching '${statusName}' on team '${target.team}'. Available: ${available}`,
+    `Linear: no workflow state matching '${trimmed}' on team '${target.team}'. Available: ${available}`,
   );
 }
 
@@ -145,7 +135,8 @@ async function resolveLabelMap(gql, caches) {
   if (caches.labelMap) return caches.labelMap;
   const map = new Map();
   let cursor = null;
-  for (let page = 0; page < 10; page++) {
+  let truncated = false;
+  for (let page = 0; page < MAX_LABEL_PAGES; page++) {
     const data = await gql(
       `query($after: String) {
         issueLabels(first: 100, after: $after) {
@@ -160,6 +151,12 @@ async function resolveLabelMap(gql, caches) {
     }
     if (!data?.issueLabels?.pageInfo?.hasNextPage) break;
     cursor = data.issueLabels.pageInfo.endCursor;
+    if (page === MAX_LABEL_PAGES - 1) truncated = true;
+  }
+  if (truncated) {
+    throw new Error(
+      `Linear: workspace has more than ${MAX_LABEL_PAGES * 100} labels; label resolution was truncated. Contact maintainers to raise the page cap.`,
+    );
   }
   caches.labelMap = map;
   return map;
@@ -171,11 +168,8 @@ async function resolveLabelIds(gql, caches, labelNames) {
   const missing = [];
   for (const name of labelNames) {
     const label = map.get(name.toLowerCase());
-    if (label) {
-      ids.push(label.id);
-    } else {
-      missing.push(name);
-    }
+    if (label) ids.push(label.id);
+    else missing.push(name);
   }
   if (missing.length > 0) {
     throw new Error(
@@ -188,18 +182,42 @@ async function resolveLabelIds(gql, caches, labelNames) {
 // ── issues.* ────────────────────────────────────────────────────────
 
 async function linearCreateIssue(gql, target, caches, _ctx, payload) {
-  const { title, body = "", labels = [] } = payload ?? {};
+  let { title, body = "", labels = [] } = payload ?? {};
   if (typeof title !== "string" || title.trim().length === 0) {
     throw new TypeError(
       "linear issues.createIssue: title must be a non-empty string",
     );
   }
+  title = title.trim();
+  if (typeof body !== "string") {
+    throw new TypeError(
+      "linear issues.createIssue: body must be a string when provided",
+    );
+  }
   const teamId = await resolveTeamId(gql, target, caches);
-  const input = {
-    teamId,
-    title: title.trim(),
-    description: body || undefined,
-  };
+
+  // Dedupe: search open issues by exact title match
+  const searchData = await gql(
+    `query($teamId: String!, $first: Int!) {
+      issues(filter: { team: { id: { eq: $teamId } }, state: { type: { nin: ["completed", "canceled"] } } }, first: $first) {
+        nodes { id identifier title url }
+      }
+    }`,
+    { teamId, first: 100 },
+  );
+  const match = (searchData?.issues?.nodes ?? []).find(
+    (n) => n.title === title,
+  );
+  if (match) {
+    return {
+      id: match.id,
+      identifier: match.identifier,
+      url: match.url,
+      existed: true,
+    };
+  }
+
+  const input = { teamId, title, description: body || undefined };
   if (labels.length > 0) {
     input.labelIds = await resolveLabelIds(gql, caches, labels);
   }
@@ -231,12 +249,31 @@ async function linearUpdateIssueStatus(gql, target, caches, _ctx, payload) {
       "linear issues.updateIssueStatus: issueId is required",
     );
   }
-  if (!status) {
+  if (typeof status !== "string" || status.trim().length === 0) {
     throw new TypeError(
-      "linear issues.updateIssueStatus: status is required",
+      "linear issues.updateIssueStatus: status must be a non-empty string",
+    );
+  }
+  // Human gate: never set Done
+  const lower = status.trim().toLowerCase();
+  if (lower === "done" || STATUS_TYPE_MAP[lower] === "completed") {
+    throw new Error(
+      "linear issues.updateIssueStatus: refusing to set Done; that is a human gate per rules/pr-workflow.md",
     );
   }
   const stateId = await resolveStateId(gql, target, caches, status);
+
+  // No-op check: fetch current state, skip if already matching
+  const currentData = await gql(
+    `query($id: String!) {
+      issue(id: $id) { state { id } }
+    }`,
+    { id: issueId },
+  );
+  if (currentData?.issue?.state?.id === stateId) {
+    return { id: issueId, identifier: null, state: null, noop: true };
+  }
+
   const data = await gql(
     `mutation($id: String!, $stateId: String!) {
       issueUpdate(id: $id, input: { stateId: $stateId }) {
@@ -279,11 +316,33 @@ async function linearComment(gql, _target, _caches, _ctx, payload) {
 }
 
 async function linearRelabelIssue(gql, _target, caches, _ctx, payload) {
-  const { issueId, labels = [] } = payload ?? {};
+  const { issueId, add = [], remove = [] } = payload ?? {};
   if (!issueId) {
     throw new TypeError("linear issues.relabelIssue: issueId is required");
   }
-  const labelIds = await resolveLabelIds(gql, caches, labels);
+  // Fetch current labels on the issue for delta semantics
+  const currentData = await gql(
+    `query($id: String!) {
+      issue(id: $id) { labels { nodes { id name } } }
+    }`,
+    { id: issueId },
+  );
+  const currentIds = new Set(
+    (currentData?.issue?.labels?.nodes ?? []).map((l) => l.id),
+  );
+
+  // Resolve add/remove to IDs
+  const labelMap = await resolveLabelMap(gql, caches);
+  for (const name of add) {
+    const label = labelMap.get(name.toLowerCase());
+    if (label) currentIds.add(label.id);
+  }
+  for (const name of remove) {
+    const label = labelMap.get(name.toLowerCase());
+    if (label) currentIds.delete(label.id);
+  }
+
+  const labelIds = [...currentIds];
   const data = await gql(
     `mutation($id: String!, $labelIds: [String!]!) {
       issueUpdate(id: $id, input: { labelIds: $labelIds }) {
@@ -338,7 +397,8 @@ async function linearListIssues(gql, target, caches, _ctx, payload = {}) {
   const results = [];
   let cursor = null;
   const pageSize = Math.min(first, 100);
-  for (let page = 0; page < 10 && results.length < first; page++) {
+  let truncated = false;
+  for (let page = 0; page < MAX_LIST_PAGES && results.length < first; page++) {
     const data = await gql(
       `query($filter: IssueFilter!, $first: Int!, $after: String) {
         issues(filter: $filter, first: $first, after: $after, orderBy: updatedAt) {
@@ -357,63 +417,73 @@ async function linearListIssues(gql, target, caches, _ctx, payload = {}) {
     }
     if (!data?.issues?.pageInfo?.hasNextPage) break;
     cursor = data.issues.pageInfo.endCursor;
+    if (page === MAX_LIST_PAGES - 1 && results.length < first) {
+      truncated = true;
+    }
   }
-  return results.slice(0, first);
+  const out = results.slice(0, first);
+  if (truncated) out.truncated = true;
+  return out;
 }
 
 // ── labels.* ────────────────────────────────────────────────────────
 
 async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
-  const { desired = [] } = payload ?? {};
-  if (!Array.isArray(desired)) {
+  // Accept both { desired: [...] } and { taxonomy: [...], apply: bool }
+  const raw = payload ?? {};
+  const taxonomy = raw.taxonomy ?? raw.desired ?? [];
+  const apply = raw.apply !== false;
+  if (!Array.isArray(taxonomy)) {
     throw new TypeError(
-      "linear labels.reconcileLabels: desired must be an array of {name, color?}",
+      "linear labels.reconcileLabels: taxonomy (or desired) must be an array",
     );
   }
   const map = await resolveLabelMap(gql, caches);
   const created = [];
   const updated = [];
   const unchanged = [];
-  for (const want of desired) {
+  for (const want of taxonomy) {
     const name = typeof want === "string" ? want : want.name;
     const color = typeof want === "string" ? undefined : want.color;
     if (!name || typeof name !== "string") continue;
     const existing = map.get(name.toLowerCase());
     if (existing) {
       if (color && existing.color !== color) {
-        await gql(
-          `mutation($id: String!, $input: IssueLabelUpdateInput!) {
-            issueLabelUpdate(id: $id, input: $input) {
-              success issueLabel { id name color }
-            }
-          }`,
-          { id: existing.id, input: { color } },
-        );
-        existing.color = color;
+        if (apply) {
+          await gql(
+            `mutation($id: String!, $input: IssueLabelUpdateInput!) {
+              issueLabelUpdate(id: $id, input: $input) {
+                success issueLabel { id name color }
+              }
+            }`,
+            { id: existing.id, input: { color } },
+          );
+          existing.color = color;
+        }
         updated.push(name);
       } else {
         unchanged.push(name);
       }
     } else {
-      const data = await gql(
-        `mutation($input: IssueLabelCreateInput!) {
-          issueLabelCreate(input: $input) {
-            success issueLabel { id name color }
-          }
-        }`,
-        { input: { name, color: color || "#888888" } },
-      );
-      const label = data?.issueLabelCreate?.issueLabel;
-      if (label) {
-        map.set(label.name.toLowerCase(), label);
-        created.push(name);
+      if (apply) {
+        const data = await gql(
+          `mutation($input: IssueLabelCreateInput!) {
+            issueLabelCreate(input: $input) {
+              success issueLabel { id name color }
+            }
+          }`,
+          { input: { name, color: color || "#888888" } },
+        );
+        const label = data?.issueLabelCreate?.issueLabel;
+        if (label) map.set(label.name.toLowerCase(), label);
       }
+      created.push(name);
     }
   }
   return { created, updated, unchanged };
 }
 
-async function linearRelabelBulk(gql, target, caches, ctx, payload) {
+async function linearRelabelBulk(gql, _target, caches, _ctx, payload) {
   const { issueIds = [], labels = [] } = payload ?? {};
   if (!Array.isArray(issueIds) || issueIds.length === 0) {
     throw new TypeError(
@@ -423,18 +493,23 @@ async function linearRelabelBulk(gql, target, caches, ctx, payload) {
   const labelIds = await resolveLabelIds(gql, caches, labels);
   const results = [];
   for (const id of issueIds) {
-    const data = await gql(
-      `mutation($id: String!, $labelIds: [String!]!) {
-        issueUpdate(id: $id, input: { labelIds: $labelIds }) {
-          success issue { id identifier }
-        }
-      }`,
-      { id, labelIds },
-    );
-    results.push({
-      id,
-      success: data?.issueUpdate?.success ?? false,
-    });
+    try {
+      const data = await gql(
+        `mutation($id: String!, $labelIds: [String!]!) {
+          issueUpdate(id: $id, input: { labelIds: $labelIds }) {
+            success issue { id identifier }
+          }
+        }`,
+        { id, labelIds },
+      );
+      results.push({ id, success: data?.issueUpdate?.success ?? false });
+    } catch (err) {
+      results.push({
+        id,
+        success: false,
+        error: { name: err?.name ?? "Error", message: err?.message ?? String(err) },
+      });
+    }
   }
   return results;
 }
@@ -469,15 +544,6 @@ function makeProjectsStub() {
 
 // ── Factory ─────────────────────────────────────────────────────────
 
-/**
- * Build a real Linear tracker.
- *
- * @param {object} target      ops.config tracker entry (must have .team)
- * @param {object} [opts]
- * @param {Function} [opts.graphql]  GraphQL caller for dependency injection
- *   (defaults to the real Linear API via fetch + LINEAR_API_KEY)
- * @returns {object} Tracker with review, issues, labels, projects namespaces
- */
 export function makeLinearTracker(target = {}, { graphql = null } = {}) {
   const gql = graphql || defaultGraphql;
   const caches = createCaches();
@@ -504,7 +570,6 @@ export function makeLinearTracker(target = {}, { graphql = null } = {}) {
       linearRelabelBulk(gql, target, caches, ctx, payload),
   };
 
-  // Construction-time coverage asserts (mirrors github.mjs pattern)
   const missingIssues = TRACKER_NAMESPACES.issues.filter(
     (m) => typeof issues[m] !== "function",
   );
