@@ -85,7 +85,7 @@ describe("gitlab review.pollForReview", () => {
     };
     api.log = calls;
     const tracker = makeGitlabTracker(TARGET, { rest: api });
-    const result = await tracker.review.pollForReview({}, { mrIid: 1 });
+    const result = await tracker.review.pollForReview({ mrIid: 1 });
     assert.equal(result.ciState, "SUCCESS");
     assert.equal(result.unresolvedCount, 1);
     assert.equal(result.reviewOnHead, true);
@@ -100,7 +100,7 @@ describe("gitlab review.pollForReview", () => {
     };
     api.log = calls;
     const tracker = makeGitlabTracker(TARGET, { rest: api });
-    const result = await tracker.review.pollForReview({}, { mrIid: 2 });
+    const result = await tracker.review.pollForReview({ mrIid: 2 });
     assert.equal(result.ciState, "FAILURE");
     assert.equal(result.unresolvedCount, 0);
   });
@@ -129,7 +129,7 @@ describe("gitlab review.fetchUnresolvedThreads", () => {
       ]),
     ]);
     const tracker = makeGitlabTracker(TARGET, { rest: api });
-    const threads = await tracker.review.fetchUnresolvedThreads({}, { mrIid: 1 });
+    const threads = await tracker.review.fetchUnresolvedThreads({ mrIid: 1 });
     assert.equal(threads.length, 1);
     assert.equal(threads[0].id, "d1");
     assert.equal(threads[0].path, "src/a.js");
@@ -146,7 +146,7 @@ describe("gitlab review.resolveThread", () => {
       route("PUT", "/discussions/d1", { id: "d1", resolved: true }),
     ]);
     const tracker = makeGitlabTracker(TARGET, { rest: api });
-    await tracker.review.resolveThread({}, { mrIid: 1, discussionId: "d1" });
+    await tracker.review.resolveThread({ mrIid: 1 }, "d1");
     assert.equal(api.log[0].body.resolved, true);
   });
 });
@@ -159,7 +159,7 @@ describe("gitlab review.ciStateOnHead", () => {
       route("GET", "/merge_requests/1", { head_pipeline: { status: "running" } }),
     ]);
     const tracker = makeGitlabTracker(TARGET, { rest: api });
-    const result = await tracker.review.ciStateOnHead({}, { mrIid: 1 });
+    const result = await tracker.review.ciStateOnHead({ mrIid: 1 });
     assert.equal(result, "PENDING");
   });
 });

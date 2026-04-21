@@ -456,9 +456,9 @@ async function gitlabRelabelBulk(api, target, caches, _ctx, payload) {
 
 // ── review.* (partial) ──────────────────────────────────────────────
 
-async function gitlabPollForReview(api, target, _caches, _ctx, payload) {
-  const { mrIid } = payload ?? {};
-  if (!mrIid) throw new TypeError("gitlab review.pollForReview: mrIid is required");
+async function gitlabPollForReview(api, target, _caches, ctx) {
+  const mrIid = ctx?.mrIid ?? ctx?.prNumber;
+  if (!mrIid) throw new TypeError("gitlab review.pollForReview: ctx.mrIid (or ctx.prNumber) is required");
   const pid = projectPath(target);
   const mr = await api("GET", `/projects/${pid}/merge_requests/${mrIid}`);
   // CI state from pipeline
@@ -483,24 +483,26 @@ async function gitlabPollForReview(api, target, _caches, _ctx, payload) {
       unresolvedCount++;
     }
   }
-  // reviewOnHead: check if any note was posted on the current HEAD
+  // reviewOnHead: check if any resolvable note references the current HEAD SHA
   const headSha = mr?.diff_refs?.head_sha ?? mr?.sha;
   let reviewOnHead = false;
-  for (const d of discussions ?? []) {
-    for (const n of d.notes ?? []) {
-      if (n.position?.head_sha === headSha || n.position?.new_line != null) {
-        reviewOnHead = true;
-        break;
+  if (headSha) {
+    for (const d of discussions ?? []) {
+      for (const n of d.notes ?? []) {
+        if (n.resolvable && n.position?.head_sha === headSha) {
+          reviewOnHead = true;
+          break;
+        }
       }
+      if (reviewOnHead) break;
     }
-    if (reviewOnHead) break;
   }
   return { ciState, unresolvedCount, reviewOnHead };
 }
 
-async function gitlabFetchUnresolvedThreads(api, target, _caches, _ctx, payload) {
-  const { mrIid } = payload ?? {};
-  if (!mrIid) throw new TypeError("gitlab review.fetchUnresolvedThreads: mrIid is required");
+async function gitlabFetchUnresolvedThreads(api, target, _caches, ctx) {
+  const mrIid = ctx?.mrIid ?? ctx?.prNumber;
+  if (!mrIid) throw new TypeError("gitlab review.fetchUnresolvedThreads: ctx.mrIid is required");
   const pid = projectPath(target);
   const threads = [];
   for (let page = 1; page <= MAX_PAGES; page++) {
@@ -529,19 +531,20 @@ async function gitlabFetchUnresolvedThreads(api, target, _caches, _ctx, payload)
   return threads;
 }
 
-async function gitlabResolveThread(api, target, _caches, _ctx, payload) {
-  const { mrIid, discussionId } = payload ?? {};
-  if (!mrIid) throw new TypeError("gitlab review.resolveThread: mrIid is required");
-  if (!discussionId) throw new TypeError("gitlab review.resolveThread: discussionId is required");
+async function gitlabResolveThread(api, target, _caches, ctx, threadId) {
+  const mrIid = ctx?.mrIid ?? ctx?.prNumber;
+  if (!mrIid) throw new TypeError("gitlab review.resolveThread: ctx.mrIid is required");
+  const discussionId = threadId;
+  if (!discussionId) throw new TypeError("gitlab review.resolveThread: threadId is required");
   const pid = projectPath(target);
   return api("PUT", `/projects/${pid}/merge_requests/${mrIid}/discussions/${discussionId}`, {
     body: { resolved: true },
   });
 }
 
-async function gitlabCiStateOnHead(api, target, _caches, _ctx, payload) {
-  const { mrIid } = payload ?? {};
-  if (!mrIid) throw new TypeError("gitlab review.ciStateOnHead: mrIid is required");
+async function gitlabCiStateOnHead(api, target, _caches, ctx) {
+  const mrIid = ctx?.mrIid ?? ctx?.prNumber;
+  if (!mrIid) throw new TypeError("gitlab review.ciStateOnHead: ctx.mrIid is required");
   const pid = projectPath(target);
   const mr = await api("GET", `/projects/${pid}/merge_requests/${mrIid}`);
   const ciMap = {
@@ -606,10 +609,10 @@ export function makeGitlabTracker(target = {}, { rest = null } = {}) {
         { kind: "gitlab", op: "requestReview", namespace: "review" },
       );
     },
-    pollForReview: (ctx, payload) => gitlabPollForReview(api, target, caches, ctx, payload),
-    fetchUnresolvedThreads: (ctx, payload) => gitlabFetchUnresolvedThreads(api, target, caches, ctx, payload),
-    resolveThread: (ctx, payload) => gitlabResolveThread(api, target, caches, ctx, payload),
-    ciStateOnHead: (ctx, payload) => gitlabCiStateOnHead(api, target, caches, ctx, payload),
+    pollForReview: (ctx) => gitlabPollForReview(api, target, caches, ctx),
+    fetchUnresolvedThreads: (ctx) => gitlabFetchUnresolvedThreads(api, target, caches, ctx),
+    resolveThread: (ctx, threadId) => gitlabResolveThread(api, target, caches, ctx, threadId),
+    ciStateOnHead: (ctx) => gitlabCiStateOnHead(api, target, caches, ctx),
   };
 
   // Coverage asserts
