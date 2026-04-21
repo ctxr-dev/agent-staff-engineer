@@ -24,6 +24,16 @@ const MAX_PAGES = 10;
 
 // ── REST helper ─────────────────────────────────────────────────────
 
+// The ops.config schema records `host` as a bare hostname (e.g.
+// `gitlab.com`, `gitlab.acme.internal`), not a full URL. `new URL`
+// refuses a bare host as a base, so prepend `https://` when the value
+// lacks a scheme. `GITLAB_URL` may already include a scheme, in which
+// case this is a no-op.
+export function normalizeGitlabBase(raw) {
+  const s = String(raw).trim();
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `https://${s}`;
+}
+
 async function defaultRest(method, path, { body = null, query = {}, baseUrl: overrideBase = null } = {}) {
   const token = process.env.GITLAB_TOKEN;
   if (!token) {
@@ -31,7 +41,8 @@ async function defaultRest(method, path, { body = null, query = {}, baseUrl: ove
       "GITLAB_TOKEN environment variable is required for GitLab tracker operations",
     );
   }
-  const baseUrl = overrideBase || process.env.GITLAB_URL || DEFAULT_GITLAB_URL;
+  const rawBase = overrideBase || process.env.GITLAB_URL || DEFAULT_GITLAB_URL;
+  const baseUrl = normalizeGitlabBase(rawBase);
   const url = new URL(`/api/v4${path}`, baseUrl);
   for (const [k, v] of Object.entries(query)) {
     if (v != null) url.searchParams.set(k, String(v));
@@ -268,7 +279,11 @@ async function gitlabRelabelIssue(api, target, caches, _ctx, payload) {
     throw new Error(`gitlab issues.relabelIssue: labels in both add and remove: ${overlap.join(", ")}`);
   }
   if (add.length === 0 && remove.length === 0) {
-    return { id: issueId, labels: [], noop: true };
+    // `id` is GitLab's internal numeric id; the non-no-op path returns
+    // it from the API response. On a no-op we skip the PUT, so we have
+    // only the caller-provided `iid`. Return `id: null` to keep the
+    // shape honest rather than aliasing `iid` into `id`.
+    return { id: null, iid: issueId, labels: [], noop: true };
   }
   const pid = projectPath(target);
   // GitLab REST natively supports add_labels / remove_labels as delta operations
@@ -500,13 +515,32 @@ async function gitlabPollForReview(api, target, _caches, ctx) {
       unresolvedCount++;
     }
   }
-  // reviewOnHead: check if any resolvable note references the current HEAD SHA
+  // reviewOnHead: check if the configured external reviewer has left a
+  // resolvable note on the current HEAD SHA. Matches the GitHub
+  // implementation, which filters by `ctx.botLogins` so a human review
+  // (project owner, teammate) on HEAD does not trip the iteration gate
+  // before the external reviewer has caught up.
   const headSha = mr?.diff_refs?.head_sha ?? mr?.sha;
+  const botLogins = ctx?.botLogins;
+  const lowerBotLogins =
+    Array.isArray(botLogins) && botLogins.length > 0
+      ? new Set(botLogins.map((x) => String(x).toLowerCase()))
+      : null;
   let reviewOnHead = false;
   if (headSha) {
     for (const d of allDiscussions) {
       for (const n of d.notes ?? []) {
-        if (n.resolvable && n.position?.head_sha === headSha) {
+        if (!n.resolvable) continue;
+        if (n.position?.head_sha !== headSha) continue;
+        const login = n.author?.username;
+        if (lowerBotLogins) {
+          if (typeof login === "string" && lowerBotLogins.has(login.toLowerCase())) {
+            reviewOnHead = true;
+            break;
+          }
+        } else if (n.author?.bot === true) {
+          // No botLogins configured: accept any bot-authored note.
+          // GitLab marks bot users with `author.bot: true`.
           reviewOnHead = true;
           break;
         }

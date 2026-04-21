@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { makeGitlabTracker } from "../scripts/lib/trackers/gitlab.mjs";
+import { makeGitlabTracker, normalizeGitlabBase } from "../scripts/lib/trackers/gitlab.mjs";
 import { NotSupportedError } from "../scripts/lib/trackers/tracker.mjs";
 
 // ── Mock REST helper ────────────────────────────────────────────────
@@ -59,21 +59,21 @@ describe("gitlab review.requestReview stub", () => {
 // ── review.pollForReview ────────────────────────────────────────────
 
 describe("gitlab review.pollForReview", () => {
-  it("returns ciState + unresolvedCount + reviewOnHead", async () => {
+  it("returns ciState + unresolvedCount + reviewOnHead=true when ctx.botLogins matches the HEAD note author", async () => {
     const calls = [];
-    const api = async (method, path, opts) => {
+    const api = async (method, path) => {
       calls.push({ method, path });
       if (path.includes("/discussions")) {
         return [
           {
             id: "d1",
             notes: [
-              { resolvable: true, resolved: false, body: "Fix this", position: { head_sha: "abc123", new_line: 10, new_path: "file.js" }, author: { username: "bot" } },
+              { resolvable: true, resolved: false, body: "Fix this", position: { head_sha: "abc123", new_line: 10, new_path: "file.js" }, author: { username: "Gitlab-Bot" } },
             ],
           },
           {
             id: "d2",
-            notes: [{ resolvable: true, resolved: true, body: "OK", position: {}, author: { username: "bot" } }],
+            notes: [{ resolvable: true, resolved: true, body: "OK", position: {}, author: { username: "gitlab-bot" } }],
           },
         ];
       }
@@ -85,9 +85,67 @@ describe("gitlab review.pollForReview", () => {
     };
     api.log = calls;
     const tracker = makeGitlabTracker(TARGET, { rest: api });
-    const result = await tracker.review.pollForReview({ mrIid: 1 });
+    const result = await tracker.review.pollForReview({ mrIid: 1, botLogins: ["gitlab-bot"] });
     assert.equal(result.ciState, "SUCCESS");
     assert.equal(result.unresolvedCount, 1);
+    assert.equal(result.reviewOnHead, true);
+  });
+
+  it("reviewOnHead=false when only a non-bot user has reviewed HEAD", async () => {
+    const api = async (method, path) => {
+      if (path.includes("/discussions")) {
+        return [
+          {
+            id: "d1",
+            notes: [
+              { resolvable: true, resolved: false, body: "human review on HEAD", position: { head_sha: "abc123", new_line: 10 }, author: { username: "alice" } },
+            ],
+          },
+        ];
+      }
+      return { diff_refs: { head_sha: "abc123" }, head_pipeline: { status: "success" } };
+    };
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    const result = await tracker.review.pollForReview({ mrIid: 1, botLogins: ["gitlab-bot"] });
+    assert.equal(result.reviewOnHead, false);
+    assert.equal(result.unresolvedCount, 1);
+  });
+
+  it("reviewOnHead=false when botLogins matches but the note targets a stale SHA", async () => {
+    const api = async (method, path) => {
+      if (path.includes("/discussions")) {
+        return [
+          {
+            id: "d1",
+            notes: [
+              { resolvable: true, resolved: false, body: "stale", position: { head_sha: "old999", new_line: 2 }, author: { username: "gitlab-bot" } },
+            ],
+          },
+        ];
+      }
+      return { diff_refs: { head_sha: "abc123" }, head_pipeline: { status: "success" } };
+    };
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    const result = await tracker.review.pollForReview({ mrIid: 1, botLogins: ["gitlab-bot"] });
+    assert.equal(result.reviewOnHead, false);
+  });
+
+  it("falls back to author.bot=true when ctx.botLogins is absent", async () => {
+    const api = async (method, path) => {
+      if (path.includes("/discussions")) {
+        return [
+          {
+            id: "d1",
+            notes: [
+              { resolvable: true, resolved: false, body: "bot review on HEAD", position: { head_sha: "abc123", new_line: 1 }, author: { username: "someBot", bot: true } },
+            ],
+          },
+        ];
+      }
+      return { diff_refs: { head_sha: "abc123" }, head_pipeline: { status: "success" } };
+    };
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    const result = await tracker.review.pollForReview({ mrIid: 1 });
     assert.equal(result.reviewOnHead, true);
   });
 
@@ -253,6 +311,12 @@ describe("gitlab issues.relabelIssue", () => {
       /both add and remove/,
     );
   });
+
+  it("no-op returns { id: null, iid, labels: [], noop: true } (keeps id reserved for GitLab's numeric id)", async () => {
+    const tracker = makeGitlabTracker(TARGET, { rest: mockRest([]) });
+    const result = await tracker.issues.relabelIssue({}, { issueId: 7, add: [], remove: [] });
+    assert.deepEqual(result, { id: null, iid: 7, labels: [], noop: true });
+  });
 });
 
 // ── labels.reconcileLabels ──────────────────────────────────────────
@@ -307,6 +371,31 @@ describe("gitlab labels.relabelBulk", () => {
     });
     assert.equal(result.mode, "dry-run");
     assert.equal(result.results[0].action, "would-rename");
+  });
+});
+
+// ── normalizeGitlabBase ─────────────────────────────────────────────
+
+describe("normalizeGitlabBase", () => {
+  it("prefixes https:// on bare hostnames (ops.config `host` shape)", () => {
+    assert.equal(normalizeGitlabBase("gitlab.com"), "https://gitlab.com");
+    assert.equal(normalizeGitlabBase("gitlab.acme.internal"), "https://gitlab.acme.internal");
+  });
+
+  it("leaves explicit schemes untouched so custom-port + http URLs pass through", () => {
+    assert.equal(normalizeGitlabBase("https://gitlab.acme.internal"), "https://gitlab.acme.internal");
+    assert.equal(normalizeGitlabBase("http://localhost:8080"), "http://localhost:8080");
+  });
+
+  it("trims whitespace before deciding", () => {
+    assert.equal(normalizeGitlabBase("  gitlab.com  "), "https://gitlab.com");
+  });
+
+  it("produces a base URL that new URL accepts (the original bug)", () => {
+    // Before the fix, `new URL("/api/v4/x", "gitlab.com")` threw
+    // TypeError: Invalid URL. Normalization is what unblocks self-
+    // hosted configs that set `host: "gitlab.acme.internal"`.
+    assert.doesNotThrow(() => new URL("/api/v4/test", normalizeGitlabBase("gitlab.com")));
   });
 });
 
