@@ -1880,6 +1880,14 @@ async function githubReconcileLabels(trackerTarget, ctx, payload) {
 async function githubRelabelBulk(trackerTarget, ctx, payload) {
   const { owner, repo } = resolveRepoCoords(ctx, trackerTarget, "github labels.relabelBulk");
   const { plan, apply = false, state = "OPEN" } = payload ?? {};
+  // Validate `state` at this surface: listIssues accepts the same
+  // set but raises with an "issues.*" error prefix, which is
+  // confusing for a labels.* caller debugging a typo.
+  if (state !== "OPEN" && state !== "CLOSED" && state !== "ALL") {
+    throw new TypeError(
+      `github labels.relabelBulk: state must be one of "OPEN", "CLOSED", or "ALL"; got ${JSON.stringify(state)}`,
+    );
+  }
   if (!Array.isArray(plan)) {
     throw new TypeError("github labels.relabelBulk: plan must be an array of {from, to}");
   }
@@ -1907,6 +1915,10 @@ async function githubRelabelBulk(trackerTarget, ctx, payload) {
   }
   // Reuse listIssues to get paginated issue lists. listIssues
   // already applies all the trim / allow-list / truncation rules.
+  // LISTISSUES_HARD_CAP must track the HARD_CAP inside listIssues
+  // (1000); bumping one without the other silently re-introduces
+  // the truncation bug below.
+  const LISTISSUES_HARD_CAP = 1000;
   const results = [];
   for (const entry of plan) {
     const from = entry.from.trim();
@@ -1914,8 +1926,19 @@ async function githubRelabelBulk(trackerTarget, ctx, payload) {
     const matching = await githubListIssues(trackerTarget, ctx, {
       state,
       labels: [from],
-      limit: 1000,
+      limit: LISTISSUES_HARD_CAP,
     });
+    // listIssues silently caps at its HARD_CAP and returns no
+    // pagination cursor. If we asked for `LISTISSUES_HARD_CAP` items
+    // and got exactly that many, we can't prove there aren't more.
+    // Fail loud so a bulk-relabel against a large repo doesn't
+    // silently skip issues #1001+; the caller should split the
+    // plan or scope the rename per-area to stay under the cap.
+    if (matching.length >= LISTISSUES_HARD_CAP) {
+      throw new Error(
+        `github labels.relabelBulk: ${owner}/${repo} has at least ${LISTISSUES_HARD_CAP} open issues carrying '${from}'; refusing to bulk relabel because listIssues would truncate the match set. Narrow the rename (e.g. apply per-area or close stale issues first) or raise the cap explicitly.`,
+      );
+    }
     const entryResult = { from, to, issues: matching.map((m) => m.number), changed: [] };
     if (apply && matching.length > 0) {
       for (const iss of matching) {
