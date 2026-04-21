@@ -174,6 +174,30 @@ describe("runTick: needs-triage", () => {
     assert.equal(result.done, false);
     assert.equal(result.action, "needs-triage");
   });
+
+  it("returns needs-triage when CI FAILURE with no threads and no review", async () => {
+    const dir = join(scratch, "triage-ci-fail-no-activity");
+    const state = makeState();
+    await writePrState(dir, state);
+
+    const tracker = fakeTracker({ ciState: "FAILURE", unresolvedCount: 0, reviewOnHead: false });
+    const result = await runTick(tracker, state, { stateDir: dir });
+
+    assert.equal(result.done, false);
+    assert.equal(result.action, "needs-triage");
+  });
+
+  it("returns needs-triage when CI ERROR with no activity", async () => {
+    const dir = join(scratch, "triage-ci-error");
+    const state = makeState();
+    await writePrState(dir, state);
+
+    const tracker = fakeTracker({ ciState: "ERROR", unresolvedCount: 0, reviewOnHead: false });
+    const result = await runTick(tracker, state, { stateDir: dir });
+
+    assert.equal(result.done, false);
+    assert.equal(result.action, "needs-triage");
+  });
 });
 
 describe("runTick: safety-cap", () => {

@@ -106,7 +106,22 @@ export async function listPendingPrStates(stateDir) {
 
     const filePath = join(stateDir, name);
     const data = await readJsonOrNull(filePath);
-    if (!data || !data.prId) continue;
+    if (!data) continue;
+
+    if (!data.prId) {
+      throw new Error(
+        `PR state file ${filePath} is missing the required prId field`,
+      );
+    }
+
+    // Verify the prId inside the file matches the filename to detect
+    // renames or edits that would cause write-back to the wrong file.
+    const expectedName = stateFileName(data.prId);
+    if (expectedName !== name) {
+      throw new Error(
+        `PR state file ${filePath}: prId "${data.prId}" does not match filename "${name}" (expected "${expectedName}")`,
+      );
+    }
 
     const { ok, errors } = validate(SCHEMA, data);
     if (!ok) {
@@ -119,7 +134,7 @@ export async function listPendingPrStates(stateDir) {
 }
 
 /**
- * Write a .stopped sidecar so the next wakeup fire exits without rescheduling.
+ * Write a .stopped sidecar so when the next wakeup fires, it exits without rescheduling.
  * @param {string} stateDir absolute path to the state directory
  * @param {string} prId     canonical PR identifier
  * @param {string} reason   human-readable reason for stopping

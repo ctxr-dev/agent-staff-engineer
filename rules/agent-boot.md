@@ -17,7 +17,7 @@ The user's answer determines the next action:
 
 - **Resume**: call `runTick` immediately from `scripts/lib/pr-iteration/tick.mjs`. If the tick returns `needs-triage`, enter the fix round per `rules/pr-iteration.md` steps 5-6, then reschedule the next wakeup. If `still-waiting`, reschedule directly. If `complete`, report and stop.
 - **Defer**: leave the state file in place. Skip this session without rescheduling. The state file stays for the next session's boot check.
-- **Stop**: call `markPrStateStopped` from `scripts/lib/pr-iteration/state.mjs` with reason "user stopped at session start". The next wakeup fire (if any) reads the sidecar and exits cleanly.
+- **Stop**: call `markPrStateStopped` from `scripts/lib/pr-iteration/state.mjs` with reason "user stopped at session start". When the next wakeup fires (if any), it reads the sidecar and exits cleanly.
 
 ## Why never auto-resume
 

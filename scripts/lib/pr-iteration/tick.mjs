@@ -92,12 +92,16 @@ export async function runTick(tracker, state, opts) {
     return { done: true, action: "complete", state };
   }
 
-  // ── 5. Needs triage? (CI terminal AND new threads or review arrived) ──
+  // ── 5. Needs triage? ──
+  // CI failure/error always needs triage (rule: "CI goes red: fix, re-push").
+  // CI success with threads or review also needs triage.
+  const ciFailed =
+    pollResult.ciState === "FAILURE" || pollResult.ciState === "ERROR";
   const ciTerminal = pollResult.ciState !== "PENDING";
   const hasActivity =
     pollResult.unresolvedCount > 0 || pollResult.reviewOnHead;
 
-  if (ciTerminal && hasActivity) {
+  if (ciFailed || (ciTerminal && hasActivity)) {
     state.consecutiveWakes = 0;
     await writePrState(stateDir, state);
     return { done: false, action: "needs-triage", state };

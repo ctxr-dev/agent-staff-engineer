@@ -85,7 +85,7 @@ When `workflow.external_review.autonomous.enabled` is `true` (the default), step
 2. **User cancels:** Agent writes a `.stopped` sidecar. The next wakeup reads it and exits without rescheduling.
 3. **Safety cap:** After `max_consecutive_wakes` (default 96, roughly 7.2 hours) without forward progress, the tick writes a `.paused` sidecar and stops. Human deletes the file to resume.
 
-**Legacy mode:** Set `autonomous.enabled` to `false` to restore the pre-PR-14 in-session poll at `poll_interval_seconds` (default 30s), capped by `poll_timeout_seconds` (default 1200s). The full poll loop runs in the active turn, blocking the user.
+**Legacy mode:** Set `workflow.external_review.autonomous.enabled` to `false` to restore the pre-PR-14 in-session poll at `poll_interval_seconds` (default 30s), capped by `poll_timeout_seconds` (default 1200s). The full poll loop runs in the active turn, blocking the user.
 
 ## Provider dispatch
 
