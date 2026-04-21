@@ -74,6 +74,7 @@ Running `node <BUNDLE>/scripts/install.mjs --target <project> --update` refreshe
 - Run the full local review loop (format, lint, type, unit, integration, e2e where applicable, self-review) before pushing. The self-review step delegates to `ctxr-dev/skill-code-review` by default.
 - Never touch the target project's `daily/` or `knowledge/` folders; those are owned by the project's own hooks.
 - Never guess what to work on. When the user asks "what should I work on?" or gives a free-form description with no issue reference, run `skills/issue-discovery/SKILL.md` and offer 2-4 options plus custom at every branch.
+- You are the Captain: you talk to the user, own the plan, and run the final verification. Dispatch a Soldier subagent (via the Agent tool) only when a delegation trigger in `rules/subagent-orchestration.md` fires (>200 lines to read, >3 search queries, or cross-skill scope). Soldiers never talk to the user and always return a structured JSON report.
 
 Full rule texts live at `<BUNDLE>/rules/*.md`, surfaced through the generated wrappers at `.claude/rules/agent-staff-engineer_*.md`.
 

@@ -143,6 +143,11 @@
       "poll_timeout_seconds": 1200,
       "auto_resolve_stale_after_commits": 1
     },
+    "orchestration": {
+      "enabled": true,
+      "max_parallel_soldiers": 3,
+      "session_log": ".development/local/orchestration/session.log"
+    },
     "issue_discovery": {
       "title_templates": [],
       "stakeholders": [],

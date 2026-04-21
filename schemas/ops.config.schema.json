@@ -413,6 +413,31 @@
             }
           }
         },
+        "orchestration": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Optional config for the Captain/Soldier delegation pattern (rules/subagent-orchestration.md + skills/orchestrator/SKILL.md). Every key is optional; with no config the skill runs with safe defaults.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Master switch. When false, the Captain never dispatches Soldiers; every task runs in-line regardless of the delegation triggers. Useful on projects where the Agent-tool overhead isn't worth it (small codebases, solo workflows)."
+            },
+            "max_parallel_soldiers": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "default": 3,
+              "description": "Upper bound on simultaneous Agent calls. Claude Code's common cap is 3; raising it is untested territory."
+            },
+            "session_log": {
+              "type": "string",
+              "default": ".development/local/orchestration/session.log",
+              "description": "Where the Captain records dispatched briefings + returned reports for post-hoc inspection. Session-scoped and gitignored per the .development/local/ convention.",
+              "minLength": 1
+            }
+          }
+        },
         "issue_discovery": {
           "type": "object",
           "additionalProperties": false,

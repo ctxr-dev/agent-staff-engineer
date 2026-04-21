@@ -31,6 +31,13 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [memory-seeds/issue-discovery-posture.md](memory-seeds/issue-discovery-posture.md): memory seed for the intake posture.
 - [templates/issue-discovery-session.md](templates/issue-discovery-session.md): human-readable rendering of a session scratch file.
 
+### Delegating to Soldier subagents (when to split work off the Captain)
+
+- [rules/subagent-orchestration.md](rules/subagent-orchestration.md): the binding contract. When to delegate, roles (Explorer / Implementer / Reviewer), inherited invariants, exceptions.
+- [skills/orchestrator/SKILL.md](skills/orchestrator/SKILL.md): the how-to. Three briefing templates + worked examples + anti-pattern list.
+- [memory-seeds/delegation-triggers.md](memory-seeds/delegation-triggers.md): the triggers-only seed that travels to every installed project.
+- [memory-seeds/planning-parallel-agents.md](memory-seeds/planning-parallel-agents.md): the Phase-1 fan-out pattern (a documented exception to the self-contained-briefing rule).
+
 ### Opening or driving a dev issue to "In review"
 
 - [skills/dev-loop/SKILL.md](skills/dev-loop/SKILL.md): the state machine (branch, edits, local review, self-review, push, PR open, issue -> In review, hand off to pr-iteration).
@@ -114,30 +121,27 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 
 - [memory-seeds/testing-discipline.md](memory-seeds/testing-discipline.md): test categorisation, no mocks at the integration boundary, results-table reporting.
 
-### Stack-specific seeds (loaded only when the project's stack matches)
-
-- [memory-seeds/swift-dst-day-count.md](memory-seeds/swift-dst-day-count.md): Swift `Calendar.date(byAdding:)` over raw-seconds arithmetic.
-- [memory-seeds/xcui-combined-a11y.md](memory-seeds/xcui-combined-a11y.md): XCUITest combined-accessibility-elements gotcha.
-
 ## By surface
 
-### Skills (9)
+### Skills (10)
 
 - [skills/adapt-system/SKILL.md](skills/adapt-system/SKILL.md): reshape config/labels/templates/rules/seeds on project-intent changes.
 - [skills/bootstrap-ops-config/SKILL.md](skills/bootstrap-ops-config/SKILL.md): interactive first-install interview.
 - [skills/dev-loop/SKILL.md](skills/dev-loop/SKILL.md): issue -> branch -> local review -> PR open -> In review.
 - [skills/issue-discovery/SKILL.md](skills/issue-discovery/SKILL.md): staff-engineer intake interview when no issue ref is supplied.
+- [skills/orchestrator/SKILL.md](skills/orchestrator/SKILL.md): Captain/Soldier delegation how-to; briefing templates + anti-patterns.
 - [skills/tracker-sync/SKILL.md](skills/tracker-sync/SKILL.md): sole tracker writer (github / jira / linear / gitlab); depth-gated per tracker target.
 - [skills/plan-keeper/SKILL.md](skills/plan-keeper/SKILL.md): plan folder / frontmatter / lifecycle.
 - [skills/pr-iteration/SKILL.md](skills/pr-iteration/SKILL.md): post-push loop until exit conditions hold.
 - [skills/regression-handler/SKILL.md](skills/regression-handler/SKILL.md): bug triage + linked-issue proposal.
 - [skills/release-tracker/SKILL.md](skills/release-tracker/SKILL.md): Release umbrella status computation.
 
-### Rules (11)
+### Rules (12)
 
 - [rules/adaptation.md](rules/adaptation.md): when to invoke adapt-system.
 - [rules/ambiguity-halt.md](rules/ambiguity-halt.md): halt-and-ask when state is weird.
 - [rules/issue-discovery.md](rules/issue-discovery.md): the three-clause intake rule (never guess; 2-4 options plus custom; delegate writes).
+- [rules/subagent-orchestration.md](rules/subagent-orchestration.md): the Captain/Soldier binding contract; when to delegate, roles, inherited invariants.
 - [rules/tracker-source-of-truth.md](rules/tracker-source-of-truth.md): the configured tracker(s) own state; local files are projections.
 - [rules/llm-wiki.md](rules/llm-wiki.md): project-side wiki read/write contract.
 - [rules/memory-hygiene.md](rules/memory-hygiene.md): project memory boundaries.
@@ -162,18 +166,17 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [templates/regression-report.md](templates/regression-report.md): regression triage report.
 - [templates/release-readiness-checklist.md](templates/release-readiness-checklist.md): release-readiness artefact.
 
-### Memory seeds (10)
+### Memory seeds (9)
 
 - [memory-seeds/commit-style-conventional.md](memory-seeds/commit-style-conventional.md): conventional commits.
 - [memory-seeds/dash-free-writing.md](memory-seeds/dash-free-writing.md): no-dashes rule seed.
+- [memory-seeds/delegation-triggers.md](memory-seeds/delegation-triggers.md): when the Captain dispatches a Soldier subagent (and when not).
 - [memory-seeds/issue-discovery-posture.md](memory-seeds/issue-discovery-posture.md): intake posture; run issue-discovery before any dev-loop without an issue ref.
 - [memory-seeds/ops-config-usage.md](memory-seeds/ops-config-usage.md): cite the keys you used.
 - [memory-seeds/plan-lifecycle-moves.md](memory-seeds/plan-lifecycle-moves.md): plan lifecycle states + moves.
 - [memory-seeds/planning-parallel-agents.md](memory-seeds/planning-parallel-agents.md): Phase-1 parallel Explore.
-- [memory-seeds/swift-dst-day-count.md](memory-seeds/swift-dst-day-count.md): Swift DST-safe day counting.
 - [memory-seeds/testing-discipline.md](memory-seeds/testing-discipline.md): test categories, results-table.
 - [memory-seeds/wiki-scalable-layout.md](memory-seeds/wiki-scalable-layout.md): scalable nested wiki layout.
-- [memory-seeds/xcui-combined-a11y.md](memory-seeds/xcui-combined-a11y.md): XCUITest combined-a11y gotcha.
 
 ## Don't-read list
 

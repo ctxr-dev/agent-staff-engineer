@@ -1,0 +1,59 @@
+{
+  "$id": "https://ctxr-dev.github.io/agent-staff-engineer/schemas/soldier-report.schema.json",
+  "title": "Soldier subagent report",
+  "description": "Structured return contract for every Soldier dispatched per rules/subagent-orchestration.md. The Agent tool returns a single message; the contract is that the Soldier's FINAL message is a JSON object matching this schema. The Captain validates via scripts/lib/schema.mjs and halts (per rules/ambiguity-halt.md) on validation failure rather than silently retrying.",
+  "type": "object",
+  "required": ["status", "summary", "artefacts"],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["done", "failed", "partial"],
+      "description": "Terminal status. `done` means the Soldier completed the task; `failed` means it could not proceed (briefing was wrong, scope was impossible, preflight tripped); `partial` means it completed some of the task and stopped at ambiguity or a blocker it could not classify."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2400,
+      "description": "Plain-language description of what the Soldier did. The Captain reads this first; everything else is for acting on the result. Under 2,400 chars (roughly one screen) so the Captain doesn't lose context to a long-winded report."
+    },
+    "artefacts": {
+      "type": "array",
+      "description": "Filesystem paths the Soldier read, wrote, or cited. Implementer briefings REQUIRE this to be non-empty and contain every written file. Explorers may return an empty array when they scanned via Grep / Glob only. Reviewers may return empty when they worked from a supplied diff. Paths may be absolute or project-relative; the Captain verifies their existence before acting on the report.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "description": "Short strings naming the things the Soldier could not resolve. Valid only when `status` is `partial` or `failed`; the schema's `allOf` clause below rejects a non-empty blockers array when status is `done`. Each entry is a sentence the Captain can paste directly into a user-facing halt per rules/ambiguity-halt.md.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 400
+      }
+    },
+    "nextStep": {
+      "type": ["string", "null"],
+      "description": "Optional single sentence naming the action the Captain should consider next (for example 'spawn an Implementer Soldier for findings 1, 3, 5'). Advisory only; the Captain decides.",
+      "maxLength": 300
+    }
+  },
+  "allOf": [
+    {
+      "description": "Enforce the blockers contract documented on the `blockers` field: when `status` is `done`, the report must not carry blockers. A Soldier with advisory concerns emits `status: \"partial\"` with blockers populated instead. This rejects accidental reports of the shape { status: done, blockers: [\"I had a concern but finished anyway\"] } at validate time rather than letting the doc + data drift.",
+      "if": {
+        "type": "object",
+        "properties": { "status": { "const": "done" } },
+        "required": ["status"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "blockers": { "type": "array", "maxItems": 0 }
+        }
+      }
+    }
+  ]
+}
