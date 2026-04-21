@@ -1,4 +1,4 @@
-import { after, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -75,6 +75,26 @@ Here is my report:
     const { report, errors } = parseReport(msg, SCHEMA);
     assert.deepEqual(errors, []);
     assert.equal(report.summary, "Traced the four namespaces.");
+  });
+
+  it("accepts prose that contains unmatched '{' / '}' characters before the JSON", () => {
+    // Regression: forward-scan impl rejected a message like this
+    // because the `}` in the prose pushed depth negative before
+    // the terminal object even started. Backwards scan from the
+    // final `}` only counts braces that belong to the terminal
+    // object, so this must now succeed.
+    const msg = `I examined the tracker layer. One notable snippet I read was:
+
+  function resolveOwnerOnly(ctx, target) {
+    // stale code, removed in R9
+  }
+
+Here is the report:
+{"status":"done","summary":"Found one stale helper; flagged in findings.","artefacts":["scripts/lib/trackers/github.mjs"]}`;
+    const { report, errors } = parseReport(msg, SCHEMA);
+    assert.deepEqual(errors, []);
+    assert.equal(report.status, "done");
+    assert.equal(report.summary, "Found one stale helper; flagged in findings.");
   });
 
   it("accepts a report with optional fields populated", () => {
@@ -154,6 +174,32 @@ Trailing prose after JSON.`;
     const { report, errors } = parseReport(msg, SCHEMA);
     assert.equal(report, null);
     assert.ok(errors.some((e) => e.path.includes("artefacts")));
+  });
+
+  it("rejects blockers populated on a done report (schema conditional)", () => {
+    // Locks the R1 schema tightening: the doc says blockers are
+    // "populated ONLY when status is partial or failed". The
+    // allOf/if-then enforces that at validation time; `done` with
+    // a non-empty blockers array must fail.
+    const msg = `{"status":"done","summary":"ok","artefacts":[],"blockers":["advisory concern"]}`;
+    const { report, errors } = parseReport(msg, SCHEMA);
+    assert.equal(report, null);
+    assert.ok(errors.some((e) => e.path.includes("blockers") || e.message.includes("maxItems")));
+  });
+
+  it("accepts done with an absent or empty blockers array", () => {
+    // `blockers` is optional; omitting it is fine. An empty array
+    // is also fine (no concerns carried).
+    const omitted = parseReport(
+      `{"status":"done","summary":"ok","artefacts":[]}`,
+      SCHEMA,
+    );
+    assert.deepEqual(omitted.errors, []);
+    const empty = parseReport(
+      `{"status":"done","summary":"ok","artefacts":[],"blockers":[]}`,
+      SCHEMA,
+    );
+    assert.deepEqual(empty.errors, []);
   });
 
   it("rejects a summary beyond the 2400-char cap", () => {

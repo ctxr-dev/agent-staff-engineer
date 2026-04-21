@@ -216,13 +216,23 @@ export function buildBriefing(shape, vars) {
       );
     }
   }
-  let out = TEMPLATES[shape];
-  for (const k of required) {
-    // Global string replace (not RegExp) so special characters in the
-    // var value (backslashes, $N backrefs) don't mutate the output.
-    out = out.split(`{{${k}}}`).join(vars[k]);
-  }
-  return out;
+  // Single-pass substitution over the ORIGINAL template. A
+  // sequential split/join pass would re-scan already-injected var
+  // values on later iterations, so a caller whose `task_description`
+  // happened to contain the literal `{{out_of_scope}}` would have
+  // that injected text substituted too. One regex pass guarantees
+  // each placeholder is replaced exactly once by the value it
+  // names, regardless of what's in the other vars.
+  //
+  // The replacement callback returns the var value as a string
+  // constant; String.replace's $-substitution in the replacement
+  // is bypassed when passing a function callback (vs a string),
+  // so `$1` / backslashes / other regex metacharacters in var
+  // values pass through verbatim.
+  const requiredSet = new Set(required);
+  return TEMPLATES[shape].replace(/\{\{([A-Za-z0-9_]+)\}\}/g, (match, key) =>
+    requiredSet.has(key) ? vars[key] : match,
+  );
 }
 
 /**

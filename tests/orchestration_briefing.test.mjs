@@ -61,6 +61,31 @@ describe("buildBriefing: happy path", () => {
     assert.equal(a, b);
   });
 
+  it("does not re-substitute placeholder-like tokens inside already-inserted var values", () => {
+    // Regression: earlier impl used sequential split/join which would
+    // re-scan inserted text on later iterations, so a task_description
+    // that happened to contain "{{out_of_scope}}" would see that token
+    // substituted by the out_of_scope value. Single-pass regex fix.
+    const out = buildBriefing("explorer", {
+      task_description: "Survey the behaviour of {{out_of_scope}} placeholders in test fixtures.",
+      scope_description: "tests/fixtures/**.",
+      out_of_scope: "REPLACED-SHOULD-NOT-APPEAR-IN-TASK",
+      starting_points: "grep -n 'fixture' tests/fixtures.",
+    });
+    // task_description's literal `{{out_of_scope}}` must pass through
+    // unchanged; the out_of_scope value must appear ONLY in the
+    // out_of_scope slot.
+    assert.ok(
+      out.includes("Survey the behaviour of {{out_of_scope}} placeholders"),
+      "task_description's literal {{out_of_scope}} was not preserved verbatim",
+    );
+    assert.equal(
+      out.split("REPLACED-SHOULD-NOT-APPEAR-IN-TASK").length - 1,
+      1,
+      "out_of_scope value was injected more than once (re-substitution regression)",
+    );
+  });
+
   it("preserves special regex characters in var values (no substitution surprises)", () => {
     const out = buildBriefing("reviewer", {
       task_description: "Check the $1 placeholder in log lines.",

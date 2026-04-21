@@ -52,10 +52,10 @@ export function parseReport(messageText, schema) {
       errors: [{ path: "$", message: "parseReport: Soldier returned an empty message" }],
     };
   }
-  // Find the LAST top-level JSON object in the text: walk backwards
-  // from the last `}`, matching braces. Refuses to match if the
-  // trailing `}` doesn't close a balanced object, or if there's
-  // non-whitespace text after the closing brace.
+  // Find the LAST top-level JSON object in the text by scanning
+  // backwards from the final `}` until the matching `{`. Refuses
+  // to match if the trailing `}` doesn't close a balanced object,
+  // or if there's non-whitespace text after the closing brace.
   if (trimmed[trimmed.length - 1] !== "}") {
     return {
       report: null,
@@ -105,50 +105,55 @@ export function parseReport(messageText, schema) {
 }
 
 /**
- * Walk backwards from the final `}` to find the matching `{`, respecting
- * string literals (so a `{` or `}` inside a JSON string doesn't throw
- * the counter off). Returns the index of the matching `{` or -1 on
- * unbalanced input. Exported for testing.
+ * Scan backwards from the final `}` to find the matching `{` that
+ * opens the terminal JSON object. Respects string literals so a `{`
+ * or `}` inside a JSON string doesn't throw the counter off, and
+ * respects escape sequences so a `\"` inside a string doesn't
+ * prematurely close the string. Returns the index of the matching
+ * `{` on success, or -1 on unbalanced input.
+ *
+ * Why backwards: prose preceding the JSON may legally contain `{`
+ * or `}` characters (eg the Soldier describing a code snippet). A
+ * forward scan would see those as unbalanced at the top level and
+ * return -1. The backwards scan only counts braces that belong to
+ * the terminal JSON object; anything before that object's opening
+ * `{` is ignored.
+ *
+ * Exported for testing.
  */
 export function findMatchingOpenBrace(text) {
   if (text.length === 0 || text[text.length - 1] !== "}") return -1;
   let depth = 0;
   let inString = false;
-  // Walk forwards, track brace depth while ignoring braces inside
-  // strings. Record every index where depth drops to 0 after opening;
-  // the LAST such range's opening brace is our start. Also track
-  // the earliest opening brace that closes at the final position.
-  let lastStart = -1;
-  let currentStart = -1;
-  for (let i = 0; i < text.length; i++) {
+  for (let i = text.length - 1; i >= 0; i--) {
     const ch = text[i];
-    if (inString) {
-      if (ch === "\\") {
-        i++; // skip escaped character
-        continue;
-      }
-      if (ch === "\"") inString = false;
+    if (ch === "\"" && !isEscapedAt(text, i)) {
+      inString = !inString;
       continue;
     }
-    if (ch === "\"") {
-      inString = true;
-      continue;
-    }
-    if (ch === "{") {
-      if (depth === 0) currentStart = i;
+    if (inString) continue;
+    if (ch === "}") {
       depth++;
-    } else if (ch === "}") {
+    } else if (ch === "{") {
       depth--;
-      if (depth === 0) {
-        lastStart = currentStart;
-        currentStart = -1;
-      } else if (depth < 0) {
-        return -1;
-      }
+      if (depth === 0) return i;
+      if (depth < 0) return -1;
     }
   }
-  if (depth !== 0 || inString) return -1;
-  // The final `}` must have closed a top-level object. `lastStart`
-  // points at that object's opening `{`.
-  return lastStart;
+  // Fell off the front of the string without closing: unbalanced.
+  return -1;
+}
+
+/**
+ * True when `text[index]` is preceded by an odd number of
+ * backslashes (ie the character is escaped). Used by the backwards
+ * brace scan to tell a string-terminating `"` from a literal
+ * `\"` inside a JSON string.
+ */
+function isEscapedAt(text, index) {
+  let backslashes = 0;
+  for (let j = index - 1; j >= 0 && text[j] === "\\"; j--) {
+    backslashes++;
+  }
+  return backslashes % 2 === 1;
 }
