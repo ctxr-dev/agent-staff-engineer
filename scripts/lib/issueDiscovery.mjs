@@ -68,13 +68,16 @@ export const DECISION_TREE = Object.freeze({
   entry: Object.freeze({
     id: "ENTRY",
     predecessors: Object.freeze([]),
-    next: Object.freeze([{ target: "q0", when: "always" }]),
+    next: Object.freeze([
+      { target: "q0", when: "topicConfirmationEnabled" },
+      { target: "q1", when: "topicConfirmationDisabled" },
+    ]),
     minOptions: null,
     maxOptions: null,
     canHalt: true,
     customEscape: false,
     description:
-      "Load ops.config.json, confirm at least one writable trackers.dev, pre-fetch open issues + umbrellas + labels via tracker-sync. No user prompt; halts on no-writable-target.",
+      "Load ops.config.json, confirm at least one writable trackers.dev, pre-fetch open issues + umbrellas + labels via tracker-sync. No user prompt; halts on no-writable-target. Advances to q0 when workflow.issue_discovery.topic_confirmation is true (the default); advances directly to q1 when it has been explicitly disabled.",
   }),
   q0: Object.freeze({
     id: "q0",
@@ -88,14 +91,14 @@ export const DECISION_TREE = Object.freeze({
   }),
   q1: Object.freeze({
     id: "q1",
-    predecessors: Object.freeze(["q0"]),
+    predecessors: Object.freeze(["ENTRY", "q0"]),
     next: Object.freeze([{ target: "q2", when: "trackerTargetSelected" }]),
     minOptions: 2,
     maxOptions: 4,
     canHalt: true,
     customEscape: true,
     description:
-      "Project / workspace-member selection. Skipped iff exactly one writable target AND no workspace.members[].",
+      "Project / workspace-member selection. Skipped iff exactly one writable target AND no workspace.members[]. Accepts ENTRY as a predecessor when workflow.issue_discovery.topic_confirmation is false and q0 is skipped entirely.",
   }),
   q2: Object.freeze({
     id: "q2",

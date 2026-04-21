@@ -200,11 +200,17 @@ export async function listPendingSessions(target, domain) {
       out.push({ sessionId: name, path, state: null, ageMs: null, error: String(err?.message ?? err) });
     }
   }
-  // Oldest first so the resume prompt surfaces the most-stale session
-  // at the top; callers can re-sort if they want newest first.
+  // Oldest first so the resume prompt surfaces the most-stale
+  // session at the top; callers can re-sort if they want newest
+  // first. Entries with ageMs=null (malformed files surfaced with
+  // state: null) sort to the END by treating their age as
+  // -Infinity in the descending compare. The prior
+  // `?? +Infinity` pushed corrupt entries to the top, which
+  // displaced the oldest resumable session from the natural
+  // resume-prompt slot.
   out.sort((a, b) => {
-    const aAge = a.ageMs ?? Number.POSITIVE_INFINITY;
-    const bAge = b.ageMs ?? Number.POSITIVE_INFINITY;
+    const aAge = a.ageMs ?? Number.NEGATIVE_INFINITY;
+    const bAge = b.ageMs ?? Number.NEGATIVE_INFINITY;
     return bAge - aAge;
   });
   return out;
