@@ -5,9 +5,9 @@
   "oneOf": [
     {
       "type": "object",
-      "required": ["issueRef"],
+      "required": ["issueRef", "umbrellaRef", "memberName"],
       "additionalProperties": false,
-      "description": "Success handoff: the interview reached Q6 Proceed and tracker-sync.issues.createIssue returned a resolvable issue.",
+      "description": "Success handoff: the interview reached Q6 Proceed and tracker-sync.issues.createIssue returned a resolvable issue. `umbrellaRef` and `memberName` are required AS fields but may hold null when the intake decided against an umbrella link or the project is single-repo; this keeps the three-field tuple contract stable so callers don't branch on absent-vs-null.",
       "properties": {
         "issueRef": {
           "type": "object",

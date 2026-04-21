@@ -80,7 +80,7 @@ describe("issueDiscovery.slugFromIntent", () => {
     assert.match(a, /^[a-z2-7]{6}$/);
   });
 
-  it("normalises whitespace and case so equivalent intents get the same slug", () => {
+  it("trims and lowercases so equivalent-modulo-edge-whitespace-and-case intents get the same slug", () => {
     assert.equal(
       slugFromIntent("  The CHECKOUT flow  "),
       slugFromIntent("the checkout flow"),
