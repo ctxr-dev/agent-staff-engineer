@@ -336,6 +336,41 @@ describe("linear issues.listIssues", () => {
     assert.equal(result.length, 1);
     assert.equal(result[0].identifier, "ENG-1");
   });
+  it("applies label filter", async () => {
+    const gql = mockGraphql([
+      fixture("teams(", TEAM_RESPONSE),
+      fixture("issueLabels(", LABELS_RESPONSE),
+      fixture("issues(", {
+        issues: {
+          nodes: [{ id: "i1", identifier: "ENG-1", title: "A", url: "u", state: { name: "Backlog", type: "backlog" }, labels: { nodes: [{ id: "label-bug", name: "bug" }] } }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      }),
+    ]);
+    const tracker = makeLinearTracker(TARGET, { graphql: gql });
+    const result = await tracker.issues.listIssues({}, { labels: ["bug"] });
+    assert.equal(result.length, 1);
+    const listCall = gql.log.find((c) => c.query.includes("issues(filter:"));
+    assert.ok(listCall.variables.filter.labels, "filter should include labels constraint");
+  });
+
+  it("applies state filter", async () => {
+    const gql = mockGraphql([
+      fixture("teams(", TEAM_RESPONSE),
+      fixture("workflowStates(", STATES_RESPONSE),
+      fixture("issues(", {
+        issues: {
+          nodes: [{ id: "i1", identifier: "ENG-1", title: "A", url: "u", state: { name: "Backlog", type: "backlog" }, labels: { nodes: [] } }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      }),
+    ]);
+    const tracker = makeLinearTracker(TARGET, { graphql: gql });
+    const result = await tracker.issues.listIssues({}, { state: "backlog" });
+    assert.equal(result.length, 1);
+    const listCall = gql.log.find((c) => c.query.includes("issues(filter:"));
+    assert.ok(listCall.variables.filter.state, "filter should include state constraint");
+  });
 });
 
 // ── labels.reconcileLabels ──────────────────────────────────────────
