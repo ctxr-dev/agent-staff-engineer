@@ -1908,30 +1908,74 @@ async function githubRelabelBulk(trackerTarget, ctx, payload) {
       );
     }
   }
-  // Reuse listIssues to get paginated issue lists. listIssues
-  // already applies all the trim / allow-list / truncation rules.
-  // LISTISSUES_HARD_CAP must track the HARD_CAP inside listIssues
-  // (1000); bumping one without the other silently re-introduces
-  // the truncation bug below.
-  const LISTISSUES_HARD_CAP = 1000;
+  // Dedicated scanner. Reusing listIssues is wrong here because its
+  // label filter is client-side (GitHub's Repository.issues accepts
+  // `labels` but listIssues intentionally doesn't pass it through,
+  // since it supports multi-label AND semantics that differ from the
+  // server-side arg). On a large repo with many open issues but few
+  // carrying `from`, listIssues would scan its 10-page cap of raw
+  // issues (1000 total) before collecting enough post-filter matches
+  // and throw, making bulk relabel unusable even when the match set
+  // is small. This scanner pushes the label filter to the server,
+  // so every returned node is already a match, and fails loud only
+  // when the raw page cap is hit AND the server says more pages
+  // exist (i.e. the match set itself may be truncated).
+  const BULK_RELABEL_PAGE_SIZE = 100;
+  const BULK_RELABEL_MAX_PAGES = 10;
+  const states =
+    state === "ALL" ? ["OPEN", "CLOSED"] : state === "CLOSED" ? ["CLOSED"] : ["OPEN"];
+  // Inline states + labels into the query string: ghGraphqlExec
+  // rejects complex-typed variables (arrays / objects), so IssueState
+  // lists and label-name lists must be baked into the query text.
+  // states[] is fixed-enum-safe; labels uses JSON.stringify to
+  // produce a properly-escaped GraphQL string literal per item
+  // (defence against quote injection in a label name).
+  const statesInline = `[${states.join(", ")}]`;
+  async function scanIssuesCarryingLabel(fromLabel) {
+    const labelsInline = `[${JSON.stringify(fromLabel)}]`;
+    const query = `
+      query($owner: String!, $repo: String!, $first: Int!, $after: String) {
+        repository(owner: $owner, name: $repo) {
+          issues(first: $first, after: $after, states: ${statesInline}, labels: ${labelsInline}, orderBy: { field: CREATED_AT, direction: DESC }) {
+            nodes { number }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    `;
+    let after = null;
+    let pageCount = 0;
+    const matching = [];
+    while (pageCount < BULK_RELABEL_MAX_PAGES) {
+      const data = await ghGraphqlQuery(query, {
+        owner,
+        repo,
+        first: BULK_RELABEL_PAGE_SIZE,
+        after,
+      });
+      const conn = data?.repository?.issues;
+      if (!conn) {
+        throw new Error(
+          `github labels.relabelBulk: repository ${owner}/${repo} not found or inaccessible`,
+        );
+      }
+      for (const n of (conn.nodes ?? [])) {
+        if (n && typeof n.number === "number") matching.push({ number: n.number });
+      }
+      pageCount += 1;
+      if (!conn.pageInfo?.hasNextPage) return { matching, truncated: false };
+      after = conn.pageInfo.endCursor ?? null;
+    }
+    return { matching, truncated: true };
+  }
   const results = [];
   for (const entry of plan) {
     const from = entry.from.trim();
     const to = entry.to.trim();
-    const matching = await githubListIssues(trackerTarget, ctx, {
-      state,
-      labels: [from],
-      limit: LISTISSUES_HARD_CAP,
-    });
-    // listIssues silently caps at its HARD_CAP and returns no
-    // pagination cursor. If we asked for `LISTISSUES_HARD_CAP` items
-    // and got exactly that many, we can't prove there aren't more.
-    // Fail loud so a bulk-relabel against a large repo doesn't
-    // silently skip issues #1001+; the caller should split the
-    // plan or scope the rename per-area to stay under the cap.
-    if (matching.length >= LISTISSUES_HARD_CAP) {
+    const { matching, truncated } = await scanIssuesCarryingLabel(from);
+    if (truncated) {
       throw new Error(
-        `github labels.relabelBulk: ${owner}/${repo} has at least ${LISTISSUES_HARD_CAP} open issues carrying '${from}'; refusing to bulk relabel because listIssues would truncate the match set. Narrow the rename (e.g. apply per-area or close stale issues first) or raise the cap explicitly.`,
+        `github labels.relabelBulk: scanning ${owner}/${repo} for issues carrying '${from}' reached the ${BULK_RELABEL_PAGE_SIZE * BULK_RELABEL_MAX_PAGES}-issue cap (${BULK_RELABEL_MAX_PAGES} pages) with more pages still available; refusing to bulk relabel because the match set may be truncated. Narrow the rename (e.g. apply per-area or close stale issues first) or raise the cap explicitly.`,
       );
     }
     const entryResult = { from, to, issues: matching.map((m) => m.number), changed: [] };
