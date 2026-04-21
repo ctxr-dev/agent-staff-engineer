@@ -162,6 +162,36 @@ describe("jira issues.createIssue", () => {
     assert.equal(searchCalls, 2, "dedupe must have paged through the first 100 near-matches");
   });
 
+  it("falls back to GET /project/:key/issuetypes when the expand response omits issueTypes", async () => {
+    // Some Jira instances return /project/:key without the
+    // issueTypes field even when expand=issueTypes is requested.
+    // Verify the fallback endpoint fills in the default-type picker.
+    const fallbackCalls = [];
+    const api = async (method, path, opts = {}) => {
+      if (method === "GET" && path === "/rest/api/3/project/PLAT") {
+        // Omit issueTypes entirely.
+        return { id: "10000" };
+      }
+      if (method === "GET" && path === "/rest/api/3/project/PLAT/issuetypes") {
+        fallbackCalls.push(path);
+        return [
+          { id: "200", name: "Task", subtask: false },
+        ];
+      }
+      if (method === "POST" && path === "/rest/api/3/search/jql") {
+        return { issues: [] };
+      }
+      if (method === "POST" && path === "/rest/api/3/issue") {
+        return { id: "20000", key: "PLAT-100" };
+      }
+      throw new Error(`no route for ${method} ${path}`);
+    };
+    const tracker = makeJiraTracker(TARGET, { rest: api });
+    const result = await tracker.issues.createIssue({}, { title: "Needs fallback" });
+    assert.equal(result.key, "PLAT-100");
+    assert.equal(fallbackCalls.length, 1, "fallback must run when expand response lacks issueTypes");
+  });
+
   it("creates when no dedupe match, using default issue type 'Task'; GET /project is hit exactly once", async () => {
     const api = mockRest([
       route("GET", "/rest/api/3/project/PLAT", {

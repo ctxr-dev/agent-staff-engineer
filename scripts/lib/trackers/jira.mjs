@@ -134,31 +134,52 @@ function createCaches() {
 
 /**
  * One-call project metadata loader. Fetches /project/:key once, caches
- * both the numeric project id and the issueTypes list. Both consumers
- * (createIssue, listIssues, reconcileLabels, relabelBulk) go through
- * this helper so a path that needs either piece never pays for two
- * round trips to the same endpoint.
+ * both the numeric project id and the issueTypes list. Consumers that
+ * need either piece go through this helper so a path that needs both
+ * never pays for two round trips.
+ *
+ * Jira REST v3's GET /project/:key returns `issueTypes` only when
+ * `expand=issueTypes` is requested, and some configurations omit it
+ * entirely. We ask for the expand explicitly, then fall back to the
+ * dedicated /project/:key/issuetypes endpoint if the array is missing
+ * or empty. Without this, listIssues populating the cache first
+ * (with an empty array) would poison createIssue's issue-type picker.
  */
 async function resolveProjectMeta(rest, target, caches) {
-  if (caches.projectId != null && caches.issueTypes != null) {
+  if (caches.projectId != null && Array.isArray(caches.issueTypes) && caches.issueTypes.length > 0) {
     return { id: caches.projectId, issueTypes: caches.issueTypes };
   }
   const key = target.project;
   if (!key) {
     throw new Error("Jira tracker requires target.project (project key)");
   }
-  const data = await rest("GET", `/rest/api/3/project/${encodeURIComponent(key)}`);
+  const encodedKey = encodeURIComponent(key);
+  const data = await rest("GET", `/rest/api/3/project/${encodedKey}`, {
+    query: { expand: "issueTypes" },
+  });
   if (!data?.id) {
     throw new Error(`Jira: project with key '${key}' not found`);
   }
   caches.projectId = String(data.id);
-  caches.issueTypes = Array.isArray(data?.issueTypes) ? data.issueTypes : [];
-  return { id: caches.projectId, issueTypes: caches.issueTypes };
-}
-
-async function resolveProjectId(rest, target, caches) {
-  const meta = await resolveProjectMeta(rest, target, caches);
-  return meta.id;
+  let issueTypes = Array.isArray(data?.issueTypes) ? data.issueTypes : null;
+  if (issueTypes == null || issueTypes.length === 0) {
+    // Dedicated endpoint. Documented as returning an array of issue
+    // types for the project, regardless of the expand behaviour on
+    // /project/:key. Empty array here legitimately means the project
+    // has no types (pickDefaultIssueTypeId will throw with a clear
+    // message); a non-empty array supersedes the empty-expand result.
+    const fallback = await rest(
+      "GET",
+      `/rest/api/3/project/${encodedKey}/issuetypes`,
+    );
+    if (Array.isArray(fallback) && fallback.length > 0) {
+      issueTypes = fallback;
+    } else if (issueTypes == null) {
+      issueTypes = [];
+    }
+  }
+  caches.issueTypes = issueTypes;
+  return { id: caches.projectId, issueTypes };
 }
 
 function pickDefaultIssueTypeId(target, issueTypes) {
@@ -583,7 +604,9 @@ async function jiraListIssues(rest, target, caches, _ctx, payload = {}) {
       }
     }
   }
-  await resolveProjectId(rest, target, caches); // validates project
+  if (!target?.project) {
+    throw new Error("Jira tracker requires target.project (project key)");
+  }
 
   const cap = Math.min(first ?? limit ?? 50, MAX_PAGES * MAX_PAGE_SIZE);
   const jqlParts = [`project = "${target.project}"`];
@@ -688,7 +711,9 @@ async function jiraReconcileLabels(rest, target, caches, _ctx, payload) {
     seen.add(key);
     desired.push(trimmed);
   }
-  await resolveProjectId(rest, target, caches); // validates project
+  if (!target?.project) {
+    throw new Error("Jira tracker requires target.project (project key)");
+  }
 
   // Discover labels currently in use on the project. Jira has no
   // "project-scoped label registry"; labels exist implicitly when an
@@ -776,7 +801,9 @@ async function jiraRelabelBulk(rest, target, caches, ctx, payload) {
   if (plan.length === 0) {
     return { mode: apply ? "applied" : "dry-run", results: [] };
   }
-  await resolveProjectId(rest, target, caches); // validates project
+  if (!target?.project) {
+    throw new Error("Jira tracker requires target.project (project key)");
+  }
 
   const results = [];
   for (const entry of plan) {
