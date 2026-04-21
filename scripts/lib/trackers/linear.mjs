@@ -640,12 +640,15 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
     for (const [key, label] of map) {
       if (!taxonomyNames.has(key)) {
         if (apply) {
-          await gql(
+          const archiveData = await gql(
             `mutation($id: String!) {
               issueLabelArchive(id: $id) { success }
             }`,
             { id: label.id },
           );
+          if (!archiveData?.issueLabelArchive?.success) {
+            throw new Error(`linear labels.reconcileLabels: issueLabelArchive failed for '${label.name}'`);
+          }
         }
         deprecated.push(label.name);
       }
@@ -691,6 +694,10 @@ async function linearRelabelBulk(gql, _target, caches, _ctx, payload) {
     if (typeof from !== "string" || from.trim().length === 0 ||
         typeof to !== "string" || to.trim().length === 0) {
       results.push({ from: from ?? null, to: to ?? null, success: false, error: "from and to must be non-empty strings" });
+      continue;
+    }
+    if (from.trim().toLowerCase() === to.trim().toLowerCase()) {
+      results.push({ from, to, success: true, action: "no-op" });
       continue;
     }
     const existing = labelMap.get(from.trim().toLowerCase());
