@@ -22,7 +22,7 @@ Confirm or adjust?
 3. I misunderstood; start over.
 ```
 
-When the user says only "what should I work on?" and no intent can be inferred, the prompt still conforms to the numbered-options contract in `rules/issue-discovery.md` (2 to 4 domain options + custom). The skill offers the two most useful paths:
+When the user says only "what should I work on?" and no intent can be inferred, the prompt still conforms to the numbered-options contract in `rules/issue-discovery.md`: two domain options. The "custom escape hatch" clause of the rule applies to nodes where a user's answer must land inside the configured surface (trackers, areas, intents). Q0 has no such surface: the user is naming a topic in free text, so "something else" is meaningless here. Option 1 already IS the free-form path.
 
 ```text
 I can't infer the topic yet. Two paths:
@@ -422,7 +422,7 @@ Area "{{user_answer}}" isn't in `labels.area`: {{configured_list}}. How do you w
 
 Hard prohibitions. Listed verbatim in the skill's `do_not_trigger_on` section and repeated here for the runbook reader.
 
-1. **No silent creation.** `tracker-sync.issues.createIssue` and `release-tracker.createUmbrellaForIntent` never fire without the Q6 confirmation returning `Proceed`. An `apply: true` on the session state does not substitute; the user must ack at Q6 on this turn.
+1. **No silent creation.** Writes are user-ack'd at their respective gates: `tracker-sync.issues.createIssue` never fires without the Q6 confirmation returning `Proceed`; `release-tracker.createUmbrellaForIntent` never fires without the user's explicit Q4c pick of "Create a new umbrella" followed by completion of the Q5.1-Q5.8 sub-interview. The two gates are separate: umbrella creation is its own terminal (ack'd at Q4c), and issue creation is the Q6 terminal. An `apply: true` on the session state does not substitute for either gate.
 2. **No implicit defaults.** "First writable target", "newest umbrella", "most likely area", "shortest title" are all invalid. Every selection is either an explicit user choice from the presented options or a halt.
 3. **No compound questions.** Each prompt resolves exactly one decision. Never "Which project and which umbrella?" or "Which area, priority, and size?".
 4. **No skipping steps for convenience.** "Just start something" still visits every node. The staff-engineer mirror would still ask.

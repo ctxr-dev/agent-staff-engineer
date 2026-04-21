@@ -168,7 +168,22 @@ export async function listPendingSessions(target, domain) {
     }
     try {
       const state = await readJsonOrNull(path);
-      const startedAt = typeof state?.startedAt === "string" ? Date.parse(state.startedAt) : NaN;
+      // readJsonOrNull returns null on EISDIR (directory named like
+      // a session file) AND on a literal JSON `null`. Treat both as
+      // malformed: a valid session is always a plain non-null
+      // object per the session-state schema. Callers need a non-empty
+      // `error` to tell corruption apart from legitimate state.
+      if (state === null || typeof state !== "object" || Array.isArray(state)) {
+        out.push({
+          sessionId: name,
+          path,
+          state: null,
+          ageMs: null,
+          error: `Malformed session file: expected a plain JSON object; got ${state === null ? "null or directory" : typeof state}`,
+        });
+        continue;
+      }
+      const startedAt = typeof state.startedAt === "string" ? Date.parse(state.startedAt) : NaN;
       let ageMs;
       if (Number.isFinite(startedAt)) {
         // Clamp negatives to 0: clock skew, a hand-edited file, or a

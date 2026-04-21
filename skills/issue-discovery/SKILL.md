@@ -11,7 +11,7 @@ do_not_trigger_on:
   - ops.config.json is missing or invalid (halt and point at bootstrap-ops-config first).
   - "Every configured `trackers.dev` has depth read-only (halt; the skill cannot create issues anywhere)."
   - Another `issue-discovery` session is already open on this target project (surface the existing session per Resume protocol; never run two in parallel).
-writes_to_github: no, via tracker-sync only and only after the Q6 confirmation gate returns "Proceed"
+writes_to_github: yes, delegated only. Issue creation routes through `tracker-sync.issues.createIssue` and is gated by the Q6 confirmation gate returning "Proceed". New-umbrella creation routes through `release-tracker.createUmbrellaForIntent` (which dispatches to `tracker-sync` internally) and fires at the end of Q5.8, gated by the user's explicit Q4c pick of "Create a new umbrella" plus completion of Q5.1-Q5.8. The skill never calls a tracker API directly.
 writes_to_filesystem: yes, a session-scratch JSON under .development/local/issue-discovery/<session-id>.json (gitignored; managed via scripts/lib/sessionState.mjs)
 ---
 
@@ -30,7 +30,7 @@ Hard rule baked in: **the skill never calls a tracker API directly.** Every crea
 ## Outputs
 
 - On success: a resolved handoff tuple `{issueRef, umbrellaRef | null, memberName | null}` conforming to `schemas/issue-discovery-handoff.schema.json`. The caller (typically `dev-loop`) consumes the tuple and resumes its own state machine.
-- On user-cancel at Q6: no tracker writes; the session state file is archived with `status: "cancelled"` for audit. The skill returns control to the caller with a cancelled-handoff result.
+- On user-cancel at Q6: no issue is created; the session state file is archived under the shared filename-suffix scheme (`<session-id>.cancelled.json`). If the user reached Q5 and the skill already dispatched `release-tracker.createUmbrellaForIntent`, that write stands; the umbrella exists regardless of whether the user later cancels at Q6 (there is no rollback surface). The skill returns control to the caller with a cancelled-handoff result.
 - On halt per ambiguity-halt: no tracker writes; the session state file is preserved at the current node for resume on the next turn.
 
 ## State machine

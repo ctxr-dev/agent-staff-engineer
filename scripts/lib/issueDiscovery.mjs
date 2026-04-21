@@ -11,10 +11,12 @@
 //     scripts/lib/sessionState.mjs scoped to the "issue-discovery"
 //     domain, with schema validation on every read.
 //
-// Everything in this module is synchronous and side-effect-free
-// except for the session-state file operations. The interview itself
-// (the "ask a question and wait for the user") lives in the agent's
-// conversation layer; this library is just the deterministic pieces.
+// Everything in this module is deterministic and side-effect-free
+// except for the async session-state I/O wrappers. The interview
+// itself (the "ask a question and wait for the user") lives in the
+// agent's conversation layer; this library is just the
+// deterministic pieces plus thin async wrappers for persisted
+// session state.
 
 import { createHash, randomBytes } from "node:crypto";
 

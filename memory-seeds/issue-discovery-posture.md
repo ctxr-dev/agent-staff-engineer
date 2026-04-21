@@ -18,7 +18,7 @@ The agent treats "no issue reference yet" as a first-class intake state, not a p
 - dev-loop invoked with an unresolvable issue ref: dev-loop halts at entry and hands off to `issue-discovery`.
 - Every branch in the interview offers 2 to 4 concrete options plus a custom escape hatch. No fewer (hides deliberation), no more (overloads the user).
 - Custom choices that fall outside the configured surface (labels, trackers, intents) halt per `rules/ambiguity-halt.md` and name `/adapt-system` as the next step.
-- No tracker writes fire without the Q6 confirmation gate returning `Proceed`. Silent defaults are forbidden.
+- Tracker writes are user-ack'd at explicit gates. Issue creation fires only after the Q6 confirmation returns `Proceed`. New-umbrella creation fires only after the user's Q4c pick of "Create a new umbrella" plus completion of Q5.1-Q5.8; the umbrella gate runs before Q6, not through it. Silent defaults are forbidden on both paths.
 - Session state lives under `.development/local/issue-discovery/`; it never promotes to `ops.config.json` or to persistent memory.
 
-Writes route through `tracker-sync` for issues and through `release-tracker.createUmbrellaForIntent` for new umbrellas; the skill never calls the tracker API directly.
+Writes route through `tracker-sync.issues.createIssue` for issues and through `release-tracker.createUmbrellaForIntent` for new umbrellas; the skill never calls the tracker API directly.

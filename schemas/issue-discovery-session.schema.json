@@ -155,51 +155,83 @@
       }
     },
     "umbrellaDecision": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "The Q4/Q5 outcome. Kind encodes the branch the user picked; payload is populated only for the create-new branch.",
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": ["skip", "link-existing", "create-new"]
-        },
-        "ref": {
-          "type": ["object", "null"],
+      "description": "The Q4/Q5 outcome. `kind` encodes the branch the user picked; the allowed `ref` / `payload` shape is a function of `kind`. A `kind`-keyed oneOf keeps partial / corrupt decision objects out: {} or a kind-only object fails validation for the create-new branch, and the skip branch refuses stray ref/payload fields.",
+      "oneOf": [
+        {
+          "type": "object",
           "additionalProperties": false,
+          "required": ["kind"],
+          "description": "Umbrella intentionally skipped. Valid even when trackers.release is present; the user confirmed the skip explicitly per the runbook's Q4a no-umbrella halt.",
           "properties": {
-            "number": { "type": "integer", "minimum": 1 },
-            "nodeId": { "type": "string", "minLength": 1 },
-            "url": { "type": "string", "format": "uri" }
+            "kind": { "type": "string", "const": "skip" }
           }
         },
-        "payload": {
-          "type": ["object", "null"],
+        {
+          "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "ref"],
+          "description": "User linked to an existing open umbrella. `ref` is required.",
           "properties": {
-            "intent": { "type": "string", "minLength": 1 },
-            "goal": { "type": "string", "minLength": 30 },
-            "scopeTag": { "type": "string", "minLength": 1 },
-            "targetDate": {
-              "type": ["string", "null"],
-              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+            "kind": { "type": "string", "const": "link-existing" },
+            "ref": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["number"],
+              "properties": {
+                "number": { "type": "integer", "minimum": 1 },
+                "nodeId": { "type": "string", "minLength": 1 },
+                "url": { "type": "string", "format": "uri" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "payload"],
+          "description": "User elected to create a new umbrella. `payload` is required and must include every Q5 sub-answer; `ref` is populated after release-tracker.createUmbrellaForIntent returns.",
+          "properties": {
+            "kind": { "type": "string", "const": "create-new" },
+            "ref": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "properties": {
+                "number": { "type": "integer", "minimum": 1 },
+                "nodeId": { "type": "string", "minLength": 1 },
+                "url": { "type": "string", "format": "uri" }
+              }
             },
-            "nonGoals": {
-              "type": "array",
-              "items": { "type": "string", "minLength": 1 }
-            },
-            "definitionOfDone": {
-              "type": "array",
-              "items": { "type": "string", "minLength": 1 },
-              "minItems": 1
-            },
-            "rollbackPlan": { "type": "string", "minLength": 20 },
-            "stakeholders": {
-              "type": "array",
-              "items": { "type": "string", "minLength": 1 }
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["intent", "goal", "scopeTag", "definitionOfDone", "rollbackPlan"],
+              "properties": {
+                "intent": { "type": "string", "minLength": 1 },
+                "goal": { "type": "string", "minLength": 30 },
+                "scopeTag": { "type": "string", "minLength": 1 },
+                "targetDate": {
+                  "type": ["string", "null"],
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                },
+                "nonGoals": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "definitionOfDone": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "minItems": 1
+                },
+                "rollbackPlan": { "type": "string", "minLength": 20 },
+                "stakeholders": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                }
+              }
             }
           }
         }
-      }
+      ]
     },
     "createdIssueRef": {
       "type": ["object", "null"],
