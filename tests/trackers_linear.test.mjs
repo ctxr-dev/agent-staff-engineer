@@ -187,6 +187,27 @@ describe("linear issues.updateIssueStatus", () => {
     );
   });
 
+  it("refuses to set a completed-type state even by exact name", async () => {
+    // Add a custom completed-type state that is NOT in the vocabulary map
+    const statesWithShipped = {
+      workflowStates: {
+        nodes: [
+          ...STATES_RESPONSE.workflowStates.nodes,
+          { id: "state-shipped", name: "Shipped", type: "completed" },
+        ],
+      },
+    };
+    const gql = mockGraphql([
+      fixture("teams(", TEAM_RESPONSE),
+      fixture("workflowStates(", statesWithShipped),
+    ]);
+    const tracker = makeLinearTracker(TARGET, { graphql: gql });
+    await assert.rejects(
+      () => tracker.issues.updateIssueStatus({}, { issueId: "i1", status: "Shipped" }),
+      /refusing to set 'Shipped'.*completed/,
+    );
+  });
+
   it("no-ops when already in the requested state", async () => {
     const gql = mockGraphql([
       fixture("teams(", TEAM_RESPONSE),
@@ -312,7 +333,8 @@ describe("linear issues.listIssues", () => {
     ]);
     const tracker = makeLinearTracker(TARGET, { graphql: gql });
     const result = await tracker.issues.listIssues({});
-    assert.equal(result.length, 1);
+    assert.equal(result.items.length, 1);
+    assert.equal(result.truncated, false);
   });
 });
 
@@ -346,6 +368,19 @@ describe("linear labels.reconcileLabels", () => {
     });
     assert.deepEqual(result.created, ["new-label"]);
     // No create mutation should have been called
+    assert.ok(!gql.log.some((c) => c.query.includes("issueLabelCreate(")));
+  });
+
+  it("defaults to dry-run when apply is omitted", async () => {
+    const gql = mockGraphql([
+      fixture("issueLabels(", LABELS_RESPONSE),
+    ]);
+    const tracker = makeLinearTracker(TARGET, { graphql: gql });
+    const result = await tracker.labels.reconcileLabels({}, {
+      taxonomy: ["new-label"],
+    });
+    assert.deepEqual(result.created, ["new-label"]);
+    // No create mutation should have been called (dry-run)
     assert.ok(!gql.log.some((c) => c.query.includes("issueLabelCreate(")));
   });
 

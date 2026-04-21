@@ -167,6 +167,11 @@ async function resolveLabelIds(gql, caches, labelNames) {
   const ids = [];
   const missing = [];
   for (const name of labelNames) {
+    if (typeof name !== "string" || name.trim().length === 0) {
+      throw new TypeError(
+        `linear resolveLabelIds: every label name must be a non-empty string; got ${JSON.stringify(name)}`,
+      );
+    }
     const label = map.get(name.toLowerCase());
     if (label) ids.push(label.id);
     else missing.push(name);
@@ -267,7 +272,7 @@ async function linearUpdateIssueStatus(gql, target, caches, _ctx, payload) {
       "linear issues.updateIssueStatus: status must be a non-empty string",
     );
   }
-  // Human gate: never set Done
+  // Human gate: never set Done / completed
   const lower = status.trim().toLowerCase();
   if (lower === "done" || STATUS_TYPE_MAP[lower] === "completed") {
     throw new Error(
@@ -275,6 +280,15 @@ async function linearUpdateIssueStatus(gql, target, caches, _ctx, payload) {
     );
   }
   const stateId = await resolveStateId(gql, target, caches, status);
+  // Double-check the resolved state type (catches exact name matches
+  // like "Completed" that bypass the vocabulary-key check above)
+  const states = await resolveWorkflowStates(gql, target, caches);
+  const resolved = states.find((s) => s.id === stateId);
+  if (resolved?.type === "completed") {
+    throw new Error(
+      `linear issues.updateIssueStatus: refusing to set '${resolved.name}' (type: completed); that is a human gate per rules/pr-workflow.md`,
+    );
+  }
 
   // No-op check: fetch current state, skip if already matching
   const currentData = await gql(
@@ -451,9 +465,10 @@ async function linearListIssues(gql, target, caches, _ctx, payload = {}) {
       truncated = true;
     }
   }
-  const out = results.slice(0, first);
-  if (truncated) out.truncated = true;
-  return out;
+  return {
+    items: results.slice(0, first),
+    truncated,
+  };
 }
 
 // ── labels.* ────────────────────────────────────────────────────────
@@ -462,7 +477,7 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
   // Accept both { desired: [...] } and { taxonomy: [...], apply: bool }
   const raw = payload ?? {};
   const taxonomy = raw.taxonomy ?? raw.desired ?? [];
-  const apply = raw.apply !== false;
+  const apply = raw.apply === true;
   if (!Array.isArray(taxonomy)) {
     throw new TypeError(
       "linear labels.reconcileLabels: taxonomy (or desired) must be an array",
