@@ -451,7 +451,6 @@ describe("jira issues.listIssues", () => {
 describe("jira labels.reconcileLabels", () => {
   it("produces a plan against the project's in-use label set", async () => {
     const api = mockRest([
-      route("GET", "/rest/api/3/project/PLAT", { id: "10000", issueTypes: [] }),
       route("POST", "/rest/api/3/search/jql", {
         issues: [
           { id: "1", fields: { labels: ["bug", "wave-1"] } },
@@ -468,6 +467,25 @@ describe("jira labels.reconcileLabels", () => {
     const planByName = Object.fromEntries(result.plan.map((p) => [p.name, p.action]));
     assert.equal(planByName["bug"], "unchanged");
     assert.equal(planByName["wave-2"], "create");
+  });
+
+  it("preserves original label casing on deprecate entries (not lowercased)", async () => {
+    const api = mockRest([
+      route("POST", "/rest/api/3/search/jql", {
+        issues: [
+          { id: "1", fields: { labels: ["LegacyUI", "wave-1"] } },
+        ],
+        nextPageToken: null,
+      }),
+    ]);
+    const tracker = makeJiraTracker(TARGET, { rest: api });
+    const result = await tracker.labels.reconcileLabels({}, {
+      taxonomy: ["wave-1"],
+      allowDeprecate: true,
+    });
+    const deprecateEntry = result.plan.find((p) => p.action === "deprecate");
+    assert.ok(deprecateEntry, "expected a deprecate entry for LegacyUI");
+    assert.equal(deprecateEntry.name, "LegacyUI", "deprecate.name must preserve the original casing seen on Jira, not the lowered key");
   });
 
   it("rejects non-boolean apply (parity with other backends)", async () => {
@@ -594,16 +612,27 @@ describe("jira labels.relabelBulk", () => {
   });
 
   it("rejects labels with whitespace in the plan", async () => {
-    const api = mockRest([
-      route("GET", "/rest/api/3/project/PLAT", { id: "10000", issueTypes: [] }),
-    ]);
-    const tracker = makeJiraTracker(TARGET, { rest: api });
+    const tracker = makeJiraTracker(TARGET, { rest: mockRest([]) });
     const result = await tracker.labels.relabelBulk({}, {
       plan: [{ from: "has space", to: "ok" }],
       apply: true,
     });
     assert.equal(result.results[0].success, false);
     assert.match(result.results[0].error, /whitespace/);
+  });
+
+  it("treats empty-string `to` as delete but rejects whitespace-only `to`", async () => {
+    const tracker = makeJiraTracker(TARGET, { rest: mockRest([]) });
+    const result = await tracker.labels.relabelBulk({}, {
+      plan: [
+        { from: "old", to: "" },
+        { from: "old", to: "   " },
+      ],
+      apply: false,
+    });
+    assert.equal(result.results[0].action, "would-delete");
+    assert.equal(result.results[1].success, false);
+    assert.match(result.results[1].error, /empty string \(''\) to delete/);
   });
 
   it("sweepLabel surfaces a partial-sweep error when more issues remain after MAX_PAGES", async () => {

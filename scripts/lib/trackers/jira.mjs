@@ -182,6 +182,41 @@ async function resolveProjectMeta(rest, target, caches) {
   return { id: caches.projectId, issueTypes };
 }
 
+// ── Label validation ───────────────────────────────────────────────
+
+/**
+ * Validate a single Jira label name. Jira collapses whitespace in
+ * labels server-side, which silently corrupts the value the agent
+ * thinks it wrote, so every call site (createIssue, relabelIssue,
+ * listIssues, reconcileLabels, relabelBulk) rejects whitespace at
+ * the input boundary. Shared here so the five paths can't drift.
+ *
+ * Throws TypeError on any violation; returns the trimmed string.
+ */
+function assertValidJiraLabelName(raw, caller) {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    throw new TypeError(
+      `${caller}: every label name must be a non-empty string; got ${JSON.stringify(raw)}`,
+    );
+  }
+  const trimmed = raw.trim();
+  if (/\s/.test(trimmed)) {
+    throw new TypeError(
+      `${caller}: Jira labels cannot contain whitespace; got ${JSON.stringify(raw)}`,
+    );
+  }
+  return trimmed;
+}
+
+function assertValidJiraLabelArray(names, caller) {
+  if (!Array.isArray(names)) {
+    throw new TypeError(
+      `${caller}: labels must be an array of label names`,
+    );
+  }
+  return names.map((n) => assertValidJiraLabelName(n, caller));
+}
+
 function pickDefaultIssueTypeId(target, issueTypes) {
   // Prefer "Task" as the standard issue type; fall back to the first
   // non-subtask on the project. Subtasks are refused because they
@@ -216,34 +251,12 @@ async function jiraCreateIssue(rest, target, caches, _ctx, payload) {
       "jira issues.createIssue: body must be a string when provided",
     );
   }
-  if (!Array.isArray(labels)) {
-    throw new TypeError(
-      "jira issues.createIssue: labels must be an array of label names",
-    );
-  }
   if (templateName != null) {
     throw new Error(
       "jira issues.createIssue: templateName is not supported on the Jira backend; render the body to markdown before calling createIssue",
     );
   }
-  const cleanedLabels = labels.map((l) => {
-    if (typeof l !== "string" || l.trim().length === 0) {
-      throw new TypeError(
-        `jira issues.createIssue: every labels[] entry must be a non-empty string; got ${JSON.stringify(l)}`,
-      );
-    }
-    // Jira labels cannot contain spaces; it silently collapses them,
-    // which causes a mismatch between the value the agent thinks it
-    // wrote and what Jira stored. Reject at the boundary with a
-    // pointed message.
-    const trimmed = l.trim();
-    if (/\s/.test(trimmed)) {
-      throw new TypeError(
-        `jira issues.createIssue: Jira labels cannot contain whitespace; got ${JSON.stringify(l)}`,
-      );
-    }
-    return trimmed;
-  });
+  const cleanedLabels = assertValidJiraLabelArray(labels, "jira issues.createIssue");
   const trimmedTitle = title.trim();
   if (!target?.project) {
     throw new Error("Jira tracker requires target.project (project key)");
@@ -488,25 +501,8 @@ async function jiraRelabelIssue(rest, _target, _caches, _ctx, payload) {
   if (!issueId) {
     throw new TypeError("jira issues.relabelIssue: issueId is required");
   }
-  if (!Array.isArray(add) || !Array.isArray(remove)) {
-    throw new TypeError(
-      "jira issues.relabelIssue: add and remove must be arrays of label names",
-    );
-  }
-  for (const name of [...add, ...remove]) {
-    if (typeof name !== "string" || name.trim().length === 0) {
-      throw new TypeError(
-        `jira issues.relabelIssue: every label name must be a non-empty string; got ${JSON.stringify(name)}`,
-      );
-    }
-    if (/\s/.test(name.trim())) {
-      throw new TypeError(
-        `jira issues.relabelIssue: Jira labels cannot contain whitespace; got ${JSON.stringify(name)}`,
-      );
-    }
-  }
-  const trimmedAdd = add.map((n) => n.trim());
-  const trimmedRemove = remove.map((n) => n.trim());
+  const trimmedAdd = assertValidJiraLabelArray(add, "jira issues.relabelIssue");
+  const trimmedRemove = assertValidJiraLabelArray(remove, "jira issues.relabelIssue");
   const addLower = new Set(trimmedAdd.map((n) => n.toLowerCase()));
   const removeLower = new Set(trimmedRemove.map((n) => n.toLowerCase()));
   const overlap = [...addLower].filter((n) => removeLower.has(n));
@@ -581,28 +577,9 @@ async function jiraListIssues(rest, target, caches, _ctx, payload = {}) {
   if (state != null && typeof state !== "string") {
     throw new TypeError("jira issues.listIssues: state must be a string");
   }
-  if (filterLabels != null && !Array.isArray(filterLabels)) {
-    throw new TypeError(
-      "jira issues.listIssues: labels must be an array of label names",
-    );
-  }
-  if (Array.isArray(filterLabels)) {
-    for (const name of filterLabels) {
-      if (typeof name !== "string" || name.trim().length === 0) {
-        throw new TypeError(
-          `jira issues.listIssues: every labels[] entry must be a non-empty string; got ${JSON.stringify(name)}`,
-        );
-      }
-      // Jira labels cannot contain whitespace (the server silently
-      // collapses them), so a whitespace-bearing filter would either
-      // match nothing or match the wrong thing. Reject at the boundary
-      // for consistency with createIssue / relabelIssue / reconcileLabels.
-      if (/\s/.test(name.trim())) {
-        throw new TypeError(
-          `jira issues.listIssues: Jira labels cannot contain whitespace; got ${JSON.stringify(name)}`,
-        );
-      }
-    }
+  let cleanedFilterLabels = null;
+  if (filterLabels != null) {
+    cleanedFilterLabels = assertValidJiraLabelArray(filterLabels, "jira issues.listIssues");
   }
   if (!target?.project) {
     throw new Error("Jira tracker requires target.project (project key)");
@@ -620,9 +597,9 @@ async function jiraListIssues(rest, target, caches, _ctx, payload = {}) {
   } else {
     jqlParts.push("statusCategory != Done");
   }
-  if (Array.isArray(filterLabels) && filterLabels.length > 0) {
-    const list = filterLabels
-      .map((l) => `"${escapeJqlString(l.trim())}"`)
+  if (cleanedFilterLabels && cleanedFilterLabels.length > 0) {
+    const list = cleanedFilterLabels
+      .map((l) => `"${escapeJqlString(l)}"`)
       .join(", ");
     jqlParts.push(`labels in (${list})`);
   }
@@ -694,18 +671,8 @@ async function jiraReconcileLabels(rest, target, caches, _ctx, payload) {
         `jira labels.reconcileLabels: each entry must be a string or {name}; got ${JSON.stringify(want)}`,
       );
     }
-    const name = typeof want === "string" ? want : want.name;
-    if (typeof name !== "string" || name.trim().length === 0) {
-      throw new TypeError(
-        `jira labels.reconcileLabels: name must be a non-empty string; got ${JSON.stringify(want)}`,
-      );
-    }
-    const trimmed = name.trim();
-    if (/\s/.test(trimmed)) {
-      throw new TypeError(
-        `jira labels.reconcileLabels: Jira labels cannot contain whitespace; got ${JSON.stringify(name)}`,
-      );
-    }
+    const rawName = typeof want === "string" ? want : want.name;
+    const trimmed = assertValidJiraLabelName(rawName, "jira labels.reconcileLabels");
     const key = trimmed.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -722,7 +689,11 @@ async function jiraReconcileLabels(rest, target, caches, _ctx, payload) {
   // the API still reports a nextPageToken after the hard cap, because
   // a truncated sample would drive `reconcileLabels` into suggesting
   // a spurious "create" for a label that is actually already in use.
-  const usedLower = new Set();
+  //
+  // Track the first-seen original casing for every lowered key so
+  // `deprecate` plan entries surface a display-friendly name (matches
+  // github / linear / gitlab backends) instead of the lowered key.
+  const usedDisplayByLower = new Map();
   let cursor = null;
   let truncated = false;
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -735,7 +706,9 @@ async function jiraReconcileLabels(rest, target, caches, _ctx, payload) {
     const data = await rest("POST", "/rest/api/3/search/jql", { body });
     for (const issue of data?.issues ?? []) {
       for (const l of issue.fields?.labels ?? []) {
-        if (typeof l === "string") usedLower.add(l.toLowerCase());
+        if (typeof l !== "string") continue;
+        const lower = l.toLowerCase();
+        if (!usedDisplayByLower.has(lower)) usedDisplayByLower.set(lower, l);
       }
     }
     if (!data?.nextPageToken) break;
@@ -750,26 +723,27 @@ async function jiraReconcileLabels(rest, target, caches, _ctx, payload) {
 
   const plan = [];
   for (const name of desired) {
+    const inUse = usedDisplayByLower.has(name.toLowerCase());
     plan.push({
-      action: usedLower.has(name.toLowerCase()) ? "unchanged" : "create",
+      action: inUse ? "unchanged" : "create",
       name,
       // Jira labels have no color/description attached to them; the
       // "create" action is advisory. The label exists implicitly the
       // first time an issue uses it, which happens via relabelIssue /
       // createIssue + labels[], so no API call is made here.
       note:
-        !usedLower.has(name.toLowerCase()) && apply
+        !inUse && apply
           ? "Jira labels materialise when first applied to an issue; no create API call is needed"
           : undefined,
     });
   }
   if (allowDeprecate) {
     const desiredLower = new Set(desired.map((n) => n.toLowerCase()));
-    for (const lower of usedLower) {
+    for (const [lower, display] of usedDisplayByLower) {
       if (!desiredLower.has(lower)) {
         plan.push({
           action: "deprecate",
-          name: lower,
+          name: display,
           note: apply
             ? "Deprecation on Jira requires an issue-by-issue label sweep; use labels.relabelBulk with a {from, to: ''} migration plan to clear the label"
             : undefined,
@@ -813,19 +787,33 @@ async function jiraRelabelBulk(rest, target, caches, ctx, payload) {
     }
     const from = entry.from;
     const to = entry.to;
-    if (typeof from !== "string" || from.trim().length === 0) {
-      results.push({ from: from ?? null, to: to ?? null, success: false, error: "from must be a non-empty string" });
+    let fromTrim, toTrim;
+    try {
+      fromTrim = assertValidJiraLabelName(from, "jira labels.relabelBulk: from");
+    } catch (err) {
+      results.push({ from: from ?? null, to: to ?? null, success: false, error: err.message });
       continue;
     }
     if (typeof to !== "string") {
-      results.push({ from, to: to ?? null, success: false, error: "to must be a string (use '' to delete the label)" });
+      results.push({ from, to: to ?? null, success: false, error: "to must be a string (use '' exactly to delete the label)" });
       continue;
     }
-    const fromTrim = from.trim();
-    const toTrim = to.trim();
-    if (/\s/.test(fromTrim) || (toTrim.length > 0 && /\s/.test(toTrim))) {
-      results.push({ from, to, success: false, error: "Jira labels cannot contain whitespace" });
+    // Delete sentinel is the empty string EXACTLY. Whitespace-only
+    // input (`" "`, `"\t"`) is almost certainly a caller typo, and
+    // trimming it to "" would silently turn a rename typo into a
+    // destructive delete. Reject the whitespace form explicitly.
+    if (to.length === 0) {
+      toTrim = "";
+    } else if (to.trim().length === 0) {
+      results.push({ from, to, success: false, error: "to must be empty string ('') to delete, not whitespace-only" });
       continue;
+    } else {
+      try {
+        toTrim = assertValidJiraLabelName(to, "jira labels.relabelBulk: to");
+      } catch (err) {
+        results.push({ from, to, success: false, error: err.message });
+        continue;
+      }
     }
     if (fromTrim.toLowerCase() === toTrim.toLowerCase()) {
       results.push({ from, to, success: true, action: "no-op" });
