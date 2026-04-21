@@ -45,18 +45,18 @@ These two decisions are always yours.
 
 ## Current implementation status
 
-The agent targets four tracker kinds. GitHub, Linear, and GitLab have real implementations; Jira is stubbed.
+The agent targets four tracker kinds. GitHub, Linear, GitLab, and Jira all have real implementations for issues and labels; review iteration is full on GitHub, partial on GitLab, and not applicable on Linear / Jira.
 
 | Capability                             | GitHub    | Linear              | GitLab                         | Jira |
 | -------------------------------------- | --------- | ------------------- | ------------------------------ | ---- |
-| Open PRs, iterate on review comments   | **works** | stub (no native PR) | **partial** (poll+resolve, no requestReview) | stub |
-| Status moves, comments, issue create   | **works** | **works**           | **works**                      | stub |
-| Label taxonomy reconcile               | **works** | **works**           | **works**                      | stub |
+| Open PRs, iterate on review comments   | **works** | stub (no native PR) | **partial** (poll+resolve, no requestReview) | stub (no native PR) |
+| Status moves, comments, issue create   | **works** | **works**           | **works**                      | **works** |
+| Label taxonomy reconcile               | **works** | **works**           | **works**                      | **works** (advisory: Jira labels are uncontrolled strings) |
 | Release umbrella status                | **works** | stub                | stub                           | stub |
 | Regression lookups                     | **works** | stub                | stub                           | stub |
-| Bootstrap interview + config           | **works** | **works**           | **works**                      | **works** (config valid; write-ops throw until real backend lands) |
+| Bootstrap interview + config           | **works** | **works**           | **works**                      | **works** |
 
-Linear uses its GraphQL API (direct `fetch`, no SDK). Auth via `LINEAR_API_KEY`. GitLab uses REST API v4 (direct `fetch`). Auth via `GITLAB_TOKEN`. GitLab's `review.*` is partially implemented: poll, fetch threads, resolve, and CI state work; `requestReview` is stubbed because GitLab's approval flow requires admin-configured approval rules. The real Jira backend ships in a follow-up release.
+Linear uses its GraphQL API (direct `fetch`, no SDK). Auth via `LINEAR_API_KEY`. GitLab uses REST API v4 (direct `fetch`). Auth via `GITLAB_TOKEN`. GitLab's `review.*` is partially implemented: poll, fetch threads, resolve, and CI state work; `requestReview` is stubbed because GitLab's approval flow requires admin-configured approval rules. Jira uses REST API v3 (direct `fetch`) with basic auth; set `JIRA_EMAIL` + `JIRA_API_TOKEN`. Rich-text payloads render to Atlassian Document Format (ADF). For projects on Jira whose code lives on GitHub, set `workflow.external_review.provider = "github"` so `pr-iteration` dispatches review against GitHub while tracker ops still go to Jira.
 
 ## Release models the interview supports
 
@@ -97,10 +97,9 @@ On every later invocation the agent acts on your request directly, guided by the
 - **Git** (for the bundle repo + dev loop operations).
 - A tracker CLI or token matching `trackers.*.kind` in `ops.config.json`:
   - **GitHub**: `gh` CLI authed with scopes `repo`, `project`, `read:org`, `workflow`.
-  - **Jira**: `JIRA_API_TOKEN` env var (optionally `jira-cli` if present).
+  - **Jira**: `JIRA_EMAIL` + `JIRA_API_TOKEN` env vars (basic auth per Atlassian's 2025 guidance; the email is the Atlassian account's login address, the token is generated at https://id.atlassian.com/manage-profile/security/api-tokens). Real `issues.*` and `labels.*` implementations ship in this release; `review.*` and `projects.*` are stubbed by design (no native PR surface, instance-specific custom fields).
   - **Linear**: `LINEAR_API_KEY` env var.
   - **GitLab**: `GITLAB_TOKEN` env var (optionally `glab` if present).
-  - Jira / Linear / GitLab backends are placeholders on this release; every op throws `NotSupportedError`. Real backends land in follow-up releases.
 
 ## Required companion skill
 
