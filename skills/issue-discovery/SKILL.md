@@ -153,7 +153,7 @@ Every arrow is explicit. The flow never falls through on silence; each node sits
 
 ## Session persistence
 
-The session scratch file is ephemeral local state, not a durable artefact. Unlike reports and runbooks (see [rules/llm-wiki.md](../../rules/llm-wiki.md) for the wiki-routed shared-topic contract), this skill's state is transient: written with `atomicWriteJson`, validated against `schemas/issue-discovery-session.schema.json` on read, and archived or discarded on terminal nodes. It never passes through `@ctxr/skill-llm-wiki` and never lands in `.development/shared/`.
+The session scratch file is ephemeral local state, not a durable artefact. Unlike reports and runbooks (see [rules/llm-wiki.md](../../rules/llm-wiki.md) for the wiki-routed shared-topic contract), this skill's state is transient: written with `atomicWriteJson`, validated against `schemas/issue-discovery-session.schema.json` on read, and archived on terminal nodes (renamed to `<session-id>.<outcome>.json`; never deleted). It never passes through `@ctxr/skill-llm-wiki` and never lands in `.development/shared/`.
 
 - Location: `.development/local/issue-discovery/<session-id>.json`, gitignored per the bundle's standing `.development/local/` convention.
 - Format: validated against `schemas/issue-discovery-session.schema.json` on every read so a corrupted file fails loud.

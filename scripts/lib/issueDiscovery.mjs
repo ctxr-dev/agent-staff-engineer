@@ -183,11 +183,12 @@ export const DECISION_TREE = Object.freeze({
     id: "q3f",
     predecessors: Object.freeze(["q3e-size"]),
     next: Object.freeze([{ target: "q4a", when: "umbrellasExist" }, { target: "q4c", when: "umbrellasAbsent" }, { target: "q6", when: "releaseOptedOut" }]),
-    minOptions: 2,
+    minOptions: 3,
     maxOptions: 3,
     canHalt: false,
     customEscape: false,
-    description: "Acceptance criteria. Jumps to q6 when trackers.release is absent.",
+    description:
+      "Acceptance criteria. Three fixed options (write now / use template placeholders / exploratory). Jumps to q6 when trackers.release is absent, otherwise to q4a or q4c depending on whether umbrellas exist.",
   }),
   q4a: Object.freeze({
     id: "q4a",
