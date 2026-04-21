@@ -1,6 +1,6 @@
 // lib/trackers/github.mjs
-// GitHub implementation of the Tracker contract. Two namespaces
-// are fully implemented:
+// GitHub implementation of the Tracker contract. All four
+// namespaces on the Tracker surface are fully implemented:
 //   - review.*  against the `requestReviews`, `reviewThreads`,
 //     `resolveReviewThread`, `statusCheckRollup` GraphQL mutations
 //     captured in skills/pr-iteration/runbook.md (backs skills/pr-iteration).
@@ -8,8 +8,12 @@
 //     get, list) backing every bundle skill that consumes
 //     tracker-sync.issues.* at runtime (dev-loop, regression-handler,
 //     adapt-system, release-tracker's downstream flows).
-// The remaining two namespaces, projects.* and labels.*, are stubbed
-// and throw NotSupportedError; PR 10 wires them onto this file.
+//   - labels.*  reconcileLabels + relabelBulk, backing
+//     adapt-system's label-taxonomy reconciles and bulk renames.
+//   - projects.*  reconcileProjectFields, listProjectItems,
+//     updateProjectField on GitHub Projects v2, backing
+//     release-tracker's umbrella field writes and any caller that
+//     needs custom Project v2 field reads / writes.
 //
 // Why GraphQL and not REST for review: the runbook's step 4 documents
 // that the REST `POST /repos/.../requested_reviewers` endpoint silently
@@ -24,7 +28,6 @@
 
 import { ghGraphqlMutation, ghGraphqlQuery } from "../ghExec.mjs";
 import {
-  NotSupportedError,
   REVIEW_METHODS,
   TRACKER_NAMESPACES,
 } from "./tracker.mjs";
@@ -109,32 +112,6 @@ export function makeGithubTracker(target = {}) {
     labels,
     projects,
   };
-}
-
-/**
- * Build a namespace full of NotSupportedError-throwing methods. Used
- * by this file's issues/projects/labels placeholders AND by the
- * jira/linear/gitlab stub trackers. Kept here (rather than imported
- * from stub.mjs) so this file is self-contained for the github case.
- *
- * @param {string} kind tracker kind
- * @param {string} namespace one of the keys of TRACKER_NAMESPACES
- */
-function makeStubNamespace(kind, namespace) {
-  const methods = TRACKER_NAMESPACES[namespace];
-  if (!methods) {
-    throw new Error(`makeStubNamespace: unknown namespace '${namespace}'`);
-  }
-  const ns = {};
-  for (const op of methods) {
-    ns[op] = async () => {
-      throw new NotSupportedError(
-        `tracker '${kind}' does not implement '${namespace}.${op}' yet; see skills/tracker-sync/SKILL.md for the current surface`,
-        { kind, op, namespace },
-      );
-    };
-  }
-  return ns;
 }
 
 async function githubRequestReview(ctx) {
@@ -2297,27 +2274,16 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
     { projectOwner, ctxOwner: ctx?.owner, targetOwner: trackerTarget?.owner },
     "projects.updateProjectField",
   );
-  // Separately keep an "implicit owner" (ctx ?? target) for matching
-  // declared-project entries that omit their own `owner` field — a
-  // declared entry without an explicit owner inherits from the
-  // target's scope, not from the caller's override. Skipped
-  // trim/validation here because `resolveProjectOwner` already
-  // validated every candidate with these inputs; anything malformed
-  // would have thrown above.
-  const implicitOwner = (typeof ctx?.owner === "string" && ctx.owner.trim().length > 0)
-    ? ctx.owner.trim()
-    : (typeof trackerTarget?.owner === "string" && trackerTarget.owner.trim().length > 0
-        ? trackerTarget.owner.trim()
-        : null);
   // Normalise the configured `p.owner` before comparing. A config
   // that accidentally ships "acme " (trailing whitespace) would
   // otherwise never match the already-trimmed `ownerLogin` and
-  // block writes with a misleading "not declared" error. Declared
-  // entries without their own `owner` field inherit from
-  // `implicitOwner` (ctx or target), NOT from `ownerLogin` — the
-  // caller's override must still match something on the target.
+  // block writes with a misleading "not declared" error. The
+  // schema (githubProjectV2.required) mandates `owner` on every
+  // declared project entry, so there is no fallback path: a
+  // declared entry missing its own `owner` is a schema violation
+  // and fails to match here, surfacing as "not declared" rather
+  // than silently inheriting.
   const normaliseDeclaredOwner = (configuredOwner) => {
-    if (configuredOwner === undefined || configuredOwner === null) return implicitOwner;
     if (typeof configuredOwner !== "string") return null;
     const t = configuredOwner.trim();
     if (t.length === 0 || !GITHUB_OWNER_RE.test(t)) return null;

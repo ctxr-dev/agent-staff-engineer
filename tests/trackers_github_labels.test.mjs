@@ -343,7 +343,8 @@ describe("github labels.reconcileLabels: validation", skipOpts, () => {
 
   it("accepts color with or without '#' prefix (case-insensitive)", async () => {
     const tracker = makeGithubTracker({ owner: "acme", repo: "widgets" });
-    // dry-run, no gh call on the empty list.
+    // Dry-run still fetches current labels (labels_empty) to build
+    // the reconcile plan; just no mutation calls.
     const { result } = await withFakeGhSequence(
       ["labels_empty"],
       () => tracker.labels.reconcileLabels({}, {
