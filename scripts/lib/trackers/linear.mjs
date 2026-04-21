@@ -471,7 +471,10 @@ async function linearGetIssue(gql, _target, _caches, _ctx, payload) {
 }
 
 async function linearListIssues(gql, target, caches, _ctx, payload = {}) {
-  const { state, labels: filterLabels, first = 50 } = payload;
+  const { state, labels: filterLabels, first: rawFirst = 50 } = payload;
+  const first = typeof rawFirst === "number" && rawFirst > 0
+    ? Math.min(Math.floor(rawFirst), 1000)
+    : 50;
   const teamId = await resolveTeamId(gql, target, caches);
   const filter = { team: { id: { eq: teamId } } };
   if (state) {
