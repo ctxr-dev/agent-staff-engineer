@@ -249,7 +249,7 @@ async function linearCreateIssue(gql, target, caches, _ctx, payload) {
     match = nodes.find((n) => n.title === title);
     if (match) break;
     dedupeScanned += nodes.length;
-    if (!searchData?.issues?.pageInfo?.hasNextPage) break;
+    if (nodes.length === 0 || !searchData?.issues?.pageInfo?.hasNextPage) break;
     dedupeCursor = searchData.issues.pageInfo.endCursor;
   }
   if (match) {
@@ -393,6 +393,14 @@ async function linearRelabelIssue(gql, _target, caches, _ctx, payload) {
         `linear issues.relabelIssue: every add/remove entry must be a non-empty string; got ${JSON.stringify(name)}`,
       );
     }
+  }
+  const addSet = new Set(add.map((n) => n.trim().toLowerCase()));
+  const removeSet = new Set(remove.map((n) => n.trim().toLowerCase()));
+  const overlap = [...addSet].filter((n) => removeSet.has(n));
+  if (overlap.length > 0) {
+    throw new Error(
+      `linear issues.relabelIssue: labels appear in both add and remove: ${overlap.join(", ")}`,
+    );
   }
   if (add.length === 0 && remove.length === 0) {
     return { id: issueId, labels: [], noop: true };
@@ -553,6 +561,11 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
   const updated = [];
   const unchanged = [];
   for (const want of taxonomy) {
+    if (want == null || (typeof want !== "string" && typeof want !== "object")) {
+      throw new TypeError(
+        `linear labels.reconcileLabels: each taxonomy entry must be a string or {name, color?}; got ${JSON.stringify(want)}`,
+      );
+    }
     const name = typeof want === "string" ? want : want.name;
     const color = typeof want === "string" ? undefined : want.color;
     if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -623,6 +636,13 @@ async function linearRelabelBulk(gql, _target, caches, _ctx, payload) {
     throw new TypeError(
       "linear labels.relabelBulk: plan must be a non-empty array of {from, to}",
     );
+  }
+  for (const entry of plan) {
+    if (!entry || typeof entry !== "object") {
+      throw new TypeError(
+        `linear labels.relabelBulk: each plan entry must be {from, to}; got ${JSON.stringify(entry)}`,
+      );
+    }
   }
   // On Linear, labels are workspace-scoped, so a "rename" is done by
   // updating the label itself (not per-issue). Each {from, to} entry
