@@ -7,8 +7,10 @@ Reusable methodology for taking a change from first commit through PR, external 
 ## 0. Variables to set once per PR
 
 ```bash
-OWNER=<your-github-org-or-user>    # from project.org in ops.config.json
-REPO=<your-repo-name>              # from project.repo in ops.config.json
+OWNER=<your-github-org-or-user>    # from trackers.dev.owner in ops.config.json
+REPO=<your-repo-name>              # from trackers.dev.repo in ops.config.json
+# NB: project.repo in ops.config.json is already "owner/name";
+# do NOT substitute it here. The gh commands below join OWNER/REPO.
 PR_NUMBER=1                        # after you create the PR
 BRANCH=feat/my-change              # feature branch name
 ```

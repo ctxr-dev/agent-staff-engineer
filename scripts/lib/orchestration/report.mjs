@@ -26,6 +26,14 @@ import { validate } from "../schema.mjs";
  *   3. Parsed object fails soldier-report schema validation.
  *   4. Message contains a JSON block earlier AND trailing text.
  *
+ * THROWS synchronously when the `schema` argument is null, not an
+ * object, or an array. That condition is a CALLER bug (the Captain
+ * passed the wrong schema), not a SOLDIER bug, so the function
+ * surfaces it as a TypeError to be caught during development rather
+ * than folded into the `errors` channel. Every OTHER failure mode
+ * returns `{ report: null, errors }` so callers can handle Soldier
+ * output uniformly.
+ *
  * The function refuses to auto-extract a JSON object from the middle
  * of a Soldier's message. Per the briefing contract, the JSON report
  * must be the FINAL message. Loose extraction would let a Soldier's

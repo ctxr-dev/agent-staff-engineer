@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   buildBriefing,
@@ -7,6 +10,12 @@ import {
   SHAPES,
   REQUIRED_VARS,
 } from "../scripts/lib/orchestration/briefing.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SKILL_MD = await readFile(
+  join(__dirname, "..", "skills", "orchestrator", "SKILL.md"),
+  "utf8",
+);
 
 describe("SHAPES + REQUIRED_VARS", () => {
   it("exposes the three documented Soldier shapes", () => {
@@ -20,15 +29,59 @@ describe("SHAPES + REQUIRED_VARS", () => {
     }
   });
 
-  it("required-var lists match the skill's documented placeholders", () => {
-    // Lock the contract between briefing.mjs and skills/orchestrator/SKILL.md.
-    // If someone adds a {{new_var}} to a template they must bump REQUIRED_VARS too.
+  it("required-var lists match the placeholders in templateFor() output", () => {
+    // Lock the briefing.mjs internal contract: if someone adds a
+    // {{new_var}} to an in-code template they must bump REQUIRED_VARS
+    // too. This is the FAST check; the drift-vs-SKILL.md check below
+    // locks the cross-file contract.
     for (const shape of SHAPES) {
       const template = templateFor(shape);
       const placeholders = [...template.matchAll(/\{\{([a-zA-Z0-9_]+)\}\}/g)].map((m) => m[1]);
       const unique = [...new Set(placeholders)].sort();
       const declared = [...REQUIRED_VARS[shape]].sort();
       assert.deepEqual(unique, declared, `${shape} template placeholders do not match REQUIRED_VARS`);
+    }
+  });
+
+  it("briefing.mjs templates match the canonical prose in skills/orchestrator/SKILL.md (no drift)", () => {
+    // Parse the three fenced ```text blocks under "## Briefing
+    // templates" in SKILL.md and compare them to templateFor(shape)
+    // verbatim. Drift between the code and the doc means the Soldier
+    // briefing the Captain sends differs from what the operator
+    // reference describes; fail the test now rather than let the
+    // divergence ship.
+    const extractTextBlocks = (md) => {
+      const re = /```text\n([\s\S]*?)```/g;
+      const blocks = [];
+      let match;
+      while ((match = re.exec(md)) !== null) {
+        // Trim a trailing newline introduced by the closing fence.
+        blocks.push(match[1].replace(/\n$/, ""));
+      }
+      return blocks;
+    };
+    const blocks = extractTextBlocks(SKILL_MD);
+    // The skill's "## Briefing templates" section documents the
+    // three shapes in order: Explorer, Implementer, Reviewer.
+    // Worked-example blocks come later in the same file and are
+    // not templates, so we match on the opening sentence each
+    // template starts with.
+    const byShape = {};
+    for (const block of blocks) {
+      if (block.startsWith("You are an Explorer Soldier")) byShape.explorer = block;
+      else if (block.startsWith("You are an Implementer Soldier")) byShape.implementer = block;
+      else if (block.startsWith("You are a Reviewer Soldier")) byShape.reviewer = block;
+    }
+    for (const shape of SHAPES) {
+      assert.ok(
+        byShape[shape],
+        `skills/orchestrator/SKILL.md is missing the ${shape} briefing block`,
+      );
+      assert.equal(
+        templateFor(shape),
+        byShape[shape],
+        `${shape} template in briefing.mjs does not match skills/orchestrator/SKILL.md verbatim`,
+      );
     }
   });
 });
@@ -46,7 +99,11 @@ describe("buildBriefing: happy path", () => {
     assert.ok(out.includes("Production gh CLI config."));
     assert.ok(out.includes("grep -n 'Tracker' scripts/lib/trackers/tracker.mjs"));
     // No unfilled placeholders left.
-    assert.ok(!/\{\{[a-z_]+\}\}/.test(out), "template still has unfilled {{ }}");
+    // Match the placeholder grammar used in briefing.mjs's extraction
+    // regex ([a-zA-Z0-9_]+). A narrower check ([a-z_]+) would miss
+    // mixed-case or digit-containing placeholders if the templates
+    // ever grow them.
+    assert.ok(!/\{\{[a-zA-Z0-9_]+\}\}/.test(out), "template still has unfilled {{ }}");
   });
 
   it("is deterministic for the same inputs", () => {

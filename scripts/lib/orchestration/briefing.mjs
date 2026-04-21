@@ -103,7 +103,7 @@ You honour every bundle rule the Captain honours. In particular:
 rules/pr-workflow.md (two human gates stay human), rules/no-dashes.md
 (no em or en dashes), rules/tracker-source-of-truth.md (tracker writes go
 through tracker-sync if at all). If you hit ambiguity per
-rules/ambiguity-halt.md, return status "partial" with blockers populated.
+rules/ambiguity-halt.md, return \`status: "partial"\` with blockers populated.
 
 Return a JSON object that validates against
 schemas/soldier-report.schema.json:
