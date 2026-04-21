@@ -25,7 +25,9 @@ const SCHEMA = JSON.parse(
   ),
 );
 
-const PR_ID_RE = /^([^/]+)\/([^#]+)#(\d+)$/;
+// Match owner/repo#number. Both owner and repo segments reject "/" and path
+// separators so the derived filename is always a single path component.
+const PR_ID_RE = /^([A-Za-z0-9_.][A-Za-z0-9_.-]*)\/([A-Za-z0-9_.][A-Za-z0-9_.-]*)#(\d+)$/;
 
 /**
  * Derive the state filename from a canonical prId ("owner/repo#123").
@@ -102,10 +104,16 @@ export async function listPendingPrStates(stateDir) {
     const pausedExists = await exists(join(stateDir, `${base}.paused`));
     if (stoppedExists || pausedExists) continue;
 
-    const data = await readJsonOrNull(join(stateDir, name));
-    if (data && data.prId) {
-      results.push({ prId: data.prId, state: data });
+    const filePath = join(stateDir, name);
+    const data = await readJsonOrNull(filePath);
+    if (!data || !data.prId) continue;
+
+    const { ok, errors } = validate(SCHEMA, data);
+    if (!ok) {
+      const detail = errors.map((e) => `  ${e.path}: ${e.message}`).join("\n");
+      throw new Error(`PR state file ${filePath} failed schema validation:\n${detail}`);
     }
+    results.push({ prId: data.prId, state: data });
   }
   return results;
 }

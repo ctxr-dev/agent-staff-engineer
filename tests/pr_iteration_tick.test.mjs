@@ -9,9 +9,9 @@ import {
   writePrState,
   readPrState,
   markPrStateStopped,
+  markPrStatePaused,
   isStatePaused,
 } from "../scripts/lib/pr-iteration/state.mjs";
-import { exists } from "../scripts/lib/fsx.mjs";
 
 const scratch = await mkdtemp(join(tmpdir(), "pr-iter-tick-"));
 after(async () => {
@@ -70,6 +70,27 @@ describe("runTick: user-cancelled", () => {
 
     assert.equal(result.done, true);
     assert.equal(result.action, "user-cancelled");
+  });
+});
+
+describe("runTick: paused", () => {
+  it("returns done + paused when .paused sidecar exists (no remote call)", async () => {
+    const dir = join(scratch, "paused-gate");
+    const state = makeState();
+    await writePrState(dir, state);
+    await markPrStatePaused(dir, state.prId, "safety cap");
+
+    let pollCalled = false;
+    const tracker = {
+      review: {
+        pollForReview: async () => { pollCalled = true; return {}; },
+      },
+    };
+    const result = await runTick(tracker, state, { stateDir: dir });
+
+    assert.equal(result.done, true);
+    assert.equal(result.action, "paused");
+    assert.equal(pollCalled, false, "should not call pollForReview when paused");
   });
 });
 

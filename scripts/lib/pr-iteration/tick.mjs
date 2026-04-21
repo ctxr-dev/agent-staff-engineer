@@ -12,6 +12,7 @@
 // function.
 
 import {
+  isStatePaused,
   isStateStopped,
   markPrStatePaused,
   removePrState,
@@ -55,9 +56,12 @@ function buildCtx(state) {
 export async function runTick(tracker, state, opts) {
   const { stateDir, maxConsecutiveWakes = DEFAULT_MAX_CONSECUTIVE_WAKES } = opts;
 
-  // ── 1. User-cancel gate ──
+  // ── 1. User-cancel / paused gates ──
   if (await isStateStopped(stateDir, state.prId)) {
     return { done: true, action: "user-cancelled", state };
+  }
+  if (await isStatePaused(stateDir, state.prId)) {
+    return { done: true, action: "paused", state };
   }
 
   // ── 2. Single remote poll ──

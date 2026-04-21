@@ -35,7 +35,7 @@ Each round is the same six steps. The loop repeats until the exit conditions hol
 
 - All three exit conditions hold: report state, write a final `pr-iteration-report.md` artefact into the wiki (per `rules/llm-wiki.md`), delete the state file, and stop. Never merge.
 - Max consecutive wakes reached (default 96, roughly 7.2 hours of elapsed wall time at 270s intervals): the tick writes a `.paused` sidecar next to the state file and stops rescheduling. Surface a "loop paused: manual inspection needed" message with the last-known state. Human deletes the `.paused` file to resume on the next session.
-- User cancels ("stop the PR iteration"): agent writes a `.stopped` sidecar. The next wakeup fire reads the sidecar and exits without rescheduling, archiving the state as `<prId>.stopped.json`.
+- User cancels ("stop the PR iteration"): agent writes a `.stopped` sidecar next to the state file (same basename, `.stopped` extension). The next wakeup fire reads the sidecar and exits without rescheduling. The state file remains in place for post-hoc inspection; delete it manually when no longer needed.
 - Provider declines (`NotSupportedError`): the provider is the stub for this tracker kind. Surface a clean "pr-iteration not supported for tracker kind '<kind>'; halting at In review" message to the human and stop. Do not fall back to a silent no-op.
 - CI goes red: fetch failed-step log lines, include them in the round's report, fix, re-push. Same loop.
 - Legacy poll timeout (autonomous mode disabled only): surface the timeout with the last-known poll state and stop without committing any changes.
