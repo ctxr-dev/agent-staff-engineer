@@ -1620,7 +1620,20 @@ async function fetchAllRepoLabels(owner, repo) {
       );
     }
     const conn = data.repository.labels;
-    all.push(...(conn.nodes ?? []));
+    // GraphQL connections can legally return null entries in
+    // partial responses. Filter to well-shaped label nodes so
+    // downstream (computeLabelReconcilePlan) can rely on every
+    // entry having `name`, `color`, and a string-or-null
+    // `description`.
+    const pageNodes = (conn.nodes ?? []).filter(
+      (node) =>
+        node &&
+        typeof node.id === "string" &&
+        typeof node.name === "string" &&
+        typeof node.color === "string" &&
+        (node.description === null || typeof node.description === "string"),
+    );
+    all.push(...pageNodes);
     if (!conn.pageInfo?.hasNextPage) break;
     after = conn.pageInfo.endCursor;
   }
@@ -2210,10 +2223,17 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
       );
     }
     const conn = project.items;
-    // `conn.nodes` can legally be null in GraphQL connections when
-    // the server returns a partial response; coalesce to an empty
-    // array so the loop below doesn't throw on iteration.
+    // `conn.nodes` and its entries can legally be null in GraphQL
+    // connections when the server returns a partial response.
+    // Coalesce the array, and fail loud on a null entry rather
+    // than crashing on property access — a null item node is a
+    // server-side data-integrity signal, not a safe-to-skip case.
     for (const n of (conn?.nodes ?? [])) {
+      if (!n) {
+        throw new Error(
+          `github projects.listProjectItems: project #${projectNumber} returned a null item node (partial GraphQL response); retry or narrow the query`,
+        );
+      }
       if (n.fieldValues?.pageInfo?.hasNextPage) {
         throw new Error(
           `github projects.listProjectItems: item ${n.id} has more than 50 field values; refusing to return truncated data`,
@@ -2226,6 +2246,10 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
       // they can iterate with for..in safely.
       const fieldMap = Object.create(null);
       for (const fv of (n.fieldValues?.nodes ?? [])) {
+        // GraphQL connection entries can be null. Skip silently:
+        // unlike a null item node, a null field-value entry is
+        // just an empty cell, not a data-integrity error.
+        if (!fv || typeof fv !== "object") continue;
         const fname = fv.field?.name;
         if (!fname) continue;
         if ("text" in fv) fieldMap[fname] = fv.text;
