@@ -1,6 +1,6 @@
 // lib/trackers/github.mjs
-// GitHub implementation of the Tracker contract. Two namespaces
-// are fully implemented:
+// GitHub implementation of the Tracker contract. All four
+// namespaces on the Tracker surface are fully implemented:
 //   - review.*  against the `requestReviews`, `reviewThreads`,
 //     `resolveReviewThread`, `statusCheckRollup` GraphQL mutations
 //     captured in skills/pr-iteration/runbook.md (backs skills/pr-iteration).
@@ -8,8 +8,12 @@
 //     get, list) backing every bundle skill that consumes
 //     tracker-sync.issues.* at runtime (dev-loop, regression-handler,
 //     adapt-system, release-tracker's downstream flows).
-// The remaining two namespaces, projects.* and labels.*, are stubbed
-// and throw NotSupportedError; PR 10 wires them onto this file.
+//   - labels.*  reconcileLabels + relabelBulk, backing
+//     adapt-system's label-taxonomy reconciles and bulk renames.
+//   - projects.*  reconcileProjectFields, listProjectItems,
+//     updateProjectField on GitHub Projects v2, backing
+//     release-tracker's umbrella field writes and any caller that
+//     needs custom Project v2 field reads / writes.
 //
 // Why GraphQL and not REST for review: the runbook's step 4 documents
 // that the REST `POST /repos/.../requested_reviewers` endpoint silently
@@ -24,7 +28,6 @@
 
 import { ghGraphqlMutation, ghGraphqlQuery } from "../ghExec.mjs";
 import {
-  NotSupportedError,
   REVIEW_METHODS,
   TRACKER_NAMESPACES,
 } from "./tracker.mjs";
@@ -60,10 +63,23 @@ export function makeGithubTracker(target = {}) {
     getIssue: (ctx, payload) => githubGetIssue(target, ctx, payload),
     listIssues: (ctx, payload) => githubListIssues(target, ctx, payload),
   };
+  // labels and projects namespaces follow the same closure-over-target
+  // pattern as issues. Destructured callers (`const {reconcileLabels}
+  // = tracker.labels`) keep working.
+  const labels = {
+    reconcileLabels: (ctx, payload) => githubReconcileLabels(target, ctx, payload),
+    relabelBulk: (ctx, payload) => githubRelabelBulk(target, ctx, payload),
+  };
+  const projects = {
+    listProjectItems: (ctx, payload) => githubListProjectItems(target, ctx, payload),
+    updateProjectField: (ctx, payload) => githubUpdateProjectField(target, ctx, payload),
+    reconcileProjectFields: (ctx, payload) => githubReconcileProjectFields(target, ctx, payload),
+  };
   // Construction-time coverage assert: if REVIEW_METHODS (or the
-  // issues list in TRACKER_NAMESPACES) grows a new entry and this
-  // file forgets to wire it, fail loudly here rather than letting
-  // the skill hit a bare `x is not a function` at runtime.
+  // issues / labels / projects lists in TRACKER_NAMESPACES) grows a
+  // new entry and this file forgets to wire it, fail loudly here
+  // rather than letting the skill hit a bare `x is not a function`
+  // at runtime.
   const missingReview = REVIEW_METHODS.filter((m) => typeof review[m] !== "function");
   if (missingReview.length > 0) {
     throw new Error(
@@ -76,40 +92,26 @@ export function makeGithubTracker(target = {}) {
       `makeGithubTracker: missing issues methods [${missingIssues.join(", ")}]; wire them or update TRACKER_NAMESPACES.issues`,
     );
   }
+  const missingLabels = TRACKER_NAMESPACES.labels.filter((m) => typeof labels[m] !== "function");
+  if (missingLabels.length > 0) {
+    throw new Error(
+      `makeGithubTracker: missing labels methods [${missingLabels.join(", ")}]; wire them or update TRACKER_NAMESPACES.labels`,
+    );
+  }
+  const missingProjects = TRACKER_NAMESPACES.projects.filter((m) => typeof projects[m] !== "function");
+  if (missingProjects.length > 0) {
+    throw new Error(
+      `makeGithubTracker: missing projects methods [${missingProjects.join(", ")}]; wire them or update TRACKER_NAMESPACES.projects`,
+    );
+  }
   return {
     kind: "github",
     target,
     review,
     issues,
-    projects: makeStubNamespace("github", "projects"),
-    labels: makeStubNamespace("github", "labels"),
+    labels,
+    projects,
   };
-}
-
-/**
- * Build a namespace full of NotSupportedError-throwing methods. Used
- * by this file's issues/projects/labels placeholders AND by the
- * jira/linear/gitlab stub trackers. Kept here (rather than imported
- * from stub.mjs) so this file is self-contained for the github case.
- *
- * @param {string} kind tracker kind
- * @param {string} namespace one of the keys of TRACKER_NAMESPACES
- */
-function makeStubNamespace(kind, namespace) {
-  const methods = TRACKER_NAMESPACES[namespace];
-  if (!methods) {
-    throw new Error(`makeStubNamespace: unknown namespace '${namespace}'`);
-  }
-  const ns = {};
-  for (const op of methods) {
-    ns[op] = async () => {
-      throw new NotSupportedError(
-        `tracker '${kind}' does not implement '${namespace}.${op}' yet; see skills/tracker-sync/SKILL.md for the current surface`,
-        { kind, op, namespace },
-      );
-    };
-  }
-  return ns;
 }
 
 async function githubRequestReview(ctx) {
@@ -424,7 +426,15 @@ async function countUnresolvedBeyondFirstPage({ owner, repo, prNumber }, startCu
 const GITHUB_OWNER_RE = /^(?=.{1,39}$)[A-Za-z0-9](?:-?[A-Za-z0-9])*$/;
 const GITHUB_REPO_RE  = /^[A-Za-z0-9._-]{1,100}$/;
 
-function resolveRepoCoords(ctx, trackerTarget) {
+/**
+ * Resolve owner + repo for namespaces that need both (issues.*,
+ * labels.*). The optional `prefix` parameter (default "github
+ * issues") names the caller surface in every validation error so
+ * labels.* callers see "github labels.reconcileLabels: ..." rather
+ * than misleading "github issues: ..." prefixes. Existing
+ * issues.* call sites rely on the default.
+ */
+function resolveRepoCoords(ctx, trackerTarget, prefix = "github issues") {
   // Explicit-invalid detection: a caller who passes
   //   ctx.owner = ""  or  ctx.owner = "   "
   // is almost always expressing a bug in their own code, not asking
@@ -438,7 +448,7 @@ function resolveRepoCoords(ctx, trackerTarget) {
     if (v === undefined || v === null) return; // permit fallthrough
     if (!validString(v)) {
       throw new TypeError(
-        `github issues: ctx.${key} must be a non-empty string when supplied; got ${JSON.stringify(v)}`,
+        `${prefix}: ctx.${key} must be a non-empty string when supplied; got ${JSON.stringify(v)}`,
       );
     }
   };
@@ -450,10 +460,10 @@ function resolveRepoCoords(ctx, trackerTarget) {
   const rawOwner = ctx?.owner ?? trackerTarget?.owner;
   const rawRepo = ctx?.repo ?? trackerTarget?.repo;
   if (!validString(rawOwner)) {
-    throw new TypeError("github issues: ctx.owner (or target.owner) is required");
+    throw new TypeError(`${prefix}: ctx.owner (or target.owner) is required`);
   }
   if (!validString(rawRepo)) {
-    throw new TypeError("github issues: ctx.repo (or target.repo) is required");
+    throw new TypeError(`${prefix}: ctx.repo (or target.repo) is required`);
   }
   // Trim first, then validate against GitHub's name constraints.
   // This both canonicalises whitespace-padded config and closes
@@ -465,22 +475,63 @@ function resolveRepoCoords(ctx, trackerTarget) {
   const repo = rawRepo.trim();
   if (!GITHUB_OWNER_RE.test(owner)) {
     throw new TypeError(
-      `github issues: owner must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(owner)}`,
+      `${prefix}: owner must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(owner)}`,
     );
   }
   if (!GITHUB_REPO_RE.test(repo)) {
     throw new TypeError(
-      `github issues: repo must match GitHub's repo-name rules (1-100 chars, alphanumeric + '.' + '-' + '_'); got ${JSON.stringify(repo)}`,
+      `${prefix}: repo must match GitHub's repo-name rules (1-100 chars, alphanumeric + '.' + '-' + '_'); got ${JSON.stringify(repo)}`,
     );
   }
   return { owner, repo };
 }
 
-/** Validate an integer issue number at the input boundary. */
-function requirePositiveInt(value, label) {
+/**
+ * Validate an integer id/number at the input boundary.
+ * `prefix` names the caller surface in the error (eg
+ * "github issues.getIssue", "github projects.listProjectItems").
+ * Defaults to "github issues" for backwards compatibility with
+ * existing call sites.
+ */
+function requirePositiveInt(value, label, prefix = "github issues") {
   if (!Number.isInteger(value) || value <= 0) {
-    throw new TypeError(`github issues: ${label} must be a positive integer; got ${JSON.stringify(value)}`);
+    throw new TypeError(`${prefix}: ${label} must be a positive integer; got ${JSON.stringify(value)}`);
   }
+}
+
+/**
+ * Resolve an owner login for `projects.*` methods where the caller
+ * can name the project explicitly via `payload.projectOwner`.
+ * Precedence: `projectOwner` (payload) > `ctxOwner` (context) >
+ * `targetOwner` (tracker binding). This lets callers run a
+ * project op against a project whose owner differs from the
+ * tracker's default owner, without having to forge a ctx.owner.
+ * All inputs get the same trim + GITHUB_OWNER_RE canonicalisation.
+ */
+function resolveProjectOwner({ projectOwner, ctxOwner, targetOwner }, nsLabel) {
+  const candidates = [
+    ["payload.projectOwner", projectOwner],
+    ["ctx.owner", ctxOwner],
+    ["target.owner", targetOwner],
+  ];
+  for (const [src, value] of candidates) {
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw new TypeError(
+        `github ${nsLabel}: ${src} must be a non-empty string when supplied; got ${JSON.stringify(value)}`,
+      );
+    }
+    const owner = value.trim();
+    if (!GITHUB_OWNER_RE.test(owner)) {
+      throw new TypeError(
+        `github ${nsLabel}: ${src} must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(owner)}`,
+      );
+    }
+    return owner;
+  }
+  throw new TypeError(
+    `github ${nsLabel}: owner is required; supply payload.projectOwner, ctx.owner, or trackerTarget.owner`,
+  );
 }
 
 /**
@@ -1505,4 +1556,1028 @@ async function githubUpdateIssueStatus(trackerTarget, ctx, payload) {
     optionId: option.id,
   });
   return { issueNumber, status, changed: true, optionId: option.id };
+}
+
+// ============================================================================
+// labels.* namespace (PR 10)
+// ============================================================================
+
+/**
+ * Normalise a GitHub label color to its canonical lowercase 6-hex
+ * form (GitHub accepts `#` prefix but strips it; values are case-
+ * insensitive but stored lowercase). Returns `null` if the caller
+ * didn't supply one (caller-chosen omission means "don't manage
+ * color in the diff").
+ */
+function normaliseLabelColor(color) {
+  if (color === undefined || color === null) return null;
+  if (typeof color !== "string") {
+    throw new TypeError(
+      `github labels: color must be a 6-hex string (with or without '#'); got ${JSON.stringify(color)}`,
+    );
+  }
+  const stripped = color.replace(/^#/, "").toLowerCase();
+  if (!/^[0-9a-f]{6}$/.test(stripped)) {
+    throw new TypeError(
+      `github labels: color must be a 6-hex string (with or without '#'); got ${JSON.stringify(color)}`,
+    );
+  }
+  return stripped;
+}
+
+/**
+ * Fetch every label on the repo as `{id, name, color, description}`.
+ * Paginated at GitHub's 100-per-page max; hard-capped at 20 pages.
+ * Throws on repo-null / inaccessible (same wording as sibling helpers).
+ */
+async function fetchAllRepoLabels(owner, repo) {
+  const query = `
+    query($owner: String!, $name: String!, $after: String) {
+      repository(owner: $owner, name: $name) {
+        labels(first: 100, after: $after) {
+          nodes { id name color description }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  `;
+  const MAX_PAGES = 20;
+  let after = null;
+  let page = 0;
+  const all = [];
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    page += 1;
+    if (page > MAX_PAGES) {
+      throw new Error(
+        `github labels: repo ${owner}/${repo} has more than ${MAX_PAGES * 100} labels; refusing to paginate further`,
+      );
+    }
+    const data = await ghGraphqlQuery(query, { owner, name: repo, after });
+    if (!data?.repository) {
+      throw new Error(
+        `github labels: repository ${owner}/${repo} not found or inaccessible`,
+      );
+    }
+    const conn = data.repository.labels;
+    // GraphQL connections can legally return null entries in
+    // partial responses. Filter to well-shaped label nodes so
+    // downstream (computeLabelReconcilePlan) can rely on every
+    // entry having `name`, `color`, and a string-or-null
+    // `description`.
+    const pageNodes = (conn.nodes ?? []).filter(
+      (node) =>
+        node &&
+        typeof node.id === "string" &&
+        typeof node.name === "string" &&
+        typeof node.color === "string" &&
+        (node.description === null || typeof node.description === "string"),
+    );
+    all.push(...pageNodes);
+    if (!conn.pageInfo?.hasNextPage) break;
+    after = conn.pageInfo.endCursor;
+  }
+  return all;
+}
+
+/**
+ * Compute a reconcile plan: what labels need to be added, edited, or
+ * deprecated so the repo matches the declared taxonomy. Callable
+ * without any network by passing the fetched current labels directly.
+ * Module-local today (not exported); tests exercise it via the
+ * public `reconcileLabels` entry point.
+ *
+ * @param {Array<{name:string, color?:string, description?:string}>} declared
+ *   Desired labels. `name` is the match key; `color` and `description`
+ *   are optional (undefined means "don't manage").
+ * @param {Array<{id:string, name:string, color:string, description:string|null}>} current
+ *   Labels currently on the repo (from fetchAllRepoLabels).
+ * @param {{allowDeprecate?: boolean}} [opts]
+ *   When `allowDeprecate` is true, every label NOT in `declared` is
+ *   added to the `deprecate` bucket. Default false (safe: don't
+ *   propose deletions the caller didn't opt into).
+ * @returns {{ add: object[], edit: object[], deprecate: object[], unchanged: object[] }}
+ */
+function computeLabelReconcilePlan(declared, current, opts = {}) {
+  const { allowDeprecate = false } = opts;
+  const declaredByName = new Map(declared.map((d) => [d.name, d]));
+  const currentByName = new Map(current.map((c) => [c.name, c]));
+  const add = [];
+  const edit = [];
+  const deprecate = [];
+  const unchanged = [];
+  for (const d of declared) {
+    const wantedColor = normaliseLabelColor(d.color);
+    const wantedDescription = d.description ?? null;
+    const existing = currentByName.get(d.name);
+    if (!existing) {
+      add.push({
+        name: d.name,
+        color: wantedColor, // may be null; caller defaults it
+        description: wantedDescription,
+      });
+      continue;
+    }
+    const diffs = [];
+    if (wantedColor !== null && existing.color.toLowerCase() !== wantedColor) {
+      diffs.push("color");
+    }
+    if (d.description !== undefined && (existing.description ?? null) !== wantedDescription) {
+      diffs.push("description");
+    }
+    if (diffs.length > 0) {
+      edit.push({
+        id: existing.id,
+        name: existing.name,
+        changes: diffs,
+        // Only send fields that are actually changing, so the
+        // mutation is minimal and a partial-permission failure
+        // surfaces narrowly.
+        color: diffs.includes("color") ? wantedColor : undefined,
+        description: diffs.includes("description") ? wantedDescription : undefined,
+      });
+    } else {
+      unchanged.push({ id: existing.id, name: existing.name });
+    }
+  }
+  if (allowDeprecate) {
+    for (const c of current) {
+      if (!declaredByName.has(c.name)) {
+        deprecate.push({ id: c.id, name: c.name });
+      }
+    }
+  }
+  return { add, edit, deprecate, unchanged };
+}
+
+/**
+ * labels.reconcileLabels: fetch the repo's current labels, diff
+ * against the caller-supplied taxonomy, apply the diff.
+ *
+ * Payload shape:
+ *   - `taxonomy`: array of `{name, color?, description?}`. `name` is
+ *     the primary key. A missing `color` or `description` means
+ *     "don't manage this field on this label"; existing values are
+ *     left alone.
+ *   - `apply`: default `false` (dry-run). When `false`, returns the
+ *     computed plan without any mutations. When `true`, fires
+ *     createLabel / updateLabel / deleteLabel for each diff entry.
+ *   - `allowDeprecate`: default `false`. When `true`, every repo
+ *     label NOT in `taxonomy` is added to the `deprecate` bucket
+ *     and (if `apply: true`) deleted. Callers who pass a PARTIAL
+ *     taxonomy MUST leave this `false` to avoid mass-deleting
+ *     unrelated labels.
+ *
+ * Idempotent: running twice against the same state produces an
+ * empty plan on the second run.
+ */
+async function githubReconcileLabels(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget, "github labels.reconcileLabels");
+  const { taxonomy, apply = false, allowDeprecate = false } = payload ?? {};
+  // Strict boolean guards. Passing a truthy non-boolean (eg the
+  // string "false" or the number 1) would silently enable writes
+  // or the destructive deprecate path. Reject at the boundary.
+  if (typeof apply !== "boolean") {
+    throw new TypeError(
+      `github labels.reconcileLabels: apply must be a boolean; got ${JSON.stringify(apply)}`,
+    );
+  }
+  if (typeof allowDeprecate !== "boolean") {
+    throw new TypeError(
+      `github labels.reconcileLabels: allowDeprecate must be a boolean; got ${JSON.stringify(allowDeprecate)}`,
+    );
+  }
+  if (!Array.isArray(taxonomy)) {
+    throw new TypeError(
+      "github labels.reconcileLabels: taxonomy must be an array of {name, color?, description?}",
+    );
+  }
+  // Boundary-validate + canonicalise each taxonomy entry. Trim the
+  // name at the boundary and keep the canonical form everywhere
+  // downstream (seen-set dedup, computeLabelReconcilePlan, mutation
+  // payloads). "bug" and "bug " are the same label; treating them
+  // as different would bypass the duplicate check and create a
+  // second label on the repo.
+  const seen = new Set();
+  const normalisedTaxonomy = [];
+  for (const entry of taxonomy) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new TypeError(
+        `github labels.reconcileLabels: every taxonomy entry must be a plain object; got ${JSON.stringify(entry)}`,
+      );
+    }
+    if (typeof entry.name !== "string" || entry.name.trim().length === 0) {
+      throw new TypeError(
+        `github labels.reconcileLabels: entry.name must be a non-empty string; got ${JSON.stringify(entry.name)}`,
+      );
+    }
+    const name = entry.name.trim();
+    if (seen.has(name)) {
+      throw new Error(
+        `github labels.reconcileLabels: duplicate entry name '${name}' in taxonomy`,
+      );
+    }
+    seen.add(name);
+    normaliseLabelColor(entry.color); // throws on bad format; return value ignored here
+    if (entry.description !== undefined && entry.description !== null && typeof entry.description !== "string") {
+      throw new TypeError(
+        `github labels.reconcileLabels: entry.description must be a string or null when provided; got ${JSON.stringify(entry.description)}`,
+      );
+    }
+    normalisedTaxonomy.push({ ...entry, name });
+  }
+  const current = await fetchAllRepoLabels(owner, repo);
+  const plan = computeLabelReconcilePlan(normalisedTaxonomy, current, { allowDeprecate });
+  if (!apply) {
+    return { mode: "dry-run", plan };
+  }
+  // Resolve repo node id ONCE for createLabel (the mutation wants
+  // repositoryId, not owner/name). Existing labels already carry
+  // their node ids from fetchAllRepoLabels.
+  let repoId = null;
+  if (plan.add.length > 0) {
+    const data = await ghGraphqlQuery(
+      `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }`,
+      { owner, name: repo },
+    );
+    repoId = data?.repository?.id;
+    if (!repoId) {
+      throw new Error(
+        `github labels.reconcileLabels: repository ${owner}/${repo} not found or inaccessible`,
+      );
+    }
+  }
+  const applied = { added: [], edited: [], deprecated: [] };
+  for (const a of plan.add) {
+    const color = a.color ?? "ededed"; // GitHub's grey default; caller may have declined to specify
+    const descArg = a.description != null ? JSON.stringify(a.description) : "null";
+    const mutation = `
+      mutation($repoId: ID!, $name: String!, $color: String!) {
+        createLabel(input: { repositoryId: $repoId, name: $name, color: $color, description: ${descArg} }) {
+          label { id name color }
+        }
+      }
+    `;
+    await ghGraphqlMutation(mutation, { repoId, name: a.name, color });
+    applied.added.push(a.name);
+  }
+  for (const e of plan.edit) {
+    // Only include fields that are actually changing; GitHub's
+    // updateLabel mutation accepts partial updates.
+    const parts = [`id: $id`];
+    const vars = { id: e.id };
+    if (e.color !== undefined) {
+      parts.push(`color: $color`);
+      vars.color = e.color;
+    }
+    if (e.description !== undefined) {
+      // Description is nullable on updateLabel and we must be able
+      // to clear it explicitly. Inline rather than declaring a
+      // `$description: String` variable because `ghGraphqlExec`
+      // rejects non-string / non-number / non-boolean vars; passing
+      // `null` goes through as an omitted arg, which GraphQL reads
+      // as "don't change this field" instead of "set to null".
+      // Inlining preserves the set-to-null semantics a caller gets
+      // by passing `{description: null}` in the plan.
+      parts.push(`description: ${e.description === null ? "null" : JSON.stringify(e.description)}`);
+    }
+    const parameterDecls = ["$id: ID!"];
+    if (e.color !== undefined) parameterDecls.push("$color: String!");
+    const mutation = `
+      mutation(${parameterDecls.join(", ")}) {
+        updateLabel(input: { ${parts.join(", ")} }) {
+          label { id name color }
+        }
+      }
+    `;
+    await ghGraphqlMutation(mutation, vars);
+    applied.edited.push({ name: e.name, changes: e.changes });
+  }
+  for (const d of plan.deprecate) {
+    const mutation = `
+      mutation($id: ID!) {
+        deleteLabel(input: { id: $id }) {
+          clientMutationId
+        }
+      }
+    `;
+    await ghGraphqlMutation(mutation, { id: d.id });
+    applied.deprecated.push(d.name);
+  }
+  return { mode: "applied", plan, applied };
+}
+
+/**
+ * labels.relabelBulk: apply a rename plan across open issues. For
+ * each `{from, to}` entry, every open issue carrying `from` gets
+ * `to` added and `from` removed (in that order; GitHub accepts the
+ * pair even on the same issue).
+ *
+ * Payload:
+ *   - `plan`: array of `{from, to}`. Both must be strings.
+ *   - `apply`: default `false`. Dry-run returns the list of issues
+ *     that WOULD be relabeled, not the mutations.
+ *   - `state`: default `"OPEN"`. Filter for which issues to scan
+ *     (same semantics as listIssues).
+ *
+ * Order is preserved per entry; within an entry, issues are
+ * relabeled in the order `listIssues` returns them. Delta
+ * semantics: if an issue already has `to` and lacks `from`, no-op
+ * for that issue + that entry.
+ */
+async function githubRelabelBulk(trackerTarget, ctx, payload) {
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget, "github labels.relabelBulk");
+  const { plan, apply = false, state = "OPEN" } = payload ?? {};
+  if (typeof apply !== "boolean") {
+    throw new TypeError(
+      `github labels.relabelBulk: apply must be a boolean; got ${JSON.stringify(apply)}`,
+    );
+  }
+  // Validate `state` at this surface: listIssues accepts the same
+  // set but raises with an "issues.*" error prefix, which is
+  // confusing for a labels.* caller debugging a typo.
+  if (state !== "OPEN" && state !== "CLOSED" && state !== "ALL") {
+    throw new TypeError(
+      `github labels.relabelBulk: state must be one of "OPEN", "CLOSED", or "ALL"; got ${JSON.stringify(state)}`,
+    );
+  }
+  if (!Array.isArray(plan)) {
+    throw new TypeError("github labels.relabelBulk: plan must be an array of {from, to}");
+  }
+  for (const entry of plan) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new TypeError(
+        `github labels.relabelBulk: every plan entry must be a plain object; got ${JSON.stringify(entry)}`,
+      );
+    }
+    if (typeof entry.from !== "string" || entry.from.trim().length === 0) {
+      throw new TypeError(
+        `github labels.relabelBulk: entry.from must be a non-empty string; got ${JSON.stringify(entry.from)}`,
+      );
+    }
+    if (typeof entry.to !== "string" || entry.to.trim().length === 0) {
+      throw new TypeError(
+        `github labels.relabelBulk: entry.to must be a non-empty string; got ${JSON.stringify(entry.to)}`,
+      );
+    }
+    if (entry.from.trim() === entry.to.trim()) {
+      throw new Error(
+        `github labels.relabelBulk: entry.from and entry.to must differ; got '${entry.from}' for both`,
+      );
+    }
+  }
+  // Dedicated scanner. Reusing listIssues is wrong here because its
+  // label filter is client-side (GitHub's Repository.issues accepts
+  // `labels` but listIssues intentionally doesn't pass it through,
+  // since it supports multi-label AND semantics that differ from the
+  // server-side arg). On a large repo with many open issues but few
+  // carrying `from`, listIssues would scan its 10-page cap of raw
+  // issues (1000 total) before collecting enough post-filter matches
+  // and throw, making bulk relabel unusable even when the match set
+  // is small. This scanner pushes the label filter to the server,
+  // so every returned node is already a match, and fails loud only
+  // when the raw page cap is hit AND the server says more pages
+  // exist (i.e. the match set itself may be truncated).
+  const BULK_RELABEL_PAGE_SIZE = 100;
+  const BULK_RELABEL_MAX_PAGES = 10;
+  const states =
+    state === "ALL" ? ["OPEN", "CLOSED"] : state === "CLOSED" ? ["CLOSED"] : ["OPEN"];
+  // Inline states + labels into the query string: ghGraphqlExec
+  // rejects complex-typed variables (arrays / objects), so IssueState
+  // lists and label-name lists must be baked into the query text.
+  // states[] is fixed-enum-safe; labels uses JSON.stringify to
+  // produce a properly-escaped GraphQL string literal per item
+  // (defence against quote injection in a label name).
+  const statesInline = `[${states.join(", ")}]`;
+  async function scanIssuesCarryingLabel(fromLabel) {
+    const labelsInline = `[${JSON.stringify(fromLabel)}]`;
+    const query = `
+      query($owner: String!, $repo: String!, $first: Int!, $after: String) {
+        repository(owner: $owner, name: $repo) {
+          issues(first: $first, after: $after, states: ${statesInline}, labels: ${labelsInline}, orderBy: { field: CREATED_AT, direction: DESC }) {
+            nodes { number }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    `;
+    let after = null;
+    let pageCount = 0;
+    const matching = [];
+    while (pageCount < BULK_RELABEL_MAX_PAGES) {
+      const data = await ghGraphqlQuery(query, {
+        owner,
+        repo,
+        first: BULK_RELABEL_PAGE_SIZE,
+        after,
+      });
+      const conn = data?.repository?.issues;
+      if (!conn) {
+        throw new Error(
+          `github labels.relabelBulk: repository ${owner}/${repo} not found or inaccessible`,
+        );
+      }
+      for (const n of (conn.nodes ?? [])) {
+        if (n && typeof n.number === "number") matching.push({ number: n.number });
+      }
+      pageCount += 1;
+      if (!conn.pageInfo?.hasNextPage) return { matching, truncated: false };
+      after = conn.pageInfo.endCursor ?? null;
+    }
+    return { matching, truncated: true };
+  }
+  const results = [];
+  for (const entry of plan) {
+    const from = entry.from.trim();
+    const to = entry.to.trim();
+    const { matching, truncated } = await scanIssuesCarryingLabel(from);
+    if (truncated) {
+      throw new Error(
+        `github labels.relabelBulk: scanning ${owner}/${repo} for issues carrying '${from}' reached the ${BULK_RELABEL_PAGE_SIZE * BULK_RELABEL_MAX_PAGES}-issue cap (${BULK_RELABEL_MAX_PAGES} pages) with more pages still available; refusing to bulk relabel because the match set may be truncated. Narrow the rename (for example, run it per area or after closing stale issues), split the plan into multiple passes, or raise BULK_RELABEL_PAGE_SIZE / BULK_RELABEL_MAX_PAGES in code if a higher cap is required.`,
+      );
+    }
+    const entryResult = { from, to, issues: matching.map((m) => m.number), changed: [] };
+    if (apply && matching.length > 0) {
+      for (const iss of matching) {
+        try {
+          const delta = await githubRelabelIssue(trackerTarget, ctx, {
+            issueNumber: iss.number,
+            add: [to],
+            remove: [from],
+          });
+          // Only record as changed when the delta actually mutated
+          // labels. relabelIssue returns {added: [], removed: []}
+          // when the issue already had `to` and lacked `from`
+          // (listIssues' label filter can drift between our query
+          // and the per-issue mutation).
+          const mutated =
+            (delta?.added?.length ?? 0) > 0 || (delta?.removed?.length ?? 0) > 0;
+          if (mutated) {
+            entryResult.changed.push(iss.number);
+          }
+        } catch (e) {
+          // Don't let one issue's failure halt the bulk; surface on
+          // the result so the caller can retry the failures. Error
+          // shape mirrors createIssue's labelError (plain object).
+          entryResult.failures = entryResult.failures ?? [];
+          entryResult.failures.push({
+            issueNumber: iss.number,
+            error: { name: e?.name ?? "Error", message: e?.message ?? String(e) },
+          });
+        }
+      }
+    }
+    results.push(entryResult);
+  }
+  return { mode: apply ? "applied" : "dry-run", results };
+}
+
+// ============================================================================
+// projects.* namespace (PR 10)
+// ============================================================================
+
+/**
+ * Resolve a Project v2 board's node id from (owner, number). The
+ * owner is a login name (User or Organization); Projects v2 uses
+ * the repositoryOwner.projectV2 field on either kind.
+ *
+ * Throws with a pointed error on owner-not-found / project-not-found;
+ * the caller doesn't need to distinguish (both result in "cannot
+ * proceed").
+ */
+async function resolveProjectNodeId(owner, projectNumber) {
+  const query = `
+    query($owner: String!, $number: Int!) {
+      repositoryOwner(login: $owner) {
+        ... on ProjectV2Owner {
+          projectV2(number: $number) {
+            id
+            title
+            fields(first: 100) {
+              nodes {
+                ... on ProjectV2FieldCommon { id name dataType }
+                ... on ProjectV2SingleSelectField {
+                  options { id name }
+                }
+              }
+              pageInfo { hasNextPage }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const data = await ghGraphqlQuery(query, { owner, number: projectNumber });
+  const p = data?.repositoryOwner?.projectV2;
+  if (!p?.id) {
+    throw new Error(
+      `github projects: Project v2 #${projectNumber} not found under owner '${owner}'`,
+    );
+  }
+  if (p.fields?.pageInfo?.hasNextPage) {
+    // Fields > 100 on one project is rare but possible; fail loud
+    // rather than silently omit.
+    throw new Error(
+      `github projects: Project v2 #${projectNumber} has more than 100 custom fields; pagination not implemented`,
+    );
+  }
+  return { id: p.id, title: p.title, fields: p.fields?.nodes ?? [] };
+}
+
+/**
+ * projects.listProjectItems: paginated read-only snapshot of
+ * ProjectV2 items and their field values.
+ *
+ * Payload:
+ *   - `projectNumber`: integer; required.
+ *   - `projectOwner`: optional; defaults to trackerTarget.owner.
+ *   - `first`: page size (max 100; default 100).
+ *   - `after`: cursor for the next page (null for first page).
+ *   - `limit`: cross-page cap (default 500; hard max 2000).
+ *
+ * Returns `{items: [{id, type, content, fieldValues}], hasNextPage, endCursor}`.
+ * `content` is the linked Issue / PR / DraftIssue summary; fieldValues
+ * is a map of `fieldName -> value` for the item. Values are
+ * normalised per field type: text / number / date fields return
+ * scalar strings / numbers / ISO dates; richer field types return
+ * structured objects — single-select `{name, optionId}`, iteration
+ * `{title, startDate, duration}`. Callers that want a flat scalar
+ * form should project each value via its field's known type.
+ *
+ * `hasNextPage` reflects the server's pageInfo: true when more
+ * items exist on the board past the ones we returned. `endCursor`
+ * follows GraphQL convention — it is the cursor of the LAST
+ * returned item, which a caller passes back as `after` to fetch
+ * the next page. The pagination loop caps per-request `first` to
+ * the remaining budget, so when `limit` truncates the window the
+ * server never returned any item we didn't keep; `endCursor`
+ * therefore always matches the last item in `items[]`.
+ */
+async function githubListProjectItems(trackerTarget, ctx, payload) {
+  const { projectNumber, projectOwner, first = 100, after: rawAfter = null, limit = 500 } = payload ?? {};
+  requirePositiveInt(projectNumber, "projectNumber", "github projects.listProjectItems");
+  // Validate `after` at the boundary: must be null/undefined or a
+  // non-empty string. Letting a number or object flow into the
+  // GraphQL $after variable produces a less actionable error
+  // straight from the server.
+  let after;
+  if (rawAfter === null || rawAfter === undefined) {
+    after = null;
+  } else if (typeof rawAfter !== "string" || rawAfter.trim().length === 0) {
+    throw new TypeError(
+      `github projects.listProjectItems: after must be null or a non-empty string cursor; got ${JSON.stringify(rawAfter)}`,
+    );
+  } else {
+    after = rawAfter.trim();
+  }
+  if (!Number.isInteger(first) || first <= 0 || first > 100) {
+    throw new TypeError(
+      `github projects.listProjectItems: first must be an integer 1-100; got ${JSON.stringify(first)}`,
+    );
+  }
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new TypeError(
+      `github projects.listProjectItems: limit must be a positive integer; got ${JSON.stringify(limit)}`,
+    );
+  }
+  // Owner resolution, aligned with the payload contract:
+  // `payload.projectOwner` wins when set (a caller may name the
+  // project explicitly without a repo binding), else
+  // `ctx.owner`, else `trackerTarget.owner`. This lets
+  // listProjectItems run with only projectOwner supplied by the
+  // caller — the previous ordering required ctx.owner or
+  // target.owner even when projectOwner was set.
+  const ownerLogin = resolveProjectOwner(
+    { projectOwner, ctxOwner: ctx?.owner, targetOwner: trackerTarget?.owner },
+    "projects.listProjectItems",
+  );
+  const HARD_CAP = 2000;
+  const effectiveLimit = Math.min(limit, HARD_CAP);
+  const query = `
+    query($owner: String!, $number: Int!, $first: Int!, $after: String) {
+      repositoryOwner(login: $owner) {
+        ... on ProjectV2Owner {
+          projectV2(number: $number) {
+            items(first: $first, after: $after) {
+              nodes {
+                id
+                type
+                content {
+                  __typename
+                  ... on Issue { number title url state }
+                  ... on PullRequest { number title url state }
+                  ... on DraftIssue { title }
+                }
+                fieldValues(first: 50) {
+                  nodes {
+                    ... on ProjectV2ItemFieldTextValue { field { ... on ProjectV2FieldCommon { name } } text }
+                    ... on ProjectV2ItemFieldNumberValue { field { ... on ProjectV2FieldCommon { name } } number }
+                    ... on ProjectV2ItemFieldDateValue { field { ... on ProjectV2FieldCommon { name } } date }
+                    ... on ProjectV2ItemFieldSingleSelectValue { field { ... on ProjectV2FieldCommon { name } } name optionId }
+                    ... on ProjectV2ItemFieldIterationValue { field { ... on ProjectV2FieldCommon { name } } title startDate duration }
+                  }
+                  pageInfo { hasNextPage }
+                }
+              }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const out = [];
+  let cursor = after;
+  // Derive the page cap from `effectiveLimit / first` so a caller
+  // passing `first: 10, limit: 500` doesn't trip at item 200. Keep
+  // a floor of 20 as a safety buffer: GitHub's Projects v2 API can
+  // legally return fewer than `first` items per page (eg when field
+  // values are cached differently), so the best-case math alone
+  // would reject a request that would actually succeed. An
+  // independent hard ceiling of 100 prevents pathological input
+  // (`first: 1, limit: 2000` → up to 2000 requests) from burning
+  // gh rate-limit budget. A caller who genuinely needs more items
+  // with a low `first` splits the fetch into resumable calls via
+  // `after`.
+  const HARD_PAGE_CAP = 100;
+  const MAX_PAGES = Math.min(HARD_PAGE_CAP, Math.max(20, Math.ceil(effectiveLimit / first)));
+  let page = 0;
+  let finalCursor = null;
+  let finalHasNext = false;
+  while (out.length < effectiveLimit) {
+    page += 1;
+    if (page > MAX_PAGES) {
+      throw new Error(
+        `github projects.listProjectItems: exceeded ${MAX_PAGES} pages for project #${projectNumber}; increase \`first\` (up to 100), lower \`limit\`, or resume paginating from the returned \`endCursor\` via \`after\``,
+      );
+    }
+    // Cap per-request `first` to the remaining budget so the server
+    // never returns more items than we'll consume. Without this, a
+    // mid-page truncation (eg `first: 100, limit: 150` — 100 on page
+    // 1, then 50 out of 100 on page 2) returns `pageInfo.endCursor`
+    // for the *last server-returned node* (position 100 on page 2),
+    // not the last node the caller keeps (position 50). A caller
+    // resuming with `after: endCursor` would then miss 50 items.
+    const remaining = effectiveLimit - out.length;
+    const perPage = Math.min(first, remaining);
+    const data = await ghGraphqlQuery(query, { owner: ownerLogin, number: projectNumber, first: perPage, after: cursor });
+    const project = data?.repositoryOwner?.projectV2;
+    if (!project) {
+      throw new Error(
+        `github projects.listProjectItems: Project v2 #${projectNumber} not found under owner '${ownerLogin}'`,
+      );
+    }
+    const conn = project.items;
+    // `conn.nodes` and its entries can legally be null in GraphQL
+    // connections when the server returns a partial response.
+    // Coalesce the array, and fail loud on a null entry rather
+    // than crashing on property access — a null item node is a
+    // server-side data-integrity signal, not a safe-to-skip case.
+    for (const n of (conn?.nodes ?? [])) {
+      if (!n) {
+        throw new Error(
+          `github projects.listProjectItems: project #${projectNumber} returned a null item node (partial GraphQL response); retry or narrow the query`,
+        );
+      }
+      if (n.fieldValues?.pageInfo?.hasNextPage) {
+        throw new Error(
+          `github projects.listProjectItems: item ${n.id} has more than 50 field values; refusing to return truncated data`,
+        );
+      }
+      // Null-prototype object so server-controlled field names
+      // (which a motivated admin could set to "__proto__" or
+      // "constructor") cannot walk into Object.prototype and
+      // pollute the runtime. The caller gets a plain data bag
+      // they can iterate with for..in safely.
+      const fieldMap = Object.create(null);
+      for (const fv of (n.fieldValues?.nodes ?? [])) {
+        // GraphQL connection entries can be null. Skip silently:
+        // unlike a null item node, a null field-value entry is
+        // just an empty cell, not a data-integrity error.
+        if (!fv || typeof fv !== "object") continue;
+        const fname = fv.field?.name;
+        if (!fname) continue;
+        if ("text" in fv) fieldMap[fname] = fv.text;
+        else if ("number" in fv) fieldMap[fname] = fv.number;
+        else if ("date" in fv) fieldMap[fname] = fv.date;
+        else if ("optionId" in fv) fieldMap[fname] = { name: fv.name, optionId: fv.optionId };
+        else if ("startDate" in fv) fieldMap[fname] = { title: fv.title, startDate: fv.startDate, duration: fv.duration };
+      }
+      out.push({
+        id: n.id,
+        type: n.type,
+        content: n.content,
+        fieldValues: fieldMap,
+      });
+      // No mid-page `break` needed: `perPage` is already capped at
+      // `remaining`, so the server returns at most `remaining`
+      // items. If it returns fewer, fine — we loop again.
+    }
+    finalHasNext = Boolean(conn?.pageInfo?.hasNextPage);
+    finalCursor = conn?.pageInfo?.endCursor ?? null;
+    if (!finalHasNext) break;
+    cursor = finalCursor;
+  }
+  // `hasNextPage` reflects the server's pageInfo only. `finalCursor`
+  // is the cursor of the last returned item (standard GraphQL
+  // convention) — callers pass it back as `after` to resume from
+  // the next item. The pagination loop above caps per-request
+  // `first` to the remaining budget, so the server never returned
+  // any item we skipped; suppressing `hasNextPage` when `limit`
+  // truncated would hide the fact that more items exist on the
+  // board past the window we returned.
+  return { items: out, hasNextPage: finalHasNext, endCursor: finalCursor };
+}
+
+/**
+ * projects.updateProjectField: write a single field value on a
+ * single item. Refuses to write to a field the project doesn't
+ * declare (via trackerTarget.projects[].fields), because silently
+ * creating fields would drift the schema the team agreed on.
+ *
+ * Payload:
+ *   - `projectNumber`: required.
+ *   - `projectOwner`: optional; defaults to trackerTarget.owner.
+ *   - `itemId`: ProjectV2Item node ID; required.
+ *   - `field`: field name (not ID); required. Must appear in the
+ *     trackerTarget's `projects[i].fields` array for this project
+ *     number.
+ *   - `value`: one of:
+ *     - `{ text: "..." }` for text fields
+ *     - `{ number: 42 }` for number fields
+ *     - `{ date: "2026-04-20" }` for date fields
+ *     - `{ singleSelect: "<option name>" }` for single-select
+ *       fields (the method resolves the option id from the
+ *       project's field definition).
+ *   - `apply`: default `false` (dry-run returns the mutation args
+ *     without firing).
+ *
+ * Refuses to clear a field (null value) in this PR; dedicated
+ * `clearProjectField` helper is a follow-up.
+ */
+async function githubUpdateProjectField(trackerTarget, ctx, payload) {
+  const { projectNumber, projectOwner, itemId, field, value, apply = false } = payload ?? {};
+  if (typeof apply !== "boolean") {
+    throw new TypeError(
+      `github projects.updateProjectField: apply must be a boolean; got ${JSON.stringify(apply)}`,
+    );
+  }
+  requirePositiveInt(projectNumber, "projectNumber", "github projects.updateProjectField");
+  if (typeof itemId !== "string" || itemId.trim().length === 0) {
+    throw new TypeError(
+      `github projects.updateProjectField: itemId must be a non-empty string; got ${JSON.stringify(itemId)}`,
+    );
+  }
+  const canonicalItemId = itemId.trim();
+  if (typeof field !== "string" || field.trim().length === 0) {
+    throw new TypeError(
+      `github projects.updateProjectField: field must be a non-empty string; got ${JSON.stringify(field)}`,
+    );
+  }
+  const canonicalField = field.trim();
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(
+      "github projects.updateProjectField: value must be a plain object with one of {text, number, date, singleSelect}",
+    );
+  }
+  // Owner resolution aligned with the payload contract (see
+  // listProjectItems / reconcileProjectFields): payload.projectOwner
+  // > ctx.owner > trackerTarget.owner.
+  const ownerLogin = resolveProjectOwner(
+    { projectOwner, ctxOwner: ctx?.owner, targetOwner: trackerTarget?.owner },
+    "projects.updateProjectField",
+  );
+  // Normalise the configured `p.owner` before comparing. A config
+  // that accidentally ships "acme " (trailing whitespace) would
+  // otherwise never match the already-trimmed `ownerLogin` and
+  // block writes with a misleading "not declared" error. The
+  // schema (githubProjectV2.required) mandates `owner` on every
+  // declared project entry, so there is no fallback path: a
+  // declared entry missing its own `owner` is a schema violation
+  // and fails to match here, surfacing as "not declared" rather
+  // than silently inheriting.
+  const normaliseDeclaredOwner = (configuredOwner) => {
+    if (typeof configuredOwner !== "string") return null;
+    const t = configuredOwner.trim();
+    if (t.length === 0 || !GITHUB_OWNER_RE.test(t)) return null;
+    return t;
+  };
+  const declared = (trackerTarget?.projects ?? []).find(
+    (p) => p?.number === projectNumber && normaliseDeclaredOwner(p?.owner) === ownerLogin,
+  );
+  if (!declared) {
+    throw new Error(
+      `github projects.updateProjectField: Project v2 #${projectNumber} under '${ownerLogin}' is not declared in trackers.projects[]; refusing to write`,
+    );
+  }
+  const declaredFields = Array.isArray(declared.fields) ? declared.fields : [];
+  // Status is always implicitly managed via updateIssueStatus; allow
+  // it without requiring it in `fields`. Any OTHER field must be in
+  // `fields`. Compare on the canonicalised (trimmed) field name so
+  // " Status " and "Status" match the declared entry. Trim
+  // `declared.status_field` too: a config with `"Status "` must
+  // still recognise writes to "Status" as implicit.
+  const canonicalStatusField =
+    typeof declared.status_field === "string" && declared.status_field.trim().length > 0
+      ? declared.status_field.trim()
+      : "Status";
+  const implicitFields = new Set([canonicalStatusField]);
+  const declaredFieldsSet = new Set(
+    declaredFields.map((n) => (typeof n === "string" ? n.trim() : n)),
+  );
+  if (!implicitFields.has(canonicalField) && !declaredFieldsSet.has(canonicalField)) {
+    throw new Error(
+      `github projects.updateProjectField: field '${canonicalField}' is not declared in trackers.projects[#${projectNumber}].fields (declared: ${declaredFields.join(", ") || "<none>"})`,
+    );
+  }
+  // Validate the value shape at the boundary — BEFORE any network call.
+  // The single-select option resolution still needs the project lookup
+  // (we don't know the option IDs until we fetch the project), but
+  // shape checks (one-of, right type per kind) can short-circuit
+  // here so a caller bug doesn't burn a gh call.
+  const keys = Object.keys(value);
+  if (keys.length !== 1) {
+    throw new TypeError(
+      `github projects.updateProjectField: value must have exactly one of {text, number, date, singleSelect}; got keys [${keys.join(", ")}]`,
+    );
+  }
+  const [kind] = keys;
+  // Canonicalised value holders — never mutate the caller's
+  // `value` object: callers commonly reuse the payload for logging,
+  // retries, and diffing, and silent mutation (eg trimming
+  // singleSelect) would surprise them.
+  let singleSelectName = null;
+  if (kind === "text") {
+    if (typeof value.text !== "string") {
+      throw new TypeError("github projects.updateProjectField: value.text must be a string");
+    }
+  } else if (kind === "number") {
+    if (!Number.isFinite(value.number)) {
+      throw new TypeError("github projects.updateProjectField: value.number must be a finite number");
+    }
+  } else if (kind === "date") {
+    if (typeof value.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value.date)) {
+      throw new TypeError("github projects.updateProjectField: value.date must be an ISO date (YYYY-MM-DD)");
+    }
+  } else if (kind === "singleSelect") {
+    if (typeof value.singleSelect !== "string" || value.singleSelect.trim().length === 0) {
+      throw new TypeError("github projects.updateProjectField: value.singleSelect must be a non-empty string (option name)");
+    }
+    // Canonicalise so " P0 " and "P0" both resolve against the
+    // project's option list. Local variable, not input mutation.
+    singleSelectName = value.singleSelect.trim();
+  } else {
+    throw new TypeError(
+      `github projects.updateProjectField: unknown value kind '${kind}'; expected text / number / date / singleSelect`,
+    );
+  }
+  // Resolve the project + field + (if single-select) option IDs.
+  const { id: projectId, fields: fieldNodes } = await resolveProjectNodeId(ownerLogin, projectNumber);
+  const fieldNode = fieldNodes.find((f) => f && f.name === canonicalField);
+  if (!fieldNode?.id) {
+    throw new Error(
+      `github projects.updateProjectField: field '${canonicalField}' not found on Project v2 #${projectNumber}`,
+    );
+  }
+  // Guard against writing the wrong value kind to the wrong field
+  // shape. GitHub would reject the mutation with a GraphQL error,
+  // but doing the check locally avoids burning a call and produces
+  // a more pointed message. `dataType` comes from ProjectV2FieldCommon
+  // on `resolveProjectNodeId`; ITERATION fields don't yet round-trip
+  // through this method so they fall through to the "no matching
+  // kind" branch.
+  const kindToDataType = {
+    text: "TEXT",
+    number: "NUMBER",
+    date: "DATE",
+    singleSelect: "SINGLE_SELECT",
+  };
+  const expectedDataType = kindToDataType[kind];
+  if (fieldNode.dataType && expectedDataType && fieldNode.dataType !== expectedDataType) {
+    throw new TypeError(
+      `github projects.updateProjectField: field '${canonicalField}' has dataType ${fieldNode.dataType}, but value kind '${kind}' expects dataType ${expectedDataType}`,
+    );
+  }
+  // Build the value expression based on which key is set.
+  let valueInput;
+  if (kind === "text") {
+    valueInput = `{ text: ${JSON.stringify(value.text)} }`;
+  } else if (kind === "number") {
+    valueInput = `{ number: ${value.number} }`;
+  } else if (kind === "date") {
+    valueInput = `{ date: ${JSON.stringify(value.date)} }`;
+  } else if (kind === "singleSelect") {
+    const options = fieldNode.options ?? [];
+    const opt = options.find((o) => o && o.name === singleSelectName);
+    if (!opt?.id) {
+      const avail = options.map((o) => o.name).join(", ") || "<none>";
+      throw new Error(
+        `github projects.updateProjectField: option '${singleSelectName}' not found on field '${canonicalField}' (available: ${avail})`,
+      );
+    }
+    valueInput = `{ singleSelectOptionId: ${JSON.stringify(opt.id)} }`;
+  } else {
+    /* istanbul ignore next — kind was already validated above */
+    throw new TypeError(
+      `github projects.updateProjectField: unknown value kind '${kind}'; expected text / number / date / singleSelect`,
+    );
+  }
+  const mutationArgs = { projectId, itemId: canonicalItemId, fieldId: fieldNode.id, field: canonicalField, kind };
+  if (!apply) {
+    return { mode: "dry-run", mutationArgs };
+  }
+  const mutation = `
+    mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: $projectId
+        itemId: $itemId
+        fieldId: $fieldId
+        value: ${valueInput}
+      }) {
+        projectV2Item { id }
+      }
+    }
+  `;
+  await ghGraphqlMutation(mutation, { projectId, itemId: canonicalItemId, fieldId: fieldNode.id });
+  return { mode: "applied", mutationArgs };
+}
+
+/**
+ * projects.reconcileProjectFields: ensure every field named in the
+ * caller-supplied `payload.declared` list (typically derived from
+ * `ops.config.json -> trackers.projects[].fields`) exists on the
+ * Project v2 board identified by `payload.projectNumber`
+ * (optionally scoped to `payload.projectOwner`). Entries are
+ * trimmed and deduplicated at the input boundary. Missing fields
+ * are added via `createProjectV2Field`; no edits, no deletes
+ * (deletions are a destructive op users do via the UI).
+ *
+ * The `dataType` for newly-created fields defaults to TEXT (the
+ * only type that doesn't require extra config). Callers needing
+ * SINGLE_SELECT / DATE / NUMBER / ITERATION declare the field in
+ * the UI first; this method never invents option lists.
+ */
+async function githubReconcileProjectFields(trackerTarget, ctx, payload) {
+  const { projectNumber, projectOwner, declared, apply = false } = payload ?? {};
+  if (typeof apply !== "boolean") {
+    throw new TypeError(
+      `github projects.reconcileProjectFields: apply must be a boolean; got ${JSON.stringify(apply)}`,
+    );
+  }
+  requirePositiveInt(projectNumber, "projectNumber", "github projects.reconcileProjectFields");
+  if (!Array.isArray(declared)) {
+    throw new TypeError(
+      "github projects.reconcileProjectFields: declared must be an array of field names (strings)",
+    );
+  }
+  // Trim + dedupe at the boundary. "Priority" and "Priority " are the
+  // same field; counting them as distinct would treat the trailing
+  // space as "missing" on the board and try to re-create it. First
+  // occurrence wins so callers still get a deterministic `missing` /
+  // `present` order.
+  const seen = new Set();
+  const normalisedDeclared = [];
+  for (const n of declared) {
+    if (typeof n !== "string" || n.trim().length === 0) {
+      throw new TypeError(
+        `github projects.reconcileProjectFields: declared[] entries must be non-empty strings; got ${JSON.stringify(n)}`,
+      );
+    }
+    const canonical = n.trim();
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    normalisedDeclared.push(canonical);
+  }
+  // Owner resolution aligned with the payload contract (see
+  // listProjectItems): payload.projectOwner > ctx.owner >
+  // trackerTarget.owner. A caller can name the project with only
+  // projectOwner, no ctx binding required.
+  const ownerLogin = resolveProjectOwner(
+    { projectOwner, ctxOwner: ctx?.owner, targetOwner: trackerTarget?.owner },
+    "projects.reconcileProjectFields",
+  );
+  const { id: projectId, fields: existingFields } = await resolveProjectNodeId(ownerLogin, projectNumber);
+  const existingNames = new Set(existingFields.map((f) => f?.name).filter(Boolean));
+  const missing = normalisedDeclared.filter((n) => !existingNames.has(n));
+  const present = normalisedDeclared.filter((n) => existingNames.has(n));
+  if (!apply) {
+    return { mode: "dry-run", projectNumber, missing, present };
+  }
+  const created = [];
+  for (const name of missing) {
+    const mutation = `
+      mutation($projectId: ID!, $name: String!) {
+        createProjectV2Field(input: {
+          projectId: $projectId
+          name: $name
+          dataType: TEXT
+        }) {
+          projectV2Field { ... on ProjectV2FieldCommon { id name } }
+        }
+      }
+    `;
+    await ghGraphqlMutation(mutation, { projectId, name });
+    created.push(name);
+  }
+  return { mode: "applied", projectNumber, missing, present, created };
 }
