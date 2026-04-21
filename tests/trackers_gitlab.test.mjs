@@ -317,7 +317,7 @@ describe("gitlab target resolution", () => {
     const tracker = makeGitlabTracker({}, { rest: mockRest([]) });
     await assert.rejects(
       () => tracker.issues.listIssues({}),
-      /requires target\.project_id or target\.namespace/,
+      /requires target\.project_id/,
     );
   });
 

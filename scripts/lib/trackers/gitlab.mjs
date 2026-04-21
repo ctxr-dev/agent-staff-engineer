@@ -24,14 +24,14 @@ const MAX_PAGES = 10;
 
 // ── REST helper ─────────────────────────────────────────────────────
 
-async function defaultRest(method, path, { body = null, query = {} } = {}) {
+async function defaultRest(method, path, { body = null, query = {}, baseUrl: overrideBase = null } = {}) {
   const token = process.env.GITLAB_TOKEN;
   if (!token) {
     throw new Error(
       "GITLAB_TOKEN environment variable is required for GitLab tracker operations",
     );
   }
-  const baseUrl = process.env.GITLAB_URL || DEFAULT_GITLAB_URL;
+  const baseUrl = overrideBase || process.env.GITLAB_URL || DEFAULT_GITLAB_URL;
   const url = new URL(`/api/v4${path}`, baseUrl);
   for (const [k, v] of Object.entries(query)) {
     if (v != null) url.searchParams.set(k, String(v));
@@ -58,11 +58,14 @@ async function defaultRest(method, path, { body = null, query = {} } = {}) {
 function projectPath(target) {
   const id = target.project_id;
   if (id) return encodeURIComponent(String(id));
+  // Accept project_path (ops.config canonical) or namespace+repo
+  const pp = target.project_path;
+  if (pp) return encodeURIComponent(pp);
   const ns = target.namespace || target.owner;
   const repo = target.repo;
   if (!ns || !repo) {
     throw new Error(
-      "GitLab tracker requires target.project_id or target.namespace + target.repo",
+      "GitLab tracker requires target.project_id, target.project_path, or target.namespace + target.repo",
     );
   }
   return encodeURIComponent(`${ns}/${repo}`);
@@ -473,13 +476,19 @@ async function gitlabPollForReview(api, target, _caches, ctx) {
   };
   const pipelineStatus = mr?.head_pipeline?.status ?? "pending";
   const ciState = ciMap[pipelineStatus] ?? "PENDING";
-  // Unresolved threads
-  const discussions = await api("GET", `/projects/${pid}/merge_requests/${mrIid}/discussions`, {
-    query: { per_page: MAX_PER_PAGE },
-  });
+  // Unresolved threads (paginated)
+  const allDiscussions = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const batch = await api("GET", `/projects/${pid}/merge_requests/${mrIid}/discussions`, {
+      query: { per_page: MAX_PER_PAGE, page },
+    });
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    for (const d of batch) allDiscussions.push(d);
+    if (batch.length < MAX_PER_PAGE) break;
+  }
   let unresolvedCount = 0;
-  for (const d of discussions ?? []) {
-    if (d.notes?.some((n) => n.resolvable && !n.resolved)) {
+  for (const d of allDiscussions) {
+    if (Array.isArray(d.notes) && d.notes.some((n) => n.resolvable && !n.resolved)) {
       unresolvedCount++;
     }
   }
@@ -487,7 +496,7 @@ async function gitlabPollForReview(api, target, _caches, ctx) {
   const headSha = mr?.diff_refs?.head_sha ?? mr?.sha;
   let reviewOnHead = false;
   if (headSha) {
-    for (const d of discussions ?? []) {
+    for (const d of allDiscussions) {
       for (const n of d.notes ?? []) {
         if (n.resolvable && n.position?.head_sha === headSha) {
           reviewOnHead = true;
@@ -512,18 +521,19 @@ async function gitlabFetchUnresolvedThreads(api, target, _caches, ctx) {
     if (!Array.isArray(discussions) || discussions.length === 0) break;
     for (const d of discussions) {
       if (!Array.isArray(d.notes) || d.notes.length === 0) continue;
-      const firstNote = d.notes[0];
-      if (!firstNote?.resolvable) continue;
+      // Find the first resolvable note (not always d.notes[0])
+      const resolvableNote = d.notes.find((n) => n.resolvable);
+      if (!resolvableNote) continue;
       const isUnresolved = d.notes.some((n) => n.resolvable && !n.resolved);
       if (!isUnresolved) continue;
       threads.push({
         id: d.id,
-        path: firstNote.position?.new_path ?? null,
-        line: firstNote.position?.new_line ?? null,
-        isOutdated: firstNote.position?.line_range == null && firstNote.position?.new_line == null,
-        commitSha: firstNote.position?.head_sha ?? null,
-        authorLogin: firstNote.author?.username ?? null,
-        body: firstNote.body ?? "",
+        path: resolvableNote.position?.new_path ?? null,
+        line: resolvableNote.position?.new_line ?? null,
+        isOutdated: resolvableNote.position?.line_range == null && resolvableNote.position?.new_line == null,
+        commitSha: resolvableNote.position?.head_sha ?? null,
+        authorLogin: resolvableNote.author?.username ?? null,
+        body: resolvableNote.body ?? "",
       });
     }
     if (discussions.length < MAX_PER_PAGE) break;
@@ -585,7 +595,11 @@ function makeProjectsStub() {
  *   (defaults to real GitLab API via fetch + GITLAB_TOKEN)
  */
 export function makeGitlabTracker(target = {}, { rest = null } = {}) {
-  const api = rest || defaultRest;
+  const rawApi = rest || defaultRest;
+  // Wrap to inject target.host as baseUrl for self-hosted GitLab instances
+  const api = target.host
+    ? (method, path, opts = {}) => rawApi(method, path, { ...opts, baseUrl: target.host })
+    : rawApi;
   const caches = createCaches();
 
   const issues = {
