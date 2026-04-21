@@ -376,7 +376,7 @@ describe("linear issues.listIssues", () => {
 // ── labels.reconcileLabels ──────────────────────────────────────────
 
 describe("linear labels.reconcileLabels", () => {
-  it("creates missing labels (apply mode)", async () => {
+  it("returns {mode, plan} with create + unchanged actions (apply mode)", async () => {
     const gql = mockGraphql([
       fixture("issueLabels(", LABELS_RESPONSE),
       fixture("issueLabelCreate(", {
@@ -388,11 +388,12 @@ describe("linear labels.reconcileLabels", () => {
       taxonomy: ["bug", "new-label"],
       apply: true,
     });
-    assert.deepEqual(result.unchanged, ["bug"]);
-    assert.deepEqual(result.created, ["new-label"]);
+    assert.equal(result.mode, "applied");
+    assert.ok(result.plan.find((p) => p.action === "unchanged" && p.name === "bug"));
+    assert.ok(result.plan.find((p) => p.action === "create" && p.name === "new-label"));
   });
 
-  it("dry-run mode skips mutations", async () => {
+  it("dry-run returns plan without mutations", async () => {
     const gql = mockGraphql([
       fixture("issueLabels(", LABELS_RESPONSE),
     ]);
@@ -401,8 +402,8 @@ describe("linear labels.reconcileLabels", () => {
       taxonomy: ["new-label"],
       apply: false,
     });
-    assert.deepEqual(result.created, ["new-label"]);
-    // No create mutation should have been called
+    assert.equal(result.mode, "dry-run");
+    assert.ok(result.plan.find((p) => p.action === "create"));
     assert.ok(!gql.log.some((c) => c.query.includes("issueLabelCreate(")));
   });
 
@@ -414,64 +415,60 @@ describe("linear labels.reconcileLabels", () => {
     const result = await tracker.labels.reconcileLabels({}, {
       taxonomy: ["new-label"],
     });
-    assert.deepEqual(result.created, ["new-label"]);
-    // No create mutation should have been called (dry-run)
+    assert.equal(result.mode, "dry-run");
     assert.ok(!gql.log.some((c) => c.query.includes("issueLabelCreate(")));
-  });
-
-  it("accepts legacy desired payload shape", async () => {
-    const gql = mockGraphql([
-      fixture("issueLabels(", LABELS_RESPONSE),
-    ]);
-    const tracker = makeLinearTracker(TARGET, { graphql: gql });
-    const result = await tracker.labels.reconcileLabels({}, {
-      desired: ["bug"],
-    });
-    assert.deepEqual(result.unchanged, ["bug"]);
   });
 });
 
 // ── labels.relabelBulk ──────────────────────────────────────────────
 
 describe("linear labels.relabelBulk", () => {
-  it("applies labels to a single issue", async () => {
+  it("renames labels via {plan, apply} and returns {mode, results}", async () => {
     const gql = mockGraphql([
       fixture("issueLabels(", LABELS_RESPONSE),
-      fixture("issueUpdate(", {
-        issueUpdate: { success: true, issue: { id: "i1", identifier: "ENG-1" } },
+      fixture("issueLabelUpdate(", {
+        issueLabelUpdate: { success: true, issueLabel: { id: "label-bug", name: "defect" } },
       }),
     ]);
     const tracker = makeLinearTracker(TARGET, { graphql: gql });
     const result = await tracker.labels.relabelBulk({}, {
-      issueIds: ["i1"],
-      labels: ["bug"],
+      plan: [{ from: "bug", to: "defect" }],
+      apply: true,
     });
-    assert.equal(result.length, 1);
-    assert.ok(result[0].success);
+    assert.equal(result.mode, "applied");
+    assert.equal(result.results.length, 1);
+    assert.ok(result.results[0].success);
+    assert.equal(result.results[0].from, "bug");
+    assert.equal(result.results[0].to, "defect");
   });
 
-  it("captures per-issue errors without aborting batch", async () => {
-    const calls = [];
-    const gql = async (query, variables) => {
-      calls.push({ query, variables });
-      if (query.includes("issueLabels(")) return LABELS_RESPONSE;
-      if (query.includes("issueUpdate(")) {
-        if (variables.id === "bad") throw new Error("API error on bad");
-        return { issueUpdate: { success: true, issue: { id: variables.id, identifier: "X" } } };
-      }
-      throw new Error("unexpected");
-    };
-    gql.log = calls;
+  it("dry-run returns plan without mutations", async () => {
+    const gql = mockGraphql([
+      fixture("issueLabels(", LABELS_RESPONSE),
+    ]);
     const tracker = makeLinearTracker(TARGET, { graphql: gql });
     const result = await tracker.labels.relabelBulk({}, {
-      issueIds: ["ok", "bad", "ok2"],
-      labels: ["bug"],
+      plan: [{ from: "bug", to: "defect" }],
+      apply: false,
     });
-    assert.equal(result.length, 3);
-    assert.ok(result[0].success);
-    assert.equal(result[1].success, false);
-    assert.match(result[1].error.message, /API error on bad/);
-    assert.ok(result[2].success);
+    assert.equal(result.mode, "dry-run");
+    assert.equal(result.results[0].action, "would-rename");
+    assert.ok(!gql.log.some((c) => c.query.includes("issueLabelUpdate(")));
+  });
+
+  it("reports per-entry errors without aborting batch", async () => {
+    const gql = mockGraphql([
+      fixture("issueLabels(", LABELS_RESPONSE),
+    ]);
+    const tracker = makeLinearTracker(TARGET, { graphql: gql });
+    const result = await tracker.labels.relabelBulk({}, {
+      plan: [{ from: "nonexistent", to: "x" }, { from: "bug", to: "defect" }],
+      apply: false,
+    });
+    assert.equal(result.results.length, 2);
+    assert.equal(result.results[0].success, false);
+    assert.match(result.results[0].error, /not found/);
+    assert.ok(result.results[1].success);
   });
 });
 

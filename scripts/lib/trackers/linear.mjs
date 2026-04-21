@@ -591,38 +591,67 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
       created.push(trimmedName);
     }
   }
-  return { created, updated, unchanged };
+  // Return shape aligned with GitHub's reconcileLabels contract
+  const plan = [
+    ...created.map((n) => ({ action: "create", name: n })),
+    ...updated.map((n) => ({ action: "update", name: n })),
+    ...unchanged.map((n) => ({ action: "unchanged", name: n })),
+  ];
+  return { mode: apply ? "applied" : "dry-run", plan };
 }
 
 async function linearRelabelBulk(gql, _target, caches, _ctx, payload) {
-  const { issueIds = [], labels = [] } = payload ?? {};
-  if (!Array.isArray(issueIds) || issueIds.length === 0) {
+  const raw = payload ?? {};
+  const plan = raw.plan ?? [];
+  const apply = raw.apply === true;
+  if (!Array.isArray(plan) || plan.length === 0) {
     throw new TypeError(
-      "linear labels.relabelBulk: issueIds must be a non-empty array",
+      "linear labels.relabelBulk: plan must be a non-empty array of {from, to}",
     );
   }
-  const labelIds = await resolveLabelIds(gql, caches, labels);
+  // On Linear, labels are workspace-scoped, so a "rename" is done by
+  // updating the label itself (not per-issue). Each {from, to} entry
+  // renames the label at the workspace level.
+  const labelMap = await resolveLabelMap(gql, caches);
   const results = [];
-  for (const id of issueIds) {
+  for (const entry of plan) {
+    const from = entry?.from;
+    const to = entry?.to;
+    if (!from || !to) {
+      results.push({ from, to, success: false, error: "missing from or to" });
+      continue;
+    }
+    const existing = labelMap.get(from.trim().toLowerCase());
+    if (!existing) {
+      results.push({ from, to, success: false, error: `label '${from}' not found` });
+      continue;
+    }
+    if (!apply) {
+      results.push({ from, to, success: true, action: "would-rename" });
+      continue;
+    }
     try {
       const data = await gql(
-        `mutation($id: String!, $labelIds: [String!]!) {
-          issueUpdate(id: $id, input: { labelIds: $labelIds }) {
-            success issue { id identifier }
+        `mutation($id: String!, $input: IssueLabelUpdateInput!) {
+          issueLabelUpdate(id: $id, input: $input) {
+            success issueLabel { id name }
           }
         }`,
-        { id, labelIds },
+        { id: existing.id, input: { name: to.trim() } },
       );
-      results.push({ id, success: data?.issueUpdate?.success ?? false });
+      const renamed = data?.issueLabelUpdate?.issueLabel;
+      if (renamed) {
+        labelMap.delete(from.trim().toLowerCase());
+        labelMap.set(renamed.name.toLowerCase(), renamed);
+      }
+      results.push({ from, to, success: true, action: "renamed" });
     } catch (err) {
-      results.push({
-        id,
-        success: false,
-        error: { name: err?.name ?? "Error", message: err?.message ?? String(err) },
-      });
+      results.push({ from, to, success: false, error: err?.message ?? String(err) });
     }
   }
-  return results;
+  // Invalidate label cache since renames changed the map
+  caches.labelMap = null;
+  return { mode: apply ? "applied" : "dry-run", results };
 }
 
 // ── review.* + projects.* stubs ─────────────────────────────────────
