@@ -30,7 +30,7 @@ Hard rule baked in: **the skill never calls a tracker API directly.** Every crea
 ## Outputs
 
 - On success: a resolved handoff tuple `{issueRef, umbrellaRef | null, memberName | null}` conforming to `schemas/issue-discovery-handoff.schema.json`. The caller (typically `dev-loop`) consumes the tuple and resumes its own state machine.
-- On user-cancel at Q6: no issue is created; the session state file is archived under the shared filename-suffix scheme (`<session-id>.cancelled.json`). If the user reached Q5 and the skill already dispatched `release-tracker.createUmbrellaForIntent`, that write stands; the umbrella exists regardless of whether the user later cancels at Q6 (there is no rollback surface). The skill returns control to the caller with a cancelled-handoff result.
+- On user-cancel at Q6: no issue is created; the session state file is archived under the shared filename-suffix scheme (`<session-id>.cancelled.json`). If the user reached Q5 and the skill already dispatched `release-tracker.createUmbrellaForIntent`, any umbrella the dispatch created stands; there is no rollback surface. Today `release-tracker.createUmbrellaForIntent` surfaces `NotSupportedError` from its downstream `tracker-sync.create_release_umbrella` call (the low-level surface is still stubbed per `skills/tracker-sync/SKILL.md#operations`), so in practice no umbrella is created on this turn and the user's Q5 answers live only in session state. The skill returns control to the caller with a cancelled-handoff result.
 - On halt per ambiguity-halt: no tracker writes; the session state file is preserved at the current node for resume on the next turn.
 
 ## State machine

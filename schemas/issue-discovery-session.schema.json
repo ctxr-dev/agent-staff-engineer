@@ -189,7 +189,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["kind", "payload"],
-          "description": "User elected to create a new umbrella. `payload` is required and must include every Q5 sub-answer; `ref` is populated after release-tracker.createUmbrellaForIntent returns.",
+          "description": "User elected to create a new umbrella. `payload` carries the user's Q5 answers; `intent`, `goal`, `scopeTag`, `definitionOfDone`, and `rollbackPlan` are required (the non-skippable core). `targetDate`, `nonGoals`, and `stakeholders` are optional because Q5.4 / Q5.5 / Q5.8 each accept 'none' as a valid answer and the payload stores them as null / [] / []. `ref` is populated after release-tracker.createUmbrellaForIntent returns (or stays null if the backend has not yet landed).",
           "properties": {
             "kind": { "type": "string", "const": "create-new" },
             "ref": {
