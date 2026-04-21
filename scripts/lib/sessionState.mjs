@@ -16,8 +16,9 @@
 //   - archiveSession(target, domain, sessionId, outcome) -> renames the
 //     file to "<sessionId>.<outcome>.json" (e.g. outcome "completed" or
 //     "cancelled") so a future scan doesn't see it as pending. Outcome
-//     is a caller-chosen suffix; the helper normalises to kebab-case
-//     ASCII and rejects anything else to keep listings scannable.
+//     is a caller-chosen suffix; it must already be kebab-case ASCII,
+//     and the helper rejects anything else (via OUTCOME_RE) to keep
+//     listings scannable. No transformation is applied.
 //
 // Everything is side-effect-isolated to `<target>/.development/local/<domain>/`.
 // The helper refuses to operate outside that subtree.

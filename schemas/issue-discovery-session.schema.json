@@ -18,8 +18,8 @@
   "properties": {
     "sessionId": {
       "type": "string",
-      "description": "Session identifier. Format: `<YYYYMMDD-HHMMSS>-<short-slug>` where slug is a 6-char urlsafe hash of the intent text; makes listing deterministic and scannable.",
-      "pattern": "^[0-9]{8}-[0-9]{6}-[A-Za-z0-9_-]{4,16}$"
+      "description": "Session identifier. Format: `<YYYYMMDD-HHMMSS>-<4 hex chars>` as produced by scripts/lib/issueDiscovery.mjs#newSessionId. The hex tail is 2 random bytes rendered as hex; the date/time stamp is UTC so listings sort chronologically.",
+      "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$"
     },
     "version": {
       "type": "integer",
@@ -74,20 +74,49 @@
       "description": "True once Q0 (topic confirmation) returned 'Correct' or an edited version the user accepted."
     },
     "trackerTarget": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Minimal tracker coordinates the skill dispatches against. Resolved at Q1 (or at ENTRY when exactly one writable target exists).",
-      "properties": {
-        "kind": { "type": "string", "enum": ["github", "jira", "linear", "gitlab"] },
-        "owner": { "type": "string", "minLength": 1 },
-        "repo": { "type": "string", "minLength": 1 },
-        "site": { "type": "string", "minLength": 1 },
-        "project": { "type": "string", "minLength": 1 },
-        "workspace": { "type": "string", "minLength": 1 },
-        "team": { "type": "string", "minLength": 1 },
-        "host": { "type": "string", "minLength": 1 },
-        "project_path": { "type": "string", "minLength": 1 }
-      }
+      "description": "Minimal tracker coordinates the skill dispatches against. Resolved at Q1 (or at ENTRY when exactly one writable target exists). `kind`-keyed discriminated union so each backend requires the right coordinate set; an empty object or a kind-only object fails validation.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "owner", "repo"],
+          "properties": {
+            "kind": { "type": "string", "const": "github" },
+            "owner": { "type": "string", "minLength": 1 },
+            "repo": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "site", "project"],
+          "properties": {
+            "kind": { "type": "string", "const": "jira" },
+            "site": { "type": "string", "minLength": 1 },
+            "project": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "workspace", "team"],
+          "properties": {
+            "kind": { "type": "string", "const": "linear" },
+            "workspace": { "type": "string", "minLength": 1 },
+            "team": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "host", "project_path"],
+          "properties": {
+            "kind": { "type": "string", "const": "gitlab" },
+            "host": { "type": "string", "minLength": 1 },
+            "project_path": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
     },
     "memberName": {
       "type": ["string", "null"],

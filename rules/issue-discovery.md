@@ -28,9 +28,11 @@ Applies to:
 
 ### Clause 2: 2 to 4 options plus custom at every branch
 
-Every node where the user must choose from the configuration surface (trackers, areas, intents, umbrellas, templates) presents **2 to 4 concrete options and one custom escape hatch**. Fewer than 2 collapses the branch to yes or no and hides the deliberation the intake is designed to surface. More than 4 overloads the user.
+Every node where the user must choose from the configuration surface (trackers, areas, intents, umbrellas, templates) presents **2 to 4 concrete domain options and one custom escape hatch**. Fewer than 2 domain options collapses the branch to yes or no and hides the deliberation the intake is designed to surface. More than 4 domain options overloads the user.
 
-- Shortlists (issues, umbrellas) are ranked by a deterministic criterion (priority + age for issues; status + target date for umbrellas) and capped at 4. A "show more" option is always offered.
+"Domain options" means the actual choices drawn from the configured surface (trackers in `trackers.dev[]`, areas in `labels.area`, the configured umbrellas, etc.). Meta-options (a "show more" pager on shortlists, the "something else" custom escape hatch) are navigational controls and do NOT count toward the 2-4 limit. A shortlist prompt can legally render 4 issues + "show more" + "file a new one" and still satisfy the contract.
+
+- Shortlists (issues, umbrellas) are ranked by a deterministic criterion (priority + age for issues; status + target date for umbrellas) and capped at 4 domain options. A "show more" meta-option is always offered on top when more candidates exist on the tracker.
 - "Custom" is always the last option and always triggers a halt per [rules/ambiguity-halt.md](ambiguity-halt.md) when the custom value falls outside the configured surface (e.g. an area that does not exist in `labels.area`, an intent not in `labels.intent`). Halt surfaces the next step as an `adapt-system` invocation.
 
 ### Clause 3: delegate every tracker write to tracker-sync
@@ -48,7 +50,7 @@ Every prompt in the interview follows the shape:
 
 <short question ending with `?`>
 
-1. <option one — concrete, quotable>
+1. <option one (concrete, quotable)>
 2. <option two>
 (3. <option three if present>)
 (4. <option four if present>)

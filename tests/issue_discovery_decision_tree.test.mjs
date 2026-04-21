@@ -69,7 +69,7 @@ describe("DECISION_TREE: shape + invariants", () => {
     }
   });
 
-  it("q6 is the only node that can transition to EXIT via `proceed` (terminal write gate)", () => {
+  it("q6 is the only node that transitions to `done` via `proceed` (terminal write gate)", () => {
     const proceedTargets = [];
     for (const node of nodes) {
       for (const branch of node.next) {

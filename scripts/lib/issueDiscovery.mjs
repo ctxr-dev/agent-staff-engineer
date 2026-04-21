@@ -389,10 +389,14 @@ export function rankIssuesForShortlist(issues, cap = 4) {
 
 /**
  * Return a stable 6-char slug derived from the intent text. Used
- * as the tail of `newSessionId` for deterministic tests and for
- * the title-proposal generator at Q3b. sha1 + base32-ish alphabet
- * to keep the slug alphanumeric and collision-rare without
- * requiring a UUID library.
+ * anywhere a deterministic, compact alphanumeric identifier is
+ * needed from user-visible intent text: title-proposal generation
+ * at Q3b, any "open-or-resume" key the skill wants keyed on intent
+ * rather than time. Not used in `newSessionId` today (session ids
+ * use random hex so two sessions started from the same intent text
+ * still get distinct ids). sha1 + base32-ish alphabet keeps the
+ * slug alphanumeric and collision-rare without pulling in a UUID
+ * library.
  */
 export function slugFromIntent(intent) {
   const normalised = typeof intent === "string" ? intent.trim().toLowerCase() : "";
@@ -408,12 +412,29 @@ export function slugFromIntent(intent) {
 /**
  * Read a session and validate against the session-state schema.
  * Returns `{ state, errors }`. When the file is missing returns
- * `{ state: null, errors: [] }`. Malformed JSON or schema
- * violations surface under `errors` so the caller can halt with
- * a pointed message rather than crashing on a property access.
+ * `{ state: null, errors: [] }`. Malformed JSON (readJsonOrNull
+ * throws on parse errors) and schema violations both surface
+ * under `errors` so the caller can halt with a pointed message
+ * rather than crashing on a property access.
  */
 export async function readSession(target, sessionId, sessionSchema) {
-  const state = await rawReadSession(target, DOMAIN, sessionId);
+  let state;
+  try {
+    state = await rawReadSession(target, DOMAIN, sessionId);
+  } catch (error) {
+    return {
+      state: null,
+      errors: [
+        {
+          path: "$",
+          message:
+            error instanceof Error
+              ? `failed to read session: ${error.message}`
+              : `failed to read session: ${String(error)}`,
+        },
+      ],
+    };
+  }
   if (state === null) return { state: null, errors: [] };
   const { ok, errors } = validate(sessionSchema, state);
   return { state: ok ? state : null, errors };
