@@ -26,7 +26,7 @@ scalar placeholders:
 
 # Issue discovery session `{{ session_id }}`
 
-Human-readable rendering of a session scratch file under `.development/local/issue-discovery/{{ session_id }}.json`. The canonical state is the JSON; this template is what the agent prints when asked to show the session.
+Human-readable rendering of a session scratch file under `.development/local/issue-discovery/`. The canonical state is the JSON; this template is what the agent prints when asked to show the session. Archived sessions live at the same path under a `.completed.json` or `.cancelled.json` suffix; the template is agnostic to the filename.
 
 - **Started:** {{ started_at }}
 - **Status:** `{{ status }}`

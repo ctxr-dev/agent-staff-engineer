@@ -28,9 +28,14 @@ Applies to:
 
 ### Clause 2: 2 to 4 options plus custom at every branch
 
-Every node where the user must choose from the configuration surface (trackers, areas, intents, umbrellas, templates) presents **2 to 4 concrete domain options and one custom escape hatch**. Fewer than 2 domain options collapses the branch to yes or no and hides the deliberation the intake is designed to surface. More than 4 domain options overloads the user.
+This clause scopes precisely to **configured-surface nodes**: prompts where the user must pick a value from `trackers.dev[]`, `labels.area`, `labels.intent`, the list of open umbrellas, the list of open issues, or any similar configured-surface set. At those nodes, the skill presents **2 to 4 concrete domain options and one custom escape hatch**. Fewer than 2 domain options collapses the branch to yes or no and hides the deliberation the intake is designed to surface. More than 4 domain options overloads the user.
 
-"Domain options" means the actual choices drawn from the configured surface (trackers in `trackers.dev[]`, areas in `labels.area`, the configured umbrellas, etc.). Meta-options (a "show more" pager on shortlists, the "something else" custom escape hatch) are navigational controls and do NOT count toward the 2-4 limit. A shortlist prompt can legally render 4 issues + "show more" + "file a new one" and still satisfy the contract.
+Two kinds of node sit outside this clause and follow their own contract:
+
+1. **Fixed-enumeration nodes** (priority high / medium / low; size small / medium / large; issue type feature / task / refactor / bug). The allowed values are a closed taxonomy not configurable per-project; no custom escape hatch applies. The 2-4 limit still holds (the enumeration has 3 or 4 values).
+2. **Free-form capture nodes** (Q3b title free-form, Q5.2 umbrella goal, Q5.7 rollback plan). The user types text the skill records verbatim. No options list and no custom escape hatch; validation happens on shape (min-length, regex) rather than on a configured allow-list.
+
+"Domain options" means the actual choices drawn from the configured surface. Meta-options (a "show more" pager on shortlists, the "something else" custom escape hatch) are navigational controls and do NOT count toward the 2-4 limit. A shortlist prompt can legally render 4 issues + "show more" + "file a new one" and still satisfy the contract.
 
 - Shortlists (issues, umbrellas) are ranked by a deterministic criterion (priority + age for issues; status + target date for umbrellas) and capped at 4 domain options. A "show more" meta-option is always offered on top when more candidates exist on the tracker.
 - "Custom" is always the last option and always triggers a halt per [rules/ambiguity-halt.md](ambiguity-halt.md) when the custom value falls outside the configured surface (e.g. an area that does not exist in `labels.area`, an intent not in `labels.intent`). Halt surfaces the next step as an `adapt-system` invocation.
