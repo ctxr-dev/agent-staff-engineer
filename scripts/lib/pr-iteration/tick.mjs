@@ -32,6 +32,7 @@ function buildCtx(state) {
     repo: state.repo,
     prNumber: state.prNumber,
     prNodeId: state.prNodeId,
+    headSha: state.headSha,
     botIds: state.botIds,
     botLogins: state.botLogins,
   };
@@ -51,6 +52,7 @@ function buildCtx(state) {
  *     "needs-triage"    CI terminal + threads/review arrived; skill should fix
  *     "still-waiting"   CI pending or no review yet; reschedule
  *     "user-cancelled"  .stopped sidecar found; no remote call made
+ *     "paused"          .paused sidecar found; no remote call made
  *     "safety-cap"      consecutive-wakes cap reached; .paused written
  */
 export async function runTick(tracker, state, opts) {
