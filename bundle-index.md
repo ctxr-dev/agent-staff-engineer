@@ -121,11 +121,6 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 
 - [memory-seeds/testing-discipline.md](memory-seeds/testing-discipline.md): test categorisation, no mocks at the integration boundary, results-table reporting.
 
-### Stack-specific seeds (loaded only when the project's stack matches)
-
-- [memory-seeds/swift-dst-day-count.md](memory-seeds/swift-dst-day-count.md): Swift `Calendar.date(byAdding:)` over raw-seconds arithmetic.
-- [memory-seeds/xcui-combined-a11y.md](memory-seeds/xcui-combined-a11y.md): XCUITest combined-accessibility-elements gotcha.
-
 ## By surface
 
 ### Skills (10)
@@ -171,7 +166,7 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [templates/regression-report.md](templates/regression-report.md): regression triage report.
 - [templates/release-readiness-checklist.md](templates/release-readiness-checklist.md): release-readiness artefact.
 
-### Memory seeds (11)
+### Memory seeds (9)
 
 - [memory-seeds/commit-style-conventional.md](memory-seeds/commit-style-conventional.md): conventional commits.
 - [memory-seeds/dash-free-writing.md](memory-seeds/dash-free-writing.md): no-dashes rule seed.
@@ -180,10 +175,8 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [memory-seeds/ops-config-usage.md](memory-seeds/ops-config-usage.md): cite the keys you used.
 - [memory-seeds/plan-lifecycle-moves.md](memory-seeds/plan-lifecycle-moves.md): plan lifecycle states + moves.
 - [memory-seeds/planning-parallel-agents.md](memory-seeds/planning-parallel-agents.md): Phase-1 parallel Explore.
-- [memory-seeds/swift-dst-day-count.md](memory-seeds/swift-dst-day-count.md): Swift DST-safe day counting.
 - [memory-seeds/testing-discipline.md](memory-seeds/testing-discipline.md): test categories, results-table.
 - [memory-seeds/wiki-scalable-layout.md](memory-seeds/wiki-scalable-layout.md): scalable nested wiki layout.
-- [memory-seeds/xcui-combined-a11y.md](memory-seeds/xcui-combined-a11y.md): XCUITest combined-a11y gotcha.
 
 ## Don't-read list
 

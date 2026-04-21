@@ -7,8 +7,8 @@ Reusable methodology for taking a change from first commit through PR, external 
 ## 0. Variables to set once per PR
 
 ```bash
-OWNER=ctxr-dev                     # GitHub org/user
-REPO=skill-llm-wiki                # repo name
+OWNER=<your-github-org-or-user>    # from project.org in ops.config.json
+REPO=<your-repo-name>              # from project.repo in ops.config.json
 PR_NUMBER=1                        # after you create the PR
 BRANCH=feat/my-change              # feature branch name
 ```

@@ -154,12 +154,7 @@ Idempotent: re-running with the same intent is a no-op. Contradictory intents ("
 
 ## Known stacks (seed activation)
 
-Some memory seeds are tagged to stack-specific contexts. Seeds install only when every tag matches the declared `ops.config.json -> stack.*`:
-
-- `swift-dst-day-count.md`: tag `language: swift`
-- `xcui-combined-a11y.md`: tags `language: swift`, `testing: xcuitest`
-
-Every other seed is untagged and installs on every project.
+Memory seeds may declare `tags` in their frontmatter (for example `language: swift` or `testing: xcuitest`). A tagged seed installs only when every tag matches the declared `ops.config.json -> stack.*`. The bundle currently ships only untagged seeds, so all shipped seeds install on every project; stack-specific seeds added via `adapt-system` honour this gate.
 
 ## Troubleshooting
 
