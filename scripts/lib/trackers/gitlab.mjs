@@ -271,7 +271,9 @@ async function gitlabRelabelIssue(api, target, caches, _ctx, payload) {
     return { id: issueId, labels: [], noop: true };
   }
   const pid = projectPath(target);
-  // GitLab REST uses add_labels / remove_labels
+  // GitLab REST natively supports add_labels / remove_labels as delta operations
+  // (adding an existing label is a no-op; removing an absent label is a no-op),
+  // so the call is idempotent without an explicit pre-read.
   const body = {};
   if (add.length > 0) {
     body.add_labels = (await resolveLabelNames(api, target, caches, add)).join(",");
@@ -331,6 +333,11 @@ async function gitlabListIssues(api, target, caches, _ctx, payload = {}) {
     if (!Array.isArray(issues) || issues.length === 0) break;
     for (const i of issues) results.push(i);
     if (issues.length < MAX_PER_PAGE) break;
+    if (page === MAX_PAGES && results.length >= cap) {
+      const out = results.slice(0, cap);
+      out.truncated = true;
+      return out;
+    }
   }
   return results.slice(0, cap);
 }
@@ -402,6 +409,7 @@ async function gitlabReconcileLabels(api, target, caches, _ctx, payload) {
       if (!taxonomyNames.has(key)) {
         if (apply) {
           await api("DELETE", `/projects/${pid}/labels/${encodeURIComponent(label.name)}`);
+          map.delete(key);
         }
         plan.push({ action: "deprecate", name: label.name });
       }
