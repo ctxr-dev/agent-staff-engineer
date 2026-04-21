@@ -156,6 +156,7 @@ function createCaches() {
   return {
     projectId: null,
     issueTypes: null,
+    issueTypesLoaded: false,
   };
 }
 
@@ -175,8 +176,15 @@ function createCaches() {
  * (with an empty array) would poison createIssue's issue-type picker.
  */
 async function resolveProjectMeta(rest, target, caches) {
-  if (caches.projectId != null && Array.isArray(caches.issueTypes) && caches.issueTypes.length > 0) {
-    return { id: caches.projectId, issueTypes: caches.issueTypes };
+  // Cache short-circuit fires whenever we have BOTH the project id
+  // and a prior resolution attempt. `issueTypesLoaded` flips to true
+  // on the first successful GET regardless of whether the array came
+  // back populated or empty, so a project with no usable issue types
+  // does not cause repeated fetches: one attempt determines the
+  // outcome and every later call short-circuits into the same throw
+  // from pickDefaultIssueTypeId.
+  if (caches.projectId != null && caches.issueTypesLoaded) {
+    return { id: caches.projectId, issueTypes: caches.issueTypes ?? [] };
   }
   const key = target.project;
   if (!key) {
@@ -208,6 +216,7 @@ async function resolveProjectMeta(rest, target, caches) {
     }
   }
   caches.issueTypes = issueTypes;
+  caches.issueTypesLoaded = true;
   return { id: caches.projectId, issueTypes };
 }
 

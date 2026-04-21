@@ -204,6 +204,34 @@ describe("jira issues.createIssue", () => {
     assert.equal(searchCalls, 2, "dedupe must have paged through the first 100 near-matches");
   });
 
+  it("caches 'loaded but empty' issueTypes so repeated failures do not hammer /project", async () => {
+    // Project with zero issue types (pathological but possible on
+    // locked-down instances). The first createIssue call fetches
+    // /project then /project/:key/issuetypes (both empty); later
+    // calls must NOT refetch, they short-circuit into the same throw.
+    const projectGets = [];
+    const issueTypesGets = [];
+    const api = async (method, path) => {
+      if (method === "GET" && path === "/rest/api/3/project/PLAT") {
+        projectGets.push(path);
+        return { id: "10000" }; // no issueTypes in expand response
+      }
+      if (method === "GET" && path === "/rest/api/3/project/PLAT/issuetypes") {
+        issueTypesGets.push(path);
+        return []; // fallback is also empty
+      }
+      if (method === "POST" && path === "/rest/api/3/search/jql") {
+        return { issues: [] };
+      }
+      throw new Error(`no route for ${method} ${path}`);
+    };
+    const tracker = makeJiraTracker(TARGET, { rest: api });
+    await assert.rejects(() => tracker.issues.createIssue({}, { title: "first" }), /no non-subtask issue types/);
+    await assert.rejects(() => tracker.issues.createIssue({}, { title: "second" }), /no non-subtask issue types/);
+    assert.equal(projectGets.length, 1, "GET /project must fire exactly once across two failing createIssue calls");
+    assert.equal(issueTypesGets.length, 1, "fallback GET /project/:key/issuetypes must fire exactly once");
+  });
+
   it("falls back to GET /project/:key/issuetypes when the expand response omits issueTypes", async () => {
     // Some Jira instances return /project/:key without the
     // issueTypes field even when expand=issueTypes is requested.
