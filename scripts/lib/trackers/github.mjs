@@ -2154,8 +2154,14 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
   // a floor of 20 as a safety buffer: GitHub's Projects v2 API can
   // legally return fewer than `first` items per page (eg when field
   // values are cached differently), so the best-case math alone
-  // would reject a request that would actually succeed.
-  const MAX_PAGES = Math.max(20, Math.ceil(effectiveLimit / first));
+  // would reject a request that would actually succeed. An
+  // independent hard ceiling of 100 prevents pathological input
+  // (`first: 1, limit: 2000` → up to 2000 requests) from burning
+  // gh rate-limit budget. A caller who genuinely needs more items
+  // with a low `first` splits the fetch into resumable calls via
+  // `after`.
+  const HARD_PAGE_CAP = 100;
+  const MAX_PAGES = Math.min(HARD_PAGE_CAP, Math.max(20, Math.ceil(effectiveLimit / first)));
   let page = 0;
   let finalCursor = null;
   let finalHasNext = false;
@@ -2222,11 +2228,14 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
     if (!finalHasNext) break;
     cursor = finalCursor;
   }
-  // `hasNextPage` reflects the server's pageInfo only. When the
-  // `limit` cap truncated the window, `finalCursor` still points
-  // past the last returned item so callers can resume from there;
-  // suppressing `hasNextPage` in that case would hide the fact that
-  // more items exist.
+  // `hasNextPage` reflects the server's pageInfo only. `finalCursor`
+  // is the cursor of the last returned item (standard GraphQL
+  // convention) — callers pass it back as `after` to resume from
+  // the next item. The pagination loop above caps per-request
+  // `first` to the remaining budget, so the server never returned
+  // any item we skipped; suppressing `hasNextPage` when `limit`
+  // truncated would hide the fact that more items exist on the
+  // board past the window we returned.
   return { items: out, hasNextPage: finalHasNext, endCursor: finalCursor };
 }
 
