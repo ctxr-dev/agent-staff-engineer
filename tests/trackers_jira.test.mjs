@@ -103,6 +103,45 @@ describe("jira issues.createIssue", () => {
     assert.equal(result.url, "https://acme.atlassian.net/browse/PLAT-77");
   });
 
+  it("paginates dedupe when the exact match lives behind a tokenised first page", async () => {
+    // JQL `summary ~ "..."` tokenises, so the first page may be full
+    // of near-matches without the exact summary. The dedupe loop must
+    // page through up to DEDUPE_SCAN_CAP before declaring "no match"
+    // and POSTing a duplicate.
+    let searchCalls = 0;
+    const api = async (method, path, opts = {}) => {
+      if (method === "GET" && path === "/rest/api/3/project/PLAT") {
+        return { id: "10000", issueTypes: [{ id: "200", name: "Task", subtask: false }] };
+      }
+      if (method === "POST" && path === "/rest/api/3/search/jql") {
+        searchCalls++;
+        if (opts.body?.nextPageToken == null) {
+          // Page 1: 100 near-matches, no exact hit.
+          return {
+            issues: Array.from({ length: 100 }, (_, i) => ({
+              id: String(1000 + i),
+              key: `PLAT-${1000 + i}`,
+              fields: { summary: `Track log shipping (variant ${i})` },
+            })),
+            nextPageToken: "p2",
+          };
+        }
+        // Page 2: contains the exact match.
+        return {
+          issues: [
+            { id: "9999", key: "PLAT-9999", fields: { summary: "Track log shipping" } },
+          ],
+        };
+      }
+      throw new Error(`no route for ${method} ${path}`);
+    };
+    const tracker = makeJiraTracker(TARGET, { rest: api });
+    const result = await tracker.issues.createIssue({}, { title: "Track log shipping" });
+    assert.equal(result.existed, true);
+    assert.equal(result.key, "PLAT-9999");
+    assert.equal(searchCalls, 2, "dedupe must have paged through the first 100 near-matches");
+  });
+
   it("creates when no dedupe match, using default issue type 'Task'", async () => {
     const api = mockRest([
       route("GET", "/rest/api/3/project/PLAT", {
@@ -438,7 +477,7 @@ describe("jira labels.relabelBulk", () => {
     assert.ok(!api.log.find((c) => c.method === "PUT"));
   });
 
-  it("apply: sweeps every matching issue and swaps label via delta update", async () => {
+  it("apply: sweeps every matching issue and swaps label via delta update; no per-issue GET", async () => {
     // The mock tracks per-issue label state so the search query stops
     // returning issues whose `old` label has already been removed. That
     // models real Jira behaviour: the JQL `labels = old` re-evaluates
@@ -449,6 +488,7 @@ describe("jira labels.relabelBulk", () => {
       ["PLAT-2", ["old"]],
     ]);
     let searchCalls = 0;
+    const issueGets = [];
     const api = async (method, path, opts = {}) => {
       if (method === "GET" && path === "/rest/api/3/project/PLAT") {
         return { id: "10000", issueTypes: [] };
@@ -464,6 +504,7 @@ describe("jira labels.relabelBulk", () => {
         return { issues: stillCarryingOld };
       }
       if (method === "GET" && path.startsWith("/rest/api/3/issue/")) {
+        issueGets.push(path);
         const key = path.split("/").pop();
         return { id: key, key, fields: { labels: [...(state.get(key) ?? [])] } };
       }
@@ -489,10 +530,10 @@ describe("jira labels.relabelBulk", () => {
     assert.equal(result.mode, "applied");
     assert.equal(result.results[0].action, "renamed");
     assert.equal(result.results[0].issuesTouched, 2);
-    // First search returns the initial 2 issues; second returns empty
-    // because both have been swept. The sweep loop then breaks.
     assert.equal(searchCalls, 2);
-    // Both issues should now carry `new` instead of `old`.
+    // Performance: sweepLabel reuses labels from the search batch, so
+    // no per-issue GET /rest/api/3/issue/:key is required.
+    assert.equal(issueGets.length, 0, `expected zero per-issue GETs; got ${issueGets.length}`);
     assert.deepEqual([...state.get("PLAT-1")].sort(), ["new", "wave-1"]);
     assert.deepEqual([...state.get("PLAT-2")], ["new"]);
   });

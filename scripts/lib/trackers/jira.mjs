@@ -216,25 +216,34 @@ async function jiraCreateIssue(rest, target, caches, _ctx, payload) {
   // Dedupe: JQL on exact title match within the open-state set. Jira
   // does not treat `summary = "..."` as an exact match for long
   // summaries (it tokenises), so additionally verify summary equality
-  // on the first page of results.
+  // client-side. Paginate up to DEDUPE_SCAN_CAP to avoid creating a
+  // duplicate when the exact match lives behind a noisy tokenised
+  // result page.
+  const DEDUPE_SCAN_CAP = 500;
   const dedupeJql = `project = "${target.project}" AND statusCategory != Done AND summary ~ "\\"${escapeJqlString(trimmedTitle)}\\""`;
-  const dedupeData = await rest("POST", "/rest/api/3/search/jql", {
-    body: {
+  let dedupeNextPageToken = null;
+  let dedupeScanned = 0;
+  while (dedupeScanned < DEDUPE_SCAN_CAP) {
+    const body = {
       jql: dedupeJql,
-      maxResults: 50,
+      maxResults: Math.min(MAX_PAGE_SIZE, DEDUPE_SCAN_CAP - dedupeScanned),
       fields: ["summary", "status"],
-    },
-  });
-  const dedupeHit = (dedupeData?.issues ?? []).find(
-    (i) => i.fields?.summary === trimmedTitle,
-  );
-  if (dedupeHit) {
-    return {
-      id: dedupeHit.id,
-      key: dedupeHit.key,
-      url: `${normalizeJiraBase(target.site)}/browse/${dedupeHit.key}`,
-      existed: true,
     };
+    if (dedupeNextPageToken != null) body.nextPageToken = dedupeNextPageToken;
+    const dedupeData = await rest("POST", "/rest/api/3/search/jql", { body });
+    const dedupeIssues = dedupeData?.issues ?? [];
+    const hit = dedupeIssues.find((i) => i.fields?.summary === trimmedTitle);
+    if (hit) {
+      return {
+        id: hit.id,
+        key: hit.key,
+        url: `${normalizeJiraBase(target.site)}/browse/${hit.key}`,
+        existed: true,
+      };
+    }
+    dedupeScanned += dedupeIssues.length;
+    dedupeNextPageToken = dedupeData?.nextPageToken ?? null;
+    if (dedupeIssues.length === 0 || dedupeNextPageToken == null) break;
   }
 
   const issueTypeId = issueType
@@ -395,6 +404,39 @@ async function jiraComment(rest, _target, _caches, _ctx, payload) {
 
 // ── issues.relabelIssue ─────────────────────────────────────────────
 
+/**
+ * Apply a label add/remove delta to a single issue when the caller
+ * already knows its current labels. Skips the PUT when the delta is
+ * a no-op. Used by `jiraRelabelIssue` after its GET, and by
+ * `sweepLabel` which has the labels in hand from the search result so
+ * the second GET would be redundant.
+ *
+ * `addRaw` / `removeRaw` are arrays of trimmed label strings already
+ * validated by the caller.
+ */
+async function applyLabelDelta(rest, issueKey, currentLabels, addRaw, removeRaw) {
+  const currentLower = new Set(currentLabels.map((l) => l.toLowerCase()));
+  const willAdd = addRaw.filter((n) => !currentLower.has(n.toLowerCase()));
+  const willRemove = removeRaw.filter((n) => currentLower.has(n.toLowerCase()));
+  if (willAdd.length === 0 && willRemove.length === 0) {
+    return { labels: [...currentLabels], noop: true, willAdd, willRemove };
+  }
+  const ops = [];
+  for (const name of willAdd) ops.push({ add: name });
+  for (const name of willRemove) ops.push({ remove: name });
+  await rest("PUT", `/rest/api/3/issue/${encodeURIComponent(issueKey)}`, {
+    body: { update: { labels: ops } },
+  });
+  const afterLower = new Set(currentLower);
+  for (const name of willAdd) afterLower.add(name.toLowerCase());
+  for (const name of willRemove) afterLower.delete(name.toLowerCase());
+  // Preserve original casing from currentLabels for names that were
+  // neither added nor removed; for new adds use the caller's trimmed input.
+  const keep = currentLabels.filter((l) => afterLower.has(l.toLowerCase()));
+  const adds = willAdd.filter((l) => !keep.some((k) => k.toLowerCase() === l.toLowerCase()));
+  return { labels: [...keep, ...adds], noop: false, willAdd, willRemove };
+}
+
 async function jiraRelabelIssue(rest, _target, _caches, _ctx, payload) {
   const { issueId, add = [], remove = [] } = payload ?? {};
   if (!issueId) {
@@ -417,19 +459,19 @@ async function jiraRelabelIssue(rest, _target, _caches, _ctx, payload) {
       );
     }
   }
-  const addSet = new Set(add.map((n) => n.trim().toLowerCase()));
-  const removeSet = new Set(remove.map((n) => n.trim().toLowerCase()));
-  const overlap = [...addSet].filter((n) => removeSet.has(n));
+  const trimmedAdd = add.map((n) => n.trim());
+  const trimmedRemove = remove.map((n) => n.trim());
+  const addLower = new Set(trimmedAdd.map((n) => n.toLowerCase()));
+  const removeLower = new Set(trimmedRemove.map((n) => n.toLowerCase()));
+  const overlap = [...addLower].filter((n) => removeLower.has(n));
   if (overlap.length > 0) {
     throw new Error(
       `jira issues.relabelIssue: labels appear in both add and remove: ${overlap.join(", ")}`,
     );
   }
-  if (add.length === 0 && remove.length === 0) {
+  if (trimmedAdd.length === 0 && trimmedRemove.length === 0) {
     return { id: null, key: String(issueId), labels: [], noop: true };
   }
-  // Delta semantics: fetch current labels, compute desired set, skip
-  // the PUT when the delta produces no change (matches github/linear).
   const current = await rest(
     "GET",
     `/rest/api/3/issue/${encodeURIComponent(issueId)}`,
@@ -438,38 +480,12 @@ async function jiraRelabelIssue(rest, _target, _caches, _ctx, payload) {
   const currentLabels = Array.isArray(current?.fields?.labels)
     ? current.fields.labels
     : [];
-  const currentLower = new Set(currentLabels.map((l) => l.toLowerCase()));
-  const willAdd = add
-    .map((n) => n.trim())
-    .filter((n) => !currentLower.has(n.toLowerCase()));
-  const willRemove = remove
-    .map((n) => n.trim())
-    .filter((n) => currentLower.has(n.toLowerCase()));
-  if (willAdd.length === 0 && willRemove.length === 0) {
-    return {
-      id: String(current?.id ?? null),
-      key: String(current?.key ?? issueId),
-      labels: currentLabels,
-      noop: true,
-    };
-  }
-  const updateOps = [];
-  for (const name of willAdd) updateOps.push({ add: name });
-  for (const name of willRemove) updateOps.push({ remove: name });
-  await rest("PUT", `/rest/api/3/issue/${encodeURIComponent(issueId)}`, {
-    body: { update: { labels: updateOps } },
-  });
-  const afterLower = new Set(currentLower);
-  for (const name of willAdd) afterLower.add(name.toLowerCase());
-  for (const name of willRemove) afterLower.delete(name.toLowerCase());
-  // Preserve original casing from currentLabels for names that were
-  // neither added nor removed; for new adds use the trimmed input.
-  const keep = currentLabels.filter((l) => afterLower.has(l.toLowerCase()));
-  const adds = willAdd.filter((l) => !keep.some((k) => k.toLowerCase() === l.toLowerCase()));
+  const delta = await applyLabelDelta(rest, issueId, currentLabels, trimmedAdd, trimmedRemove);
   return {
     id: String(current?.id ?? null),
     key: String(current?.key ?? issueId),
-    labels: [...keep, ...adds],
+    labels: delta.labels,
+    ...(delta.noop ? { noop: true } : {}),
   };
 }
 
@@ -785,20 +801,27 @@ async function jiraRelabelBulk(rest, target, caches, ctx, payload) {
 
 /**
  * Iterate every issue in the project that carries `from` and swap it
- * for `to` via relabelIssue's delta semantics. `to === ""` means
+ * for `to` via the shared label-delta helper. `to === ""` means
  * delete the label from every issue.
  *
- * Pagination intentionally does NOT use `nextPageToken`: each call to
- * relabelIssue removes `from` from the issue, so the set matching the
- * JQL shrinks between pages. A cursor anchored to the original
- * snapshot would skip items; re-running page 1 every iteration keeps
- * the cursor aligned with the current result set. The MAX_PAGES cap
- * bounds run-time; a post-sweep probe confirms nothing matches
- * before returning, so a truncated sweep fails loudly instead of
- * reporting success while leaving issues behind.
+ * Pagination intentionally does NOT use `nextPageToken`: each delta
+ * PUT removes `from` from the issue, so the set matching the JQL
+ * shrinks between pages. A cursor anchored to the original snapshot
+ * would skip items; re-running page 1 every iteration keeps the view
+ * aligned with the current result set. The MAX_PAGES cap bounds
+ * run-time; a post-sweep probe confirms nothing matches before
+ * returning, so a truncated sweep fails loudly instead of reporting
+ * success while leaving issues behind.
+ *
+ * Uses applyLabelDelta directly so each issue is touched with a
+ * single PUT: sweepLabel already has the current labels in hand from
+ * the search result, so going through `jiraRelabelIssue` would spend
+ * an extra GET per issue (doubles Jira API traffic on large sweeps).
  */
-async function sweepLabel(rest, target, caches, ctx, from, to) {
+async function sweepLabel(rest, target, _caches, _ctx, from, to) {
   const jql = `project = "${target.project}" AND labels = "${escapeJqlString(from)}"`;
+  const addLabels = to.length > 0 ? [to] : [];
+  const removeLabels = [from];
   let touched = 0;
   let hitCap = false;
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -808,12 +831,10 @@ async function sweepLabel(rest, target, caches, ctx, from, to) {
     const batch = Array.isArray(data?.issues) ? data.issues : [];
     if (batch.length === 0) return touched;
     for (const issue of batch) {
-      const add = to.length > 0 ? [to] : [];
-      await jiraRelabelIssue(rest, target, caches, ctx, {
-        issueId: issue.key,
-        add,
-        remove: [from],
-      });
+      const currentLabels = Array.isArray(issue?.fields?.labels)
+        ? issue.fields.labels
+        : [];
+      await applyLabelDelta(rest, issue.key, currentLabels, addLabels, removeLabels);
       touched++;
     }
     if (page === MAX_PAGES - 1) hitCap = true;
