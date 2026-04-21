@@ -45,18 +45,18 @@ These two decisions are always yours.
 
 ## Current implementation status
 
-The agent targets four tracker kinds. GitHub and Linear have real implementations; Jira and GitLab are stubbed.
+The agent targets four tracker kinds. GitHub, Linear, and GitLab have real implementations; Jira is stubbed.
 
-| Capability                             | GitHub    | Linear                | Jira / GitLab |
-| -------------------------------------- | --------- | --------------------- | ------------- |
-| Open PRs, iterate on review comments   | **works** | stub (no native PR)   | stub          |
-| Status moves, comments, issue create   | **works** | **works**             | stub          |
-| Label taxonomy reconcile               | **works** | **works**             | stub          |
-| Release umbrella status                | **works** | stub                  | stub          |
-| Regression lookups                     | **works** | stub                  | stub          |
-| Bootstrap interview + config           | **works** | **works**             | **works** (config valid; write-ops throw until real backends land) |
+| Capability                             | GitHub    | Linear              | GitLab                         | Jira |
+| -------------------------------------- | --------- | ------------------- | ------------------------------ | ---- |
+| Open PRs, iterate on review comments   | **works** | stub (no native PR) | **partial** (poll+resolve, no requestReview) | stub |
+| Status moves, comments, issue create   | **works** | **works**           | **works**                      | stub |
+| Label taxonomy reconcile               | **works** | **works**           | **works**                      | stub |
+| Release umbrella status                | **works** | stub                | stub                           | stub |
+| Regression lookups                     | **works** | stub                | stub                           | stub |
+| Bootstrap interview + config           | **works** | **works**           | **works**                      | **works** (config valid; write-ops throw until real backend lands) |
 
-Linear's `issues.*` and `labels.*` namespaces are fully implemented via Linear's GraphQL API (direct `fetch`, no SDK). Auth via `LINEAR_API_KEY` env var. The `review.*` namespace is stubbed because Linear has no native PR concept; configure `workflow.external_review.provider: "github"` for projects that host code on GitHub but track issues in Linear. Real Jira and GitLab backends ship in follow-up releases.
+Linear uses its GraphQL API (direct `fetch`, no SDK). Auth via `LINEAR_API_KEY`. GitLab uses REST API v4 (direct `fetch`). Auth via `GITLAB_TOKEN`. GitLab's `review.*` is partially implemented: poll, fetch threads, resolve, and CI state work; `requestReview` is stubbed because GitLab's approval flow requires admin-configured approval rules. The real Jira backend ships in a follow-up release.
 
 ## Release models the interview supports
 
