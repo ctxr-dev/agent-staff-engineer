@@ -155,13 +155,17 @@ describe("issueDiscovery.listPendingSessions + archiveSession", () => {
 
 describe("issueDiscovery: 24-hour staleness signal", () => {
   it("listPendingSessions exposes ageMs so callers can decide the default resume answer", async () => {
-    const long = makeValidState("20260420-000000-ffff", { startedAt: "2026-04-20T00:00:00Z" });
+    // Generate startedAt relative to the wall clock so the test
+    // isn't pinned to a specific calendar date (future CI runs must
+    // still see ageMs >= 0).
+    const startedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const long = makeValidState("20260420-000000-ffff", { startedAt });
     await writeSession(scratch, "20260420-000000-ffff", long, SESSION_SCHEMA);
     const pending = await listPendingSessions(scratch);
     const hit = pending.find((e) => e.sessionId === "20260420-000000-ffff");
     assert.ok(hit, "expected session to show up in pending list");
     assert.ok(Number.isFinite(hit.ageMs));
-    // Entry's startedAt is in the past; age must be >= 0.
+    // Entry's startedAt is generated in the past; age must be >= 0.
     assert.ok(hit.ageMs >= 0);
   });
 });

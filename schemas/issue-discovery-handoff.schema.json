@@ -51,7 +51,7 @@
         "cancelled": {
           "type": "boolean",
           "const": false,
-          "description": "Present only on the success shape; always false. Callers can branch on `handoff.cancelled` without inspecting other fields.",
+          "description": "Optional on the success shape; when present it is always false. Callers may branch on `handoff.cancelled` and treat a missing value as false without inspecting other fields.",
           "default": false
         }
       }

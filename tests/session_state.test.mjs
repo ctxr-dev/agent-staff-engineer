@@ -61,8 +61,13 @@ describe("sessionState.writeSession / readSession", () => {
 
 describe("sessionState.listPendingSessions", () => {
   it("enumerates non-archived files in the domain directory", async () => {
-    const s1 = { sessionId: "20260420-100000-aaaa", version: 1, startedAt: "2026-04-20T10:00:00Z" };
-    const s2 = { sessionId: "20260421-110000-bbbb", version: 1, startedAt: "2026-04-21T11:00:00Z" };
+    // Generate timestamps relative to the wall clock so the test
+    // doesn't regress the moment CI clock drifts or a future run
+    // precedes the hardcoded date. `s1` is 24h older than `s2`.
+    const older = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const newer = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+    const s1 = { sessionId: "20260420-100000-aaaa", version: 1, startedAt: older };
+    const s2 = { sessionId: "20260421-110000-bbbb", version: 1, startedAt: newer };
     await writeSession(scratch, "list-test", "20260420-100000-aaaa", s1);
     await writeSession(scratch, "list-test", "20260421-110000-bbbb", s2);
 

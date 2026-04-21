@@ -8,7 +8,7 @@ ops.config keys read:
   - workflow.issue_discovery.*            optional overrides on the intake
   - paths.plans_root                      only referenced via plan-keeper when plan stubs are enabled
 scalar placeholders:
-  {{ session_id }}                        session identifier (YYYYMMDD-HHMMSS-slug)
+  {{ session_id }}                        session identifier (YYYYMMDD-HHMMSS-<4 hex>)
   {{ started_at }}                        ISO-8601 session start timestamp
   {{ status }}                            pending | completed | cancelled
   {{ tracker_target }}                    short tracker coords, e.g. ctxr-dev/agent-staff-engineer

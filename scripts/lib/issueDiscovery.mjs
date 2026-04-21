@@ -441,9 +441,11 @@ export async function readSession(target, sessionId, sessionSchema) {
 }
 
 /**
- * Write a validated session state. Throws synchronously if the
- * state doesn't match the schema — a sketchy write would otherwise
- * manifest as a malformed-file error on the next read.
+ * Write a validated session state. Returns a rejected promise (the
+ * function is async) if the state doesn't match the schema; a
+ * sketchy write would otherwise manifest as a malformed-file error
+ * on the next read. Callers should `await` or `.catch(...)` the
+ * rejection rather than expecting a synchronous throw.
  */
 export async function writeSession(target, sessionId, state, sessionSchema) {
   const { ok, errors } = validate(sessionSchema, state);

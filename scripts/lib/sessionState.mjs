@@ -140,10 +140,14 @@ export async function listPendingSessions(target, domain) {
       const startedAt = typeof state?.startedAt === "string" ? Date.parse(state.startedAt) : NaN;
       let ageMs;
       if (Number.isFinite(startedAt)) {
-        ageMs = now - startedAt;
+        // Clamp negatives to 0: clock skew, a hand-edited file, or a
+        // corrupted startedAt can yield a future timestamp. Callers
+        // use ageMs for staleness decisions + sorting, so a negative
+        // value would invert the intended "oldest first" ordering.
+        ageMs = Math.max(0, now - startedAt);
       } else {
         const s = await stat(path);
-        ageMs = now - s.mtimeMs;
+        ageMs = Math.max(0, now - s.mtimeMs);
       }
       out.push({ sessionId: name, path, state, ageMs });
     } catch (err) {
