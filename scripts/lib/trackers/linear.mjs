@@ -173,13 +173,17 @@ async function resolveLabelIds(gql, caches, labelNames) {
   const map = await resolveLabelMap(gql, caches);
   const ids = [];
   const missing = [];
+  const seen = new Set();
   for (const name of labelNames) {
     if (typeof name !== "string" || name.trim().length === 0) {
       throw new TypeError(
         `linear resolveLabelIds: every label name must be a non-empty string; got ${JSON.stringify(name)}`,
       );
     }
-    const label = map.get(name.trim().toLowerCase());
+    const key = name.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const label = map.get(key);
     if (label) ids.push(label.id);
     else missing.push(name);
   }
@@ -476,8 +480,13 @@ async function linearListIssues(gql, target, caches, _ctx, payload = {}) {
     ? Math.min(Math.floor(rawFirst), 1000)
     : 50;
   const teamId = await resolveTeamId(gql, target, caches);
-  const filter = { team: { id: { eq: teamId } } };
+  // Default to open issues (non-completed, non-cancelled) matching GitHub's open-only default
+  const filter = {
+    team: { id: { eq: teamId } },
+    state: { type: { nin: ["completed", "canceled"] } },
+  };
   if (state) {
+    // Explicit state filter overrides the default open-only filter
     const stateId = await resolveStateId(gql, target, caches, state);
     filter.state = { id: { eq: stateId } };
   }
@@ -561,7 +570,7 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
     if (existing) {
       if (color && existing.color !== color) {
         if (apply) {
-          await gql(
+          const updateData = await gql(
             `mutation($id: String!, $input: IssueLabelUpdateInput!) {
               issueLabelUpdate(id: $id, input: $input) {
                 success issueLabel { id name color }
@@ -569,6 +578,9 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
             }`,
             { id: existing.id, input: { color } },
           );
+          if (!updateData?.issueLabelUpdate?.success) {
+            throw new Error(`linear labels.reconcileLabels: issueLabelUpdate failed for '${trimmedName}'`);
+          }
           existing.color = color;
         }
         updated.push(trimmedName);
@@ -585,7 +597,10 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
           }`,
           { input: { name: trimmedName, color: color || "#888888" } },
         );
-        const label = data?.issueLabelCreate?.issueLabel;
+        if (!data?.issueLabelCreate?.success) {
+          throw new Error(`linear labels.reconcileLabels: issueLabelCreate failed for '${trimmedName}'`);
+        }
+        const label = data.issueLabelCreate.issueLabel;
         if (label) map.set(label.name.toLowerCase(), label);
       }
       created.push(trimmedName);
@@ -639,7 +654,11 @@ async function linearRelabelBulk(gql, _target, caches, _ctx, payload) {
         }`,
         { id: existing.id, input: { name: to.trim() } },
       );
-      const renamed = data?.issueLabelUpdate?.issueLabel;
+      if (!data?.issueLabelUpdate?.success) {
+        results.push({ from, to, success: false, error: "issueLabelUpdate returned success:false" });
+        continue;
+      }
+      const renamed = data.issueLabelUpdate.issueLabel;
       if (renamed) {
         labelMap.delete(from.trim().toLowerCase());
         labelMap.set(renamed.name.toLowerCase(), renamed);
