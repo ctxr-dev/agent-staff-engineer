@@ -551,6 +551,7 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
   const raw = payload ?? {};
   const taxonomy = raw.taxonomy ?? raw.desired ?? [];
   const apply = raw.apply === true;
+  const allowDeprecate = raw.allowDeprecate === true;
   if (!Array.isArray(taxonomy)) {
     throw new TypeError(
       "linear labels.reconcileLabels: taxonomy (or desired) must be an array",
@@ -619,11 +620,24 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
       created.push(trimmedName);
     }
   }
-  // Return shape aligned with GitHub's reconcileLabels contract
+  // Detect labels that exist but are NOT in the taxonomy (deprecate candidates)
+  const taxonomyNames = new Set(taxonomy.map((w) =>
+    (typeof w === "string" ? w : w.name).trim().toLowerCase(),
+  ));
+  const deprecated = [];
+  if (allowDeprecate) {
+    for (const [key, label] of map) {
+      if (!taxonomyNames.has(key)) {
+        deprecated.push(label.name);
+      }
+    }
+  }
+
   const plan = [
     ...created.map((n) => ({ action: "create", name: n })),
     ...updated.map((n) => ({ action: "update", name: n })),
     ...unchanged.map((n) => ({ action: "unchanged", name: n })),
+    ...deprecated.map((n) => ({ action: "deprecate", name: n })),
   ];
   return { mode: apply ? "applied" : "dry-run", plan };
 }
@@ -652,8 +666,9 @@ async function linearRelabelBulk(gql, _target, caches, _ctx, payload) {
   for (const entry of plan) {
     const from = entry?.from;
     const to = entry?.to;
-    if (!from || !to) {
-      results.push({ from, to, success: false, error: "missing from or to" });
+    if (typeof from !== "string" || from.trim().length === 0 ||
+        typeof to !== "string" || to.trim().length === 0) {
+      results.push({ from: from ?? null, to: to ?? null, success: false, error: "from and to must be non-empty strings" });
       continue;
     }
     const existing = labelMap.get(from.trim().toLowerCase());
