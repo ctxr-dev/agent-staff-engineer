@@ -22,11 +22,16 @@ Confirm or adjust?
 3. I misunderstood; start over.
 ```
 
-When the user says only "what should I work on?" and no intent can be inferred:
+When the user says only "what should I work on?" and no intent can be inferred, the prompt still conforms to the numbered-options contract in `rules/issue-discovery.md` (2 to 4 domain options + custom). The skill offers the two most useful paths:
 
 ```text
-What's the topic for this session? One sentence is enough; I'll confirm before we pick an issue.
+I can't infer the topic yet. Two paths:
+
+1. I'll name the topic in one sentence (I'll record it verbatim and confirm).
+2. Help me narrow it down (I'll list the open issues and the areas configured on this project and we'll pick together).
 ```
+
+Option 1 opens a free-form sub-prompt and records the answer as `session.intentText`. Option 2 pre-loads the shortlist and labels and re-enters Q0 with the confirmation prompt populated from the user's pick.
 
 Proceed to Q1 once the user's answer is recorded verbatim in `session.intentText`.
 

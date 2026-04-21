@@ -131,10 +131,41 @@ export async function listPendingSessions(target, domain) {
   for (const entry of entries) {
     if (!entry.endsWith(".json")) continue;
     const name = basename(entry, ".json");
-    // Archived file shape: <sessionId>.<outcome>.json -> basename contains a dot.
-    if (name.includes(".")) continue;
-    if (!SESSION_ID_RE.test(name)) continue; // defensive: ignore hand-edited names
     const path = join(dir, entry);
+    // Archived file shape: <sessionId>.<outcome>.json. Split on the
+    // first dot from the right and require BOTH halves to be valid
+    // before skipping. A "weird" extra-dot name (hand-edit, partial
+    // rename, crash mid-archival) gets surfaced as an error entry
+    // rather than silently ignored, which was the docstring's
+    // original promise.
+    const lastDot = name.lastIndexOf(".");
+    if (lastDot !== -1) {
+      const head = name.slice(0, lastDot);
+      const tail = name.slice(lastDot + 1);
+      if (SESSION_ID_RE.test(head) && OUTCOME_RE.test(tail)) {
+        // Valid archived file. Skip per the listPendingSessions contract.
+        continue;
+      }
+      // Malformed: filename has a dot but neither half passes validation.
+      out.push({
+        sessionId: SESSION_ID_RE.test(head) ? head : name,
+        path,
+        state: null,
+        ageMs: null,
+        error: `Malformed session filename: expected <sessionId>.json or <sessionId>.<outcome>.json; got ${entry}`,
+      });
+      continue;
+    }
+    if (!SESSION_ID_RE.test(name)) {
+      out.push({
+        sessionId: name,
+        path,
+        state: null,
+        ageMs: null,
+        error: `Malformed session filename: invalid session id in ${entry}`,
+      });
+      continue;
+    }
     try {
       const state = await readJsonOrNull(path);
       const startedAt = typeof state?.startedAt === "string" ? Date.parse(state.startedAt) : NaN;

@@ -29,6 +29,21 @@ import { validate } from "./schema.mjs";
 const DOMAIN = "issue-discovery";
 
 /**
+ * Guard the schema argument on the library's public read/write
+ * surface. `validate` would otherwise crash with a low-level Ajv
+ * error (WeakMap lookup on `null`, etc.) and the caller wouldn't
+ * know which parameter was missing. Explicit TypeError names the
+ * parameter and the calling method.
+ */
+function assertSessionSchema(sessionSchema, method) {
+  if (sessionSchema === null || typeof sessionSchema !== "object" || Array.isArray(sessionSchema)) {
+    throw new TypeError(
+      `issueDiscovery.${method}: sessionSchema must be a plain object (load it via readJsonOrNull from schemas/issue-discovery-session.schema.json); got ${JSON.stringify(sessionSchema)}`,
+    );
+  }
+}
+
+/**
  * Decision-tree descriptor. Each node has:
  *   - id: stable string used in session.currentStep.
  *   - predecessors: valid incoming node ids (or ["ENTRY"] for Q0).
@@ -418,6 +433,7 @@ export function slugFromIntent(intent) {
  * rather than crashing on a property access.
  */
 export async function readSession(target, sessionId, sessionSchema) {
+  assertSessionSchema(sessionSchema, "readSession");
   let state;
   try {
     state = await rawReadSession(target, DOMAIN, sessionId);
@@ -448,6 +464,7 @@ export async function readSession(target, sessionId, sessionSchema) {
  * rejection rather than expecting a synchronous throw.
  */
 export async function writeSession(target, sessionId, state, sessionSchema) {
+  assertSessionSchema(sessionSchema, "writeSession");
   const { ok, errors } = validate(sessionSchema, state);
   if (!ok) {
     const summary = errors.map((e) => `${e.path}: ${e.message}`).join("; ");
