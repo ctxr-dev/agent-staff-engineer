@@ -82,25 +82,45 @@ describe("normalizeJiraBase", () => {
   it("trims whitespace", () => {
     assert.equal(normalizeJiraBase("  acme.atlassian.net  "), "https://acme.atlassian.net");
   });
+
+  it("throws on non-string inputs", () => {
+    assert.throws(() => normalizeJiraBase(null), /must be a string/);
+    assert.throws(() => normalizeJiraBase(undefined), /must be a string/);
+    assert.throws(() => normalizeJiraBase(123), /must be a string/);
+  });
+
+  it("throws on empty / whitespace-only input (no more https:// garbage)", () => {
+    assert.throws(() => normalizeJiraBase(""), /non-empty string/);
+    assert.throws(() => normalizeJiraBase("   "), /non-empty string/);
+  });
 });
 
 // ── issues.createIssue ──────────────────────────────────────────────
 
 describe("jira issues.createIssue", () => {
-  it("dedupes by exact title match in the open-set", async () => {
-    const api = mockRest([
-      route("GET", "/rest/api/3/project/PLAT", { id: "10000", issueTypes: [] }),
-      route("POST", "/rest/api/3/search/jql", {
-        issues: [
-          { id: "10500", key: "PLAT-77", fields: { summary: "Track log shipping" } },
-        ],
-      }),
-    ]);
+  it("dedupes by exact title match in the open-set and does NOT hit GET /project (deferred until actual create)", async () => {
+    const projectGets = [];
+    const api = async (method, path) => {
+      if (method === "GET" && path === "/rest/api/3/project/PLAT") {
+        projectGets.push(path);
+        return { id: "10000", issueTypes: [] };
+      }
+      if (method === "POST" && path === "/rest/api/3/search/jql") {
+        return {
+          issues: [
+            { id: "10500", key: "PLAT-77", fields: { summary: "Track log shipping" } },
+          ],
+        };
+      }
+      throw new Error(`no route for ${method} ${path}`);
+    };
     const tracker = makeJiraTracker(TARGET, { rest: api });
     const result = await tracker.issues.createIssue({}, { title: "Track log shipping" });
     assert.equal(result.existed, true);
     assert.equal(result.key, "PLAT-77");
     assert.equal(result.url, "https://acme.atlassian.net/browse/PLAT-77");
+    // Dedupe-hit path must not waste a GET /project.
+    assert.equal(projectGets.length, 0, `expected zero GET /project on dedupe hit; got ${projectGets.length}`);
   });
 
   it("paginates dedupe when the exact match lives behind a tokenised first page", async () => {
@@ -142,7 +162,7 @@ describe("jira issues.createIssue", () => {
     assert.equal(searchCalls, 2, "dedupe must have paged through the first 100 near-matches");
   });
 
-  it("creates when no dedupe match, using default issue type 'Task'", async () => {
+  it("creates when no dedupe match, using default issue type 'Task'; GET /project is hit exactly once", async () => {
     const api = mockRest([
       route("GET", "/rest/api/3/project/PLAT", {
         id: "10000",
@@ -172,6 +192,11 @@ describe("jira issues.createIssue", () => {
     assert.equal(createCall.body.fields.summary, "New work");
     assert.deepEqual(createCall.body.fields.labels, ["triage", "wave-1"]);
     assert.equal(createCall.body.fields.description.type, "doc");
+    // Exactly one GET /project call: the merged project+issueTypes
+    // loader replaces the earlier pattern of hitting /project twice
+    // (once for projectId, once for issueTypes).
+    const projectGets = api.log.filter((c) => c.method === "GET" && c.path === "/rest/api/3/project/PLAT");
+    assert.equal(projectGets.length, 1, `expected exactly one GET /project; got ${projectGets.length}`);
   });
 
   it("rejects templateName (callers must render the body first)", async () => {

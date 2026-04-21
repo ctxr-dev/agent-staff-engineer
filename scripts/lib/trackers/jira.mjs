@@ -28,7 +28,7 @@ import {
   REVIEW_METHODS,
   TRACKER_NAMESPACES,
 } from "./tracker.mjs";
-import { markdownToAdf, plainTextToAdf } from "./jira-adf.mjs";
+import { markdownToAdf } from "./jira-adf.mjs";
 
 const MAX_PAGES = 10;
 const MAX_PAGE_SIZE = 100;
@@ -60,7 +60,15 @@ const STATUS_CATEGORY_MAP = {
  * a no-op.
  */
 export function normalizeJiraBase(raw) {
-  const s = String(raw).trim();
+  if (typeof raw !== "string") {
+    throw new TypeError(
+      `jira normalizeJiraBase: raw must be a string; got ${raw === null ? "null" : typeof raw}`,
+    );
+  }
+  const s = raw.trim();
+  if (s.length === 0) {
+    throw new TypeError("jira normalizeJiraBase: raw must be a non-empty string after trim");
+  }
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `https://${s}`;
 }
 
@@ -124,8 +132,17 @@ function createCaches() {
 
 // ── Project + issue-type resolution ─────────────────────────────────
 
-async function resolveProjectId(rest, target, caches) {
-  if (caches.projectId) return caches.projectId;
+/**
+ * One-call project metadata loader. Fetches /project/:key once, caches
+ * both the numeric project id and the issueTypes list. Both consumers
+ * (createIssue, listIssues, reconcileLabels, relabelBulk) go through
+ * this helper so a path that needs either piece never pays for two
+ * round trips to the same endpoint.
+ */
+async function resolveProjectMeta(rest, target, caches) {
+  if (caches.projectId != null && caches.issueTypes != null) {
+    return { id: caches.projectId, issueTypes: caches.issueTypes };
+  }
   const key = target.project;
   if (!key) {
     throw new Error("Jira tracker requires target.project (project key)");
@@ -135,24 +152,21 @@ async function resolveProjectId(rest, target, caches) {
     throw new Error(`Jira: project with key '${key}' not found`);
   }
   caches.projectId = String(data.id);
-  return caches.projectId;
+  caches.issueTypes = Array.isArray(data?.issueTypes) ? data.issueTypes : [];
+  return { id: caches.projectId, issueTypes: caches.issueTypes };
 }
 
-async function resolveDefaultIssueTypeId(rest, target, caches) {
-  if (caches.issueTypes == null) {
-    const data = await rest(
-      "GET",
-      `/rest/api/3/project/${encodeURIComponent(target.project)}`,
-    );
-    caches.issueTypes = Array.isArray(data?.issueTypes) ? data.issueTypes : [];
-  }
+async function resolveProjectId(rest, target, caches) {
+  const meta = await resolveProjectMeta(rest, target, caches);
+  return meta.id;
+}
+
+function pickDefaultIssueTypeId(target, issueTypes) {
   // Prefer "Task" as the standard issue type; fall back to the first
   // non-subtask on the project. Subtasks are refused because they
   // require a parent and never represent a dev issue at this level.
-  const nonSub = caches.issueTypes.filter((t) => !t.subtask);
-  const task = nonSub.find(
-    (t) => String(t.name).toLowerCase() === "task",
-  );
+  const nonSub = (issueTypes ?? []).filter((t) => !t.subtask);
+  const task = nonSub.find((t) => String(t.name).toLowerCase() === "task");
   const chosen = task || nonSub[0];
   if (!chosen?.id) {
     throw new Error(
@@ -170,7 +184,6 @@ async function jiraCreateIssue(rest, target, caches, _ctx, payload) {
     body = "",
     labels = [],
     templateName,
-    issueType,
   } = payload ?? {};
   if (typeof title !== "string" || title.trim().length === 0) {
     throw new TypeError(
@@ -211,10 +224,17 @@ async function jiraCreateIssue(rest, target, caches, _ctx, payload) {
     return trimmed;
   });
   const trimmedTitle = title.trim();
-  const projectId = await resolveProjectId(rest, target, caches);
+  if (!target?.project) {
+    throw new Error("Jira tracker requires target.project (project key)");
+  }
 
-  // Dedupe: JQL on exact title match within the open-state set. Jira
-  // does not treat `summary = "..."` as an exact match for long
+  // Dedupe first, project-metadata second: the dedupe hit path is
+  // the common case for idempotent callers, and /rest/api/3/project
+  // is only needed on the actual-create path (for projectId + the
+  // default issueType). Resolving the project up-front would burn a
+  // GET on every dedupe-hit call.
+  //
+  // Jira does not treat `summary = "..."` as an exact match for long
   // summaries (it tokenises), so additionally verify summary equality
   // client-side. Paginate up to DEDUPE_SCAN_CAP to avoid creating a
   // duplicate when the exact match lives behind a noisy tokenised
@@ -246,9 +266,9 @@ async function jiraCreateIssue(rest, target, caches, _ctx, payload) {
     if (dedupeIssues.length === 0 || dedupeNextPageToken == null) break;
   }
 
-  const issueTypeId = issueType
-    ? String(issueType)
-    : await resolveDefaultIssueTypeId(rest, target, caches);
+  const meta = await resolveProjectMeta(rest, target, caches);
+  const projectId = meta.id;
+  const issueTypeId = pickDefaultIssueTypeId(target, meta.issueTypes);
   const fields = {
     project: { id: projectId },
     summary: trimmedTitle,
@@ -388,7 +408,12 @@ async function jiraComment(rest, _target, _caches, _ctx, payload) {
       "jira issues.comment: body must be a non-empty string",
     );
   }
-  const adf = /[*_`#>\-[\]]/.test(body) ? markdownToAdf(body) : plainTextToAdf(body);
+  // markdownToAdf produces a single paragraph for inputs with no
+  // block or inline markers, so it is a safe superset of the plain-
+  // text path. Running it unconditionally avoids a broken heuristic
+  // (the previous regex matched any `-` or `[`, so "plain" comments
+  // with a hyphen were secretly reparsed as markdown).
+  const adf = markdownToAdf(body);
   const created = await rest(
     "POST",
     `/rest/api/3/issue/${encodeURIComponent(issueId)}/comment`,
