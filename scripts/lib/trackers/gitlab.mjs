@@ -92,7 +92,7 @@ async function resolveLabelMap(api, target, caches) {
   if (caches.labelMap) return caches.labelMap;
   const pid = projectPath(target);
   const map = new Map();
-  let truncated = false;
+  let lastPageFull = false;
   for (let page = 1; page <= MAX_PAGES; page++) {
     const labels = await api("GET", `/projects/${pid}/labels`, {
       query: { per_page: MAX_PER_PAGE, page },
@@ -101,13 +101,23 @@ async function resolveLabelMap(api, target, caches) {
     for (const l of labels) {
       map.set(l.name.toLowerCase(), l);
     }
-    if (labels.length < MAX_PER_PAGE) break;
-    if (page === MAX_PAGES) truncated = true;
+    lastPageFull = labels.length === MAX_PER_PAGE;
+    if (!lastPageFull) break;
   }
-  if (truncated) {
-    throw new Error(
-      `GitLab: project has more than ${MAX_PAGES * MAX_PER_PAGE} labels; label resolution was truncated.`,
-    );
+  // A full MAX_PAGES page is ambiguous: it could mean "there's a next
+  // page" (truncation) or "we happened to land on the exact boundary"
+  // (no truncation). Probe one extra page to disambiguate before
+  // throwing; a false positive here would brick label resolution for
+  // any project sitting at exactly MAX_PAGES * MAX_PER_PAGE labels.
+  if (lastPageFull) {
+    const probe = await api("GET", `/projects/${pid}/labels`, {
+      query: { per_page: MAX_PER_PAGE, page: MAX_PAGES + 1 },
+    });
+    if (Array.isArray(probe) && probe.length > 0) {
+      throw new Error(
+        `GitLab: project has more than ${MAX_PAGES * MAX_PER_PAGE} labels; label resolution was truncated.`,
+      );
+    }
   }
   caches.labelMap = map;
   return map;

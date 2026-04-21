@@ -374,6 +374,73 @@ describe("gitlab labels.relabelBulk", () => {
   });
 });
 
+// ── resolveLabelMap pagination ──────────────────────────────────────
+
+describe("gitlab resolveLabelMap pagination", () => {
+  function paginatedLabelsApi(totalLabels, { perPage = 100 } = {}) {
+    return async (method, path, opts = {}) => {
+      if (method === "GET" && path.includes("/labels")) {
+        const page = opts.query?.page ?? 1;
+        const start = (page - 1) * perPage;
+        if (start >= totalLabels) return [];
+        const end = Math.min(start + perPage, totalLabels);
+        const batch = [];
+        for (let i = start; i < end; i++) {
+          batch.push({ name: `label-${i}`, color: "#888888" });
+        }
+        return batch;
+      }
+      // reconcileLabels also dispatches POST/PUT/DELETE. Return nulls.
+      return null;
+    };
+  }
+
+  it("does not throw on exactly MAX_PAGES * MAX_PER_PAGE labels (boundary case)", async () => {
+    // 10 pages * 100 per page = exactly 1000 labels. Naive detection
+    // flags truncation because the last page is full; the probe
+    // request returns [], disambiguating as "complete" not "truncated".
+    const api = paginatedLabelsApi(1000);
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    await assert.doesNotReject(async () => {
+      await tracker.labels.reconcileLabels({}, { taxonomy: ["label-0"] });
+    });
+  });
+
+  it("throws when MAX_PAGES * MAX_PER_PAGE + 1 labels exist (real truncation)", async () => {
+    const api = paginatedLabelsApi(1001);
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    await assert.rejects(
+      () => tracker.labels.reconcileLabels({}, { taxonomy: ["label-0"] }),
+      /was truncated/,
+    );
+  });
+
+  it("stops before the probe when last page is not full", async () => {
+    // 250 labels: 3 pages (100, 100, 50). Last page is short, so
+    // `lastPageFull` stays false and no probe request is made.
+    const calls = [];
+    const api = async (method, path, opts = {}) => {
+      calls.push({ method, path, page: opts.query?.page });
+      if (path.includes("/labels")) {
+        const page = opts.query?.page ?? 1;
+        const start = (page - 1) * 100;
+        if (start >= 250) return [];
+        const end = Math.min(start + 100, 250);
+        const batch = [];
+        for (let i = start; i < end; i++) batch.push({ name: `l${i}` });
+        return batch;
+      }
+      return null;
+    };
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    await tracker.labels.reconcileLabels({}, { taxonomy: ["l0"] });
+    const labelGetPages = calls
+      .filter((c) => c.method === "GET" && c.path.includes("/labels"))
+      .map((c) => c.page);
+    assert.deepEqual(labelGetPages, [1, 2, 3]);
+  });
+});
+
 // ── normalizeGitlabBase ─────────────────────────────────────────────
 
 describe("normalizeGitlabBase", () => {
