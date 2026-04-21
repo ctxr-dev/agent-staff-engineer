@@ -524,6 +524,64 @@ describe("gitlab resolveLabelMap pagination", () => {
   });
 });
 
+// ── listIssues pagination truncation ────────────────────────────────
+
+describe("gitlab issues.listIssues truncation probe", () => {
+  function paginatedIssuesApi(totalIssues) {
+    return async (method, path, opts = {}) => {
+      if (method === "GET" && path.includes("/issues")) {
+        const page = opts.query?.page ?? 1;
+        const perPage = opts.query?.per_page ?? 100;
+        const start = (page - 1) * perPage;
+        if (start >= totalIssues) return [];
+        const end = Math.min(start + perPage, totalIssues);
+        const batch = [];
+        for (let i = start; i < end; i++) batch.push({ iid: i + 1, title: `issue-${i + 1}` });
+        return batch;
+      }
+      return [];
+    };
+  }
+
+  it("does NOT mark truncated at exactly MAX_PAGES * MAX_PER_PAGE issues (boundary)", async () => {
+    const api = paginatedIssuesApi(1000);
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    const out = await tracker.issues.listIssues({}, { limit: 1000 });
+    assert.equal(out.length, 1000);
+    assert.strictEqual(out.truncated, undefined, "exact-boundary must not be flagged as truncated");
+  });
+
+  it("marks truncated when MAX_PAGES * MAX_PER_PAGE + 1 issues exist", async () => {
+    const api = paginatedIssuesApi(1001);
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    const out = await tracker.issues.listIssues({}, { limit: 1000 });
+    assert.equal(out.length, 1000);
+    assert.equal(out.truncated, true);
+  });
+
+  it("does NOT probe when cap is small enough to stop inside MAX_PAGES", async () => {
+    const calls = [];
+    const api = async (method, path, opts = {}) => {
+      calls.push({ method, path, page: opts.query?.page, per_page: opts.query?.per_page });
+      if (path.includes("/issues")) {
+        const page = opts.query?.page ?? 1;
+        if (page > 1) return [];
+        const batch = [];
+        for (let i = 0; i < 50; i++) batch.push({ iid: i + 1 });
+        return batch;
+      }
+      return [];
+    };
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    const out = await tracker.issues.listIssues({}, { limit: 50 });
+    assert.equal(out.length, 50);
+    assert.strictEqual(out.truncated, undefined);
+    // Only one GET /issues call (page=1); no probe should follow.
+    const issuesCalls = calls.filter((c) => c.path.includes("/issues"));
+    assert.equal(issuesCalls.length, 1);
+  });
+});
+
 // ── review paginators: truncation probe parity ──────────────────────
 
 describe("gitlab review paginators truncation probe", () => {

@@ -374,13 +374,32 @@ async function gitlabListIssues(api, target, caches, _ctx, payload = {}) {
     }
   }
   const results = [];
+  let lastPage = 0;
+  let lastPageFull = false;
   for (let page = 1; results.length < cap && page <= MAX_PAGES; page++) {
     query.page = page;
     const issues = await api("GET", `/projects/${pid}/issues`, { query });
-    if (!Array.isArray(issues) || issues.length === 0) break;
+    lastPage = page;
+    if (!Array.isArray(issues) || issues.length === 0) {
+      lastPageFull = false;
+      break;
+    }
     for (const i of issues) results.push(i);
-    if (issues.length < MAX_PER_PAGE) break;
-    if (page === MAX_PAGES && results.length >= cap) {
+    lastPageFull = issues.length === MAX_PER_PAGE;
+    if (!lastPageFull) break;
+  }
+  // Only claim truncation when the hard cap (MAX_PAGES) was exhausted
+  // on a full page AND GitLab actually has at least one more item.
+  // Before this probe, exactly MAX_PAGES * MAX_PER_PAGE issues and
+  // any cap in [901..1000] produced a false-positive `truncated` flag
+  // that callers might treat as incomplete data. Use the loop's
+  // per_page on the probe so offset arithmetic (page * per_page)
+  // lands at the first item past what we've already fetched.
+  if (lastPage === MAX_PAGES && lastPageFull && results.length >= cap) {
+    const probe = await api("GET", `/projects/${pid}/issues`, {
+      query: { ...query, page: MAX_PAGES + 1 },
+    });
+    if (Array.isArray(probe) && probe.length > 0) {
       const out = results.slice(0, cap);
       out.truncated = true;
       return out;
