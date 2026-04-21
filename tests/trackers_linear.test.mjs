@@ -333,8 +333,8 @@ describe("linear issues.listIssues", () => {
     ]);
     const tracker = makeLinearTracker(TARGET, { graphql: gql });
     const result = await tracker.issues.listIssues({});
-    assert.equal(result.items.length, 1);
-    assert.equal(result.truncated, false);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].identifier, "ENG-1");
   });
 });
 

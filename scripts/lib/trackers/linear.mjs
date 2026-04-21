@@ -120,7 +120,14 @@ async function resolveStateId(gql, target, caches, statusName) {
   if (byName) return byName.id;
   const mappedType = STATUS_TYPE_MAP[trimmed.toLowerCase()];
   if (mappedType) {
-    const byType = states.find((s) => s.type === mappedType);
+    // Prefer a state whose name also contains the key hint (e.g. prefer
+    // "In Review" over "In Progress" when both are type "started" and
+    // the vocabulary key is "in_review").
+    const candidates = states.filter((s) => s.type === mappedType);
+    const hinted = candidates.find(
+      (s) => s.name.toLowerCase().includes(trimmed.replace(/_/g, " ")),
+    );
+    const byType = hinted || candidates[0];
     if (byType) return byType.id;
   }
   const available = states.map((s) => `${s.name} (${s.type})`).join(", ");
@@ -202,6 +209,11 @@ async function linearCreateIssue(gql, target, caches, _ctx, payload) {
   if (!Array.isArray(labels)) {
     throw new TypeError(
       "linear issues.createIssue: labels must be an array of label names",
+    );
+  }
+  if (payload?.templateName != null) {
+    throw new Error(
+      "linear issues.createIssue: templateName is not supported on the Linear backend; render the body before calling createIssue",
     );
   }
   labels = labels.map((l) => {
@@ -310,10 +322,16 @@ async function linearUpdateIssueStatus(gql, target, caches, _ctx, payload) {
     }`,
     { id: issueId, stateId },
   );
+  const updated = data?.issueUpdate;
+  if (!updated?.success || !updated?.issue?.id) {
+    throw new Error(
+      `linear issues.updateIssueStatus: mutation failed or returned no issue (success: ${updated?.success})`,
+    );
+  }
   return {
-    id: data?.issueUpdate?.issue?.id,
-    identifier: data?.issueUpdate?.issue?.identifier,
-    state: data?.issueUpdate?.issue?.state,
+    id: updated.issue.id,
+    identifier: updated.issue.identifier,
+    state: updated.issue.state,
   };
 }
 
@@ -336,10 +354,13 @@ async function linearComment(gql, _target, _caches, _ctx, payload) {
     }`,
     { issueId, body },
   );
-  return {
-    id: data?.commentCreate?.comment?.id,
-    url: data?.commentCreate?.comment?.url,
-  };
+  const result = data?.commentCreate;
+  if (!result?.success || !result?.comment?.id) {
+    throw new Error(
+      `linear issues.comment: mutation failed (success: ${result?.success})`,
+    );
+  }
+  return { id: result.comment.id, url: result.comment.url };
 }
 
 async function linearRelabelIssue(gql, _target, caches, _ctx, payload) {
@@ -377,7 +398,8 @@ async function linearRelabelIssue(gql, _target, caches, _ctx, payload) {
   const labelMap = await resolveLabelMap(gql, caches);
   const missingAdd = [];
   for (const name of add) {
-    const label = labelMap.get(name.toLowerCase());
+    const trimmed = name.trim().toLowerCase();
+    const label = labelMap.get(trimmed);
     if (label) currentIds.add(label.id);
     else missingAdd.push(name);
   }
@@ -387,9 +409,9 @@ async function linearRelabelIssue(gql, _target, caches, _ctx, payload) {
     );
   }
   for (const name of remove) {
-    const label = labelMap.get(name.toLowerCase());
+    const trimmed = name.trim().toLowerCase();
+    const label = labelMap.get(trimmed);
     if (label) currentIds.delete(label.id);
-    // Removing a label that doesn't exist in the map is a no-op (idempotent)
   }
 
   const labelIds = [...currentIds];
@@ -402,9 +424,15 @@ async function linearRelabelIssue(gql, _target, caches, _ctx, payload) {
     }`,
     { id: issueId, labelIds },
   );
+  const updated = data?.issueUpdate;
+  if (!updated?.success || !updated?.issue?.id) {
+    throw new Error(
+      `linear issues.relabelIssue: mutation failed (success: ${updated?.success})`,
+    );
+  }
   return {
-    id: data?.issueUpdate?.issue?.id,
-    labels: data?.issueUpdate?.issue?.labels?.nodes ?? [],
+    id: updated.issue.id,
+    labels: updated.issue.labels?.nodes ?? [],
   };
 }
 
@@ -478,10 +506,12 @@ async function linearListIssues(gql, target, caches, _ctx, payload = {}) {
       truncated = true;
     }
   }
-  return {
-    items: results.slice(0, first),
-    truncated,
-  };
+  if (truncated) {
+    const out = results.slice(0, first);
+    out.truncated = true;
+    return out;
+  }
+  return results.slice(0, first);
 }
 
 // ── labels.* ────────────────────────────────────────────────────────
@@ -503,12 +533,18 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
   for (const want of taxonomy) {
     const name = typeof want === "string" ? want : want.name;
     const color = typeof want === "string" ? undefined : want.color;
-    if (!name || typeof name !== "string") {
+    if (!name || typeof name !== "string" || name.trim().length === 0) {
       throw new TypeError(
         `linear labels.reconcileLabels: each taxonomy entry must have a non-empty string name; got ${JSON.stringify(want)}`,
       );
     }
-    const existing = map.get(name.toLowerCase());
+    const trimmedName = name.trim();
+    if (color != null && (typeof color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(color))) {
+      throw new TypeError(
+        `linear labels.reconcileLabels: color must be a hex string like '#ff0000'; got ${JSON.stringify(color)}`,
+      );
+    }
+    const existing = map.get(trimmedName.toLowerCase());
     if (existing) {
       if (color && existing.color !== color) {
         if (apply) {
@@ -522,9 +558,9 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
           );
           existing.color = color;
         }
-        updated.push(name);
+        updated.push(trimmedName);
       } else {
-        unchanged.push(name);
+        unchanged.push(trimmedName);
       }
     } else {
       if (apply) {
@@ -534,12 +570,12 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
               success issueLabel { id name color }
             }
           }`,
-          { input: { name, color: color || "#888888" } },
+          { input: { name: trimmedName, color: color || "#888888" } },
         );
         const label = data?.issueLabelCreate?.issueLabel;
         if (label) map.set(label.name.toLowerCase(), label);
       }
-      created.push(name);
+      created.push(trimmedName);
     }
   }
   return { created, updated, unchanged };
