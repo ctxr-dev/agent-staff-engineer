@@ -449,7 +449,15 @@ async function countUnresolvedBeyondFirstPage({ owner, repo, prNumber }, startCu
 const GITHUB_OWNER_RE = /^(?=.{1,39}$)[A-Za-z0-9](?:-?[A-Za-z0-9])*$/;
 const GITHUB_REPO_RE  = /^[A-Za-z0-9._-]{1,100}$/;
 
-function resolveRepoCoords(ctx, trackerTarget) {
+/**
+ * Resolve owner + repo for namespaces that need both (issues.*,
+ * labels.*). The optional `prefix` parameter (default "github
+ * issues") names the caller surface in every validation error so
+ * labels.* callers see "github labels.reconcileLabels: ..." rather
+ * than misleading "github issues: ..." prefixes. Existing
+ * issues.* call sites rely on the default.
+ */
+function resolveRepoCoords(ctx, trackerTarget, prefix = "github issues") {
   // Explicit-invalid detection: a caller who passes
   //   ctx.owner = ""  or  ctx.owner = "   "
   // is almost always expressing a bug in their own code, not asking
@@ -463,7 +471,7 @@ function resolveRepoCoords(ctx, trackerTarget) {
     if (v === undefined || v === null) return; // permit fallthrough
     if (!validString(v)) {
       throw new TypeError(
-        `github issues: ctx.${key} must be a non-empty string when supplied; got ${JSON.stringify(v)}`,
+        `${prefix}: ctx.${key} must be a non-empty string when supplied; got ${JSON.stringify(v)}`,
       );
     }
   };
@@ -475,10 +483,10 @@ function resolveRepoCoords(ctx, trackerTarget) {
   const rawOwner = ctx?.owner ?? trackerTarget?.owner;
   const rawRepo = ctx?.repo ?? trackerTarget?.repo;
   if (!validString(rawOwner)) {
-    throw new TypeError("github issues: ctx.owner (or target.owner) is required");
+    throw new TypeError(`${prefix}: ctx.owner (or target.owner) is required`);
   }
   if (!validString(rawRepo)) {
-    throw new TypeError("github issues: ctx.repo (or target.repo) is required");
+    throw new TypeError(`${prefix}: ctx.repo (or target.repo) is required`);
   }
   // Trim first, then validate against GitHub's name constraints.
   // This both canonicalises whitespace-padded config and closes
@@ -490,12 +498,12 @@ function resolveRepoCoords(ctx, trackerTarget) {
   const repo = rawRepo.trim();
   if (!GITHUB_OWNER_RE.test(owner)) {
     throw new TypeError(
-      `github issues: owner must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(owner)}`,
+      `${prefix}: owner must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(owner)}`,
     );
   }
   if (!GITHUB_REPO_RE.test(repo)) {
     throw new TypeError(
-      `github issues: repo must match GitHub's repo-name rules (1-100 chars, alphanumeric + '.' + '-' + '_'); got ${JSON.stringify(repo)}`,
+      `${prefix}: repo must match GitHub's repo-name rules (1-100 chars, alphanumeric + '.' + '-' + '_'); got ${JSON.stringify(repo)}`,
     );
   }
   return { owner, repo };
@@ -515,35 +523,38 @@ function requirePositiveInt(value, label, prefix = "github issues") {
 }
 
 /**
- * Resolve just the owner login (no repo required) for `projects.*`
- * and `labels.*` methods that don't need a repo binding.
- * `resolveRepoCoords` is issues-specific (requires repo AND
- * prefixes errors with "github issues"); using it for projects
- * would force callers to supply an unrelated `ctx.repo` and emit
- * misleading errors.
- *
- * Falls back to `trackerTarget.owner` when `ctx.owner` is absent.
- * Validates the resolved owner against the same GitHub owner
- * allow-list `resolveRepoCoords` uses.
+ * Resolve an owner login for `projects.*` methods where the caller
+ * can name the project explicitly via `payload.projectOwner`.
+ * Precedence: `projectOwner` (payload) > `ctxOwner` (context) >
+ * `targetOwner` (tracker binding). This lets callers run a
+ * project op against a project whose owner differs from the
+ * tracker's default owner, without having to forge a ctx.owner.
+ * All inputs get the same trim + GITHUB_OWNER_RE canonicalisation.
  */
-function resolveOwnerOnly(ctx, trackerTarget, nsLabel) {
-  const validString = (v) => typeof v === "string" && v.trim().length > 0;
-  if (ctx?.owner !== undefined && ctx?.owner !== null && !validString(ctx.owner)) {
-    throw new TypeError(
-      `github ${nsLabel}: ctx.owner must be a non-empty string when supplied; got ${JSON.stringify(ctx.owner)}`,
-    );
+function resolveProjectOwner({ projectOwner, ctxOwner, targetOwner }, nsLabel) {
+  const candidates = [
+    ["payload.projectOwner", projectOwner],
+    ["ctx.owner", ctxOwner],
+    ["target.owner", targetOwner],
+  ];
+  for (const [src, value] of candidates) {
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw new TypeError(
+        `github ${nsLabel}: ${src} must be a non-empty string when supplied; got ${JSON.stringify(value)}`,
+      );
+    }
+    const owner = value.trim();
+    if (!GITHUB_OWNER_RE.test(owner)) {
+      throw new TypeError(
+        `github ${nsLabel}: ${src} must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(owner)}`,
+      );
+    }
+    return owner;
   }
-  const rawOwner = ctx?.owner ?? trackerTarget?.owner;
-  if (!validString(rawOwner)) {
-    throw new TypeError(`github ${nsLabel}: ctx.owner (or target.owner) is required`);
-  }
-  const owner = rawOwner.trim();
-  if (!GITHUB_OWNER_RE.test(owner)) {
-    throw new TypeError(
-      `github ${nsLabel}: owner must match GitHub's owner-name rules (1-39 chars, alphanumeric + hyphens); got ${JSON.stringify(owner)}`,
-    );
-  }
-  return { owner };
+  throw new TypeError(
+    `github ${nsLabel}: owner is required; supply payload.projectOwner, ctx.owner, or trackerTarget.owner`,
+  );
 }
 
 /**
@@ -1731,7 +1742,7 @@ function computeLabelReconcilePlan(declared, current, opts = {}) {
  * empty plan on the second run.
  */
 async function githubReconcileLabels(trackerTarget, ctx, payload) {
-  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget, "github labels.reconcileLabels");
   const { taxonomy, apply = false, allowDeprecate = false } = payload ?? {};
   if (!Array.isArray(taxonomy)) {
     throw new TypeError(
@@ -1867,7 +1878,7 @@ async function githubReconcileLabels(trackerTarget, ctx, payload) {
  * for that issue + that entry.
  */
 async function githubRelabelBulk(trackerTarget, ctx, payload) {
-  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget);
+  const { owner, repo } = resolveRepoCoords(ctx, trackerTarget, "github labels.relabelBulk");
   const { plan, apply = false, state = "OPEN" } = payload ?? {};
   if (!Array.isArray(plan)) {
     throw new TypeError("github labels.relabelBulk: plan must be an array of {from, to}");
@@ -2010,7 +2021,6 @@ async function resolveProjectNodeId(owner, projectNumber) {
  * item past the current window so a caller can resume from there.
  */
 async function githubListProjectItems(trackerTarget, ctx, payload) {
-  const { owner } = resolveOwnerOnly(ctx, trackerTarget, "projects.listProjectItems");
   const { projectNumber, projectOwner, first = 100, after: rawAfter = null, limit = 500 } = payload ?? {};
   requirePositiveInt(projectNumber, "projectNumber", "github projects.listProjectItems");
   // Validate `after` at the boundary: must be null/undefined or a
@@ -2037,25 +2047,17 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
       `github projects.listProjectItems: limit must be a positive integer; got ${JSON.stringify(limit)}`,
     );
   }
-  // Trim + canonicalise projectOwner at the boundary (mirrors
-  // updateProjectField + reconcileProjectFields) so "acme " and
-  // "acme" are treated identically and callers get a pointed
-  // empty-string error instead of a regex-mismatch message.
-  let ownerLogin;
-  if (projectOwner === undefined || projectOwner === null) {
-    ownerLogin = owner;
-  } else if (typeof projectOwner !== "string" || projectOwner.trim().length === 0) {
-    throw new TypeError(
-      `github projects.listProjectItems: projectOwner must be a non-empty string when supplied; got ${JSON.stringify(projectOwner)}`,
-    );
-  } else {
-    ownerLogin = projectOwner.trim();
-  }
-  if (!GITHUB_OWNER_RE.test(ownerLogin)) {
-    throw new TypeError(
-      `github projects.listProjectItems: projectOwner must match GitHub owner rules; got ${JSON.stringify(ownerLogin)}`,
-    );
-  }
+  // Owner resolution, aligned with the payload contract:
+  // `payload.projectOwner` wins when set (a caller may name the
+  // project explicitly without a repo binding), else
+  // `ctx.owner`, else `trackerTarget.owner`. This lets
+  // listProjectItems run with only projectOwner supplied by the
+  // caller — the previous ordering required ctx.owner or
+  // target.owner even when projectOwner was set.
+  const ownerLogin = resolveProjectOwner(
+    { projectOwner, ctxOwner: ctx?.owner, targetOwner: trackerTarget?.owner },
+    "projects.listProjectItems",
+  );
   const HARD_CAP = 2000;
   const effectiveLimit = Math.min(limit, HARD_CAP);
   const query = `
@@ -2196,7 +2198,6 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
  * `clearProjectField` helper is a follow-up.
  */
 async function githubUpdateProjectField(trackerTarget, ctx, payload) {
-  const { owner } = resolveOwnerOnly(ctx, trackerTarget, "projects.updateProjectField");
   const { projectNumber, projectOwner, itemId, field, value, apply = false } = payload ?? {};
   requirePositiveInt(projectNumber, "projectNumber", "github projects.updateProjectField");
   if (typeof itemId !== "string" || itemId.trim().length === 0) {
@@ -2215,31 +2216,34 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
       "github projects.updateProjectField: value must be a plain object with one of {text, number, date, singleSelect}",
     );
   }
-  // Trim + validate projectOwner at the boundary (mirrors
-  // reconcileProjectFields + listProjectItems), then canonicalise so
-  // the declared-project lookup and the network calls see the same
-  // string "acme" and "acme " is not treated as a different owner.
-  let ownerLogin;
-  if (projectOwner === undefined || projectOwner === null) {
-    ownerLogin = owner;
-  } else if (typeof projectOwner !== "string" || projectOwner.trim().length === 0) {
-    throw new TypeError(
-      `github projects.updateProjectField: projectOwner must be a non-empty string when supplied; got ${JSON.stringify(projectOwner)}`,
-    );
-  } else {
-    ownerLogin = projectOwner.trim();
-  }
-  if (!GITHUB_OWNER_RE.test(ownerLogin)) {
-    throw new TypeError(
-      `github projects.updateProjectField: projectOwner must match GitHub owner rules; got ${JSON.stringify(ownerLogin)}`,
-    );
-  }
+  // Owner resolution aligned with the payload contract (see
+  // listProjectItems / reconcileProjectFields): payload.projectOwner
+  // > ctx.owner > trackerTarget.owner.
+  const ownerLogin = resolveProjectOwner(
+    { projectOwner, ctxOwner: ctx?.owner, targetOwner: trackerTarget?.owner },
+    "projects.updateProjectField",
+  );
+  // Separately keep an "implicit owner" (ctx ?? target) for matching
+  // declared-project entries that omit their own `owner` field — a
+  // declared entry without an explicit owner inherits from the
+  // target's scope, not from the caller's override. Skipped
+  // trim/validation here because `resolveProjectOwner` already
+  // validated every candidate with these inputs; anything malformed
+  // would have thrown above.
+  const implicitOwner = (typeof ctx?.owner === "string" && ctx.owner.trim().length > 0)
+    ? ctx.owner.trim()
+    : (typeof trackerTarget?.owner === "string" && trackerTarget.owner.trim().length > 0
+        ? trackerTarget.owner.trim()
+        : null);
   // Normalise the configured `p.owner` before comparing. A config
   // that accidentally ships "acme " (trailing whitespace) would
   // otherwise never match the already-trimmed `ownerLogin` and
-  // block writes with a misleading "not declared" error.
+  // block writes with a misleading "not declared" error. Declared
+  // entries without their own `owner` field inherit from
+  // `implicitOwner` (ctx or target), NOT from `ownerLogin` — the
+  // caller's override must still match something on the target.
   const normaliseDeclaredOwner = (configuredOwner) => {
-    if (configuredOwner === undefined || configuredOwner === null) return owner;
+    if (configuredOwner === undefined || configuredOwner === null) return implicitOwner;
     if (typeof configuredOwner !== "string") return null;
     const t = configuredOwner.trim();
     if (t.length === 0 || !GITHUB_OWNER_RE.test(t)) return null;
@@ -2401,7 +2405,6 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
  * the UI first; this method never invents option lists.
  */
 async function githubReconcileProjectFields(trackerTarget, ctx, payload) {
-  const { owner } = resolveOwnerOnly(ctx, trackerTarget, "projects.reconcileProjectFields");
   const { projectNumber, projectOwner, declared, apply = false } = payload ?? {};
   requirePositiveInt(projectNumber, "projectNumber", "github projects.reconcileProjectFields");
   if (!Array.isArray(declared)) {
@@ -2427,21 +2430,14 @@ async function githubReconcileProjectFields(trackerTarget, ctx, payload) {
     seen.add(canonical);
     normalisedDeclared.push(canonical);
   }
-  let ownerLogin;
-  if (projectOwner === undefined || projectOwner === null) {
-    ownerLogin = owner;
-  } else if (typeof projectOwner !== "string" || projectOwner.trim().length === 0) {
-    throw new TypeError(
-      `github projects.reconcileProjectFields: projectOwner must be a non-empty string when supplied; got ${JSON.stringify(projectOwner)}`,
-    );
-  } else {
-    ownerLogin = projectOwner.trim();
-  }
-  if (!GITHUB_OWNER_RE.test(ownerLogin)) {
-    throw new TypeError(
-      `github projects.reconcileProjectFields: projectOwner must match GitHub owner rules; got ${JSON.stringify(ownerLogin)}`,
-    );
-  }
+  // Owner resolution aligned with the payload contract (see
+  // listProjectItems): payload.projectOwner > ctx.owner >
+  // trackerTarget.owner. A caller can name the project with only
+  // projectOwner, no ctx binding required.
+  const ownerLogin = resolveProjectOwner(
+    { projectOwner, ctxOwner: ctx?.owner, targetOwner: trackerTarget?.owner },
+    "projects.reconcileProjectFields",
+  );
   const { id: projectId, fields: existingFields } = await resolveProjectNodeId(ownerLogin, projectNumber);
   const existingNames = new Set(existingFields.map((f) => f?.name).filter(Boolean));
   const missing = normalisedDeclared.filter((n) => !existingNames.has(n));
