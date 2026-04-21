@@ -66,6 +66,36 @@ async function defaultRest(method, path, { body = null, query = {}, baseUrl: ove
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
+// Walk a GitLab REST collection page by page until MAX_PAGES, then
+// probe one extra page to disambiguate the boundary case. Returns the
+// accumulated array. Throws with `truncationMessage` when the probe
+// returns non-empty, so callers fail loud instead of silently serving
+// an undercount. Shares the truncation-detection pattern with
+// resolveLabelMap so every "hard-cap-plus-probe" call site behaves
+// identically across the backend.
+async function paginateWithTruncationProbe(api, path, baseQuery, truncationMessage) {
+  const out = [];
+  let lastPageFull = false;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const batch = await api("GET", path, {
+      query: { ...baseQuery, per_page: MAX_PER_PAGE, page },
+    });
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    for (const item of batch) out.push(item);
+    lastPageFull = batch.length === MAX_PER_PAGE;
+    if (!lastPageFull) break;
+  }
+  if (lastPageFull) {
+    const probe = await api("GET", path, {
+      query: { ...baseQuery, per_page: MAX_PER_PAGE, page: MAX_PAGES + 1 },
+    });
+    if (Array.isArray(probe) && probe.length > 0) {
+      throw new Error(truncationMessage);
+    }
+  }
+  return out;
+}
+
 function projectPath(target) {
   const id = target.project_id;
   if (id) return encodeURIComponent(String(id));
@@ -91,33 +121,15 @@ function createCaches() {
 async function resolveLabelMap(api, target, caches) {
   if (caches.labelMap) return caches.labelMap;
   const pid = projectPath(target);
+  const labels = await paginateWithTruncationProbe(
+    api,
+    `/projects/${pid}/labels`,
+    {},
+    `GitLab: project has more than ${MAX_PAGES * MAX_PER_PAGE} labels; label resolution was truncated.`,
+  );
   const map = new Map();
-  let lastPageFull = false;
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const labels = await api("GET", `/projects/${pid}/labels`, {
-      query: { per_page: MAX_PER_PAGE, page },
-    });
-    if (!Array.isArray(labels)) break;
-    for (const l of labels) {
-      map.set(l.name.toLowerCase(), l);
-    }
-    lastPageFull = labels.length === MAX_PER_PAGE;
-    if (!lastPageFull) break;
-  }
-  // A full MAX_PAGES page is ambiguous: it could mean "there's a next
-  // page" (truncation) or "we happened to land on the exact boundary"
-  // (no truncation). Probe one extra page to disambiguate before
-  // throwing; a false positive here would brick label resolution for
-  // any project sitting at exactly MAX_PAGES * MAX_PER_PAGE labels.
-  if (lastPageFull) {
-    const probe = await api("GET", `/projects/${pid}/labels`, {
-      query: { per_page: MAX_PER_PAGE, page: MAX_PAGES + 1 },
-    });
-    if (Array.isArray(probe) && probe.length > 0) {
-      throw new Error(
-        `GitLab: project has more than ${MAX_PAGES * MAX_PER_PAGE} labels; label resolution was truncated.`,
-      );
-    }
+  for (const l of labels) {
+    map.set(l.name.toLowerCase(), l);
   }
   caches.labelMap = map;
   return map;
@@ -537,16 +549,15 @@ async function gitlabPollForReview(api, target, _caches, ctx) {
   };
   const pipelineStatus = mr?.head_pipeline?.status ?? "pending";
   const ciState = ciMap[pipelineStatus] ?? "PENDING";
-  // Unresolved threads (paginated)
-  const allDiscussions = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const batch = await api("GET", `/projects/${pid}/merge_requests/${mrIid}/discussions`, {
-      query: { per_page: MAX_PER_PAGE, page },
-    });
-    if (!Array.isArray(batch) || batch.length === 0) break;
-    for (const d of batch) allDiscussions.push(d);
-    if (batch.length < MAX_PER_PAGE) break;
-  }
+  // Unresolved threads (paginated). Fail loud on truncation so the
+  // caller does not mistake a capped sample for the full set and exit
+  // the iteration loop early on an undercounted unresolvedCount.
+  const allDiscussions = await paginateWithTruncationProbe(
+    api,
+    `/projects/${pid}/merge_requests/${mrIid}/discussions`,
+    {},
+    `GitLab: MR ${mrIid} has more than ${MAX_PAGES * MAX_PER_PAGE} discussions; review.pollForReview was truncated.`,
+  );
   let unresolvedCount = 0;
   for (const d of allDiscussions) {
     if (Array.isArray(d.notes) && d.notes.some((n) => n.resolvable && !n.resolved)) {
@@ -593,34 +604,33 @@ async function gitlabFetchUnresolvedThreads(api, target, _caches, ctx) {
   const mrIid = ctx?.mrIid ?? ctx?.prNumber;
   if (!mrIid) throw new TypeError("gitlab review.fetchUnresolvedThreads: ctx.mrIid is required");
   const pid = projectPath(target);
+  const discussions = await paginateWithTruncationProbe(
+    api,
+    `/projects/${pid}/merge_requests/${mrIid}/discussions`,
+    {},
+    `GitLab: MR ${mrIid} has more than ${MAX_PAGES * MAX_PER_PAGE} discussions; review.fetchUnresolvedThreads was truncated.`,
+  );
   const threads = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const discussions = await api("GET", `/projects/${pid}/merge_requests/${mrIid}/discussions`, {
-      query: { per_page: MAX_PER_PAGE, page },
+  for (const d of discussions) {
+    if (!Array.isArray(d.notes) || d.notes.length === 0) continue;
+    // Pick the representative note from the currently-unresolved set,
+    // not from the full resolvable set. In a mixed discussion (an
+    // earlier resolvable note was resolved, a later resolvable note
+    // is still open), the first `resolvable` match would report stale
+    // path / author / body from a resolved note while the thread
+    // itself is still unresolved: downstream triage would react to the
+    // wrong comment.
+    const representative = d.notes.find((n) => n.resolvable && !n.resolved);
+    if (!representative) continue;
+    threads.push({
+      id: d.id,
+      path: representative.position?.new_path ?? null,
+      line: representative.position?.new_line ?? null,
+      isOutdated: representative.position?.line_range == null && representative.position?.new_line == null,
+      commitSha: representative.position?.head_sha ?? null,
+      authorLogin: representative.author?.username ?? null,
+      body: representative.body ?? "",
     });
-    if (!Array.isArray(discussions) || discussions.length === 0) break;
-    for (const d of discussions) {
-      if (!Array.isArray(d.notes) || d.notes.length === 0) continue;
-      // Pick the representative note from the currently-unresolved set,
-      // not from the full resolvable set. In a mixed discussion (an
-      // earlier resolvable note was resolved, a later resolvable note
-      // is still open), the first `resolvable` match would report
-      // stale path / author / body from a resolved note while the
-      // thread itself is still unresolved: downstream triage would
-      // react to the wrong comment.
-      const representative = d.notes.find((n) => n.resolvable && !n.resolved);
-      if (!representative) continue;
-      threads.push({
-        id: d.id,
-        path: representative.position?.new_path ?? null,
-        line: representative.position?.new_line ?? null,
-        isOutdated: representative.position?.line_range == null && representative.position?.new_line == null,
-        commitSha: representative.position?.head_sha ?? null,
-        authorLogin: representative.author?.username ?? null,
-        body: representative.body ?? "",
-      });
-    }
-    if (discussions.length < MAX_PER_PAGE) break;
   }
   return threads;
 }

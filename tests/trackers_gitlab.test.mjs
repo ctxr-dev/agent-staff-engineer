@@ -524,6 +524,66 @@ describe("gitlab resolveLabelMap pagination", () => {
   });
 });
 
+// ── review paginators: truncation probe parity ──────────────────────
+
+describe("gitlab review paginators truncation probe", () => {
+  function paginatedDiscussionsApi(totalDiscussions, { perPage = 100 } = {}) {
+    return async (method, path, opts = {}) => {
+      if (method === "GET" && path.includes("/merge_requests/") && path.endsWith("/discussions")) {
+        const page = opts.query?.page ?? 1;
+        const start = (page - 1) * perPage;
+        if (start >= totalDiscussions) return [];
+        const end = Math.min(start + perPage, totalDiscussions);
+        const out = [];
+        for (let i = start; i < end; i++) {
+          out.push({
+            id: `d${i}`,
+            notes: [
+              { resolvable: true, resolved: false, body: `c${i}`, position: { new_path: "a", new_line: i }, author: { username: "u" } },
+            ],
+          });
+        }
+        return out;
+      }
+      if (method === "GET" && path.includes("/merge_requests/")) {
+        return { diff_refs: { head_sha: "sha" }, head_pipeline: { status: "success" } };
+      }
+      return null;
+    };
+  }
+
+  it("pollForReview does NOT throw on exactly MAX_PAGES*MAX_PER_PAGE discussions (boundary)", async () => {
+    const api = paginatedDiscussionsApi(1000);
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    await assert.doesNotReject(() => tracker.review.pollForReview({ mrIid: 1 }));
+  });
+
+  it("pollForReview throws when more than MAX_PAGES*MAX_PER_PAGE discussions exist", async () => {
+    const api = paginatedDiscussionsApi(1001);
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    await assert.rejects(
+      () => tracker.review.pollForReview({ mrIid: 1 }),
+      /pollForReview was truncated/,
+    );
+  });
+
+  it("fetchUnresolvedThreads does NOT throw on the boundary case", async () => {
+    const api = paginatedDiscussionsApi(1000);
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    const threads = await tracker.review.fetchUnresolvedThreads({ mrIid: 1 });
+    assert.equal(threads.length, 1000);
+  });
+
+  it("fetchUnresolvedThreads throws when truncated", async () => {
+    const api = paginatedDiscussionsApi(1001);
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    await assert.rejects(
+      () => tracker.review.fetchUnresolvedThreads({ mrIid: 1 }),
+      /fetchUnresolvedThreads was truncated/,
+    );
+  });
+});
+
 // ── normalizeGitlabBase ─────────────────────────────────────────────
 
 describe("normalizeGitlabBase", () => {
