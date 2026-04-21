@@ -383,6 +383,34 @@ describe("jira labels.reconcileLabels", () => {
       /cannot contain whitespace/,
     );
   });
+
+  it("throws when the in-use-labels scan is truncated (MAX_PAGES * MAX_PAGE_SIZE issues with a lingering nextPageToken)", async () => {
+    // Simulate a project with > 1000 issues: every page returns 100
+    // issues and always offers a nextPageToken. The probe is the page
+    // check at MAX_PAGES - 1 that flips `truncated`.
+    let page = 0;
+    const api = async (method, path) => {
+      if (method === "GET" && path === "/rest/api/3/project/PLAT") {
+        return { id: "10000", issueTypes: [] };
+      }
+      if (method === "POST" && path === "/rest/api/3/search/jql") {
+        page++;
+        return {
+          issues: Array.from({ length: 100 }, (_, i) => ({
+            id: String(page * 100 + i),
+            fields: { labels: ["seen"] },
+          })),
+          nextPageToken: "x",
+        };
+      }
+      throw new Error(`no route for ${method} ${path}`);
+    };
+    const tracker = makeJiraTracker(TARGET, { rest: api });
+    await assert.rejects(
+      () => tracker.labels.reconcileLabels({}, { taxonomy: ["new-label"] }),
+      /in-use-labels scan was truncated/,
+    );
+  });
 });
 
 // ── labels.relabelBulk ──────────────────────────────────────────────
@@ -403,10 +431,15 @@ describe("jira labels.relabelBulk", () => {
   });
 
   it("apply: sweeps every matching issue and swaps label via delta update", async () => {
-    const issuesWithOld = [
-      { id: "1", key: "PLAT-1", fields: { labels: ["old", "wave-1"] } },
-      { id: "2", key: "PLAT-2", fields: { labels: ["old"] } },
-    ];
+    // The mock tracks per-issue label state so the search query stops
+    // returning issues whose `old` label has already been removed. That
+    // models real Jira behaviour: the JQL `labels = old` re-evaluates
+    // on every page fetch, not against a snapshot, so mutating during
+    // iteration shrinks the result set.
+    const state = new Map([
+      ["PLAT-1", ["old", "wave-1"]],
+      ["PLAT-2", ["old"]],
+    ]);
     let searchCalls = 0;
     const api = async (method, path, opts = {}) => {
       if (method === "GET" && path === "/rest/api/3/project/PLAT") {
@@ -414,16 +447,28 @@ describe("jira labels.relabelBulk", () => {
       }
       if (method === "POST" && path === "/rest/api/3/search/jql") {
         searchCalls++;
-        // First call: the label-sweep query. Second call: issue-by-issue
-        // relabelIssue does not search, so only one sweep is expected.
-        return { issues: issuesWithOld, nextPageToken: null };
+        const stillCarryingOld = [];
+        for (const [key, labels] of state) {
+          if (labels.includes("old")) {
+            stillCarryingOld.push({ id: key, key, fields: { labels: [...labels] } });
+          }
+        }
+        return { issues: stillCarryingOld };
       }
       if (method === "GET" && path.startsWith("/rest/api/3/issue/")) {
         const key = path.split("/").pop();
-        const issue = issuesWithOld.find((i) => i.key === key);
-        return issue;
+        return { id: key, key, fields: { labels: [...(state.get(key) ?? [])] } };
       }
       if (method === "PUT" && path.startsWith("/rest/api/3/issue/")) {
+        const key = path.split("/").pop();
+        const current = state.get(key) ?? [];
+        const ops = opts.body?.update?.labels ?? [];
+        let next = [...current];
+        for (const op of ops) {
+          if (op.add && !next.includes(op.add)) next.push(op.add);
+          if (op.remove) next = next.filter((l) => l !== op.remove);
+        }
+        state.set(key, next);
         return null;
       }
       throw new Error(`no route for ${method} ${path}`);
@@ -436,7 +481,12 @@ describe("jira labels.relabelBulk", () => {
     assert.equal(result.mode, "applied");
     assert.equal(result.results[0].action, "renamed");
     assert.equal(result.results[0].issuesTouched, 2);
-    assert.equal(searchCalls, 1);
+    // First search returns the initial 2 issues; second returns empty
+    // because both have been swept. The sweep loop then breaks.
+    assert.equal(searchCalls, 2);
+    // Both issues should now carry `new` instead of `old`.
+    assert.deepEqual([...state.get("PLAT-1")].sort(), ["new", "wave-1"]);
+    assert.deepEqual([...state.get("PLAT-2")], ["new"]);
   });
 
   it("rejects labels with whitespace in the plan", async () => {
@@ -450,6 +500,47 @@ describe("jira labels.relabelBulk", () => {
     });
     assert.equal(result.results[0].success, false);
     assert.match(result.results[0].error, /whitespace/);
+  });
+
+  it("sweepLabel surfaces a partial-sweep error when more issues remain after MAX_PAGES", async () => {
+    // Mock relabelIssue's pre-fetch + PUT so every swept issue returns
+    // cleanly, AND always report a non-empty search batch so the
+    // sweep exhausts MAX_PAGES. After the cap, the post-sweep probe
+    // returns 1 issue, which triggers the partial-rename error.
+    let searchCalls = 0;
+    const api = async (method, path, opts = {}) => {
+      if (method === "GET" && path === "/rest/api/3/project/PLAT") {
+        return { id: "10000", issueTypes: [] };
+      }
+      if (method === "POST" && path === "/rest/api/3/search/jql") {
+        searchCalls++;
+        // Probe call uses maxResults: 1; always return 1 issue here
+        // to force the partial-sweep branch.
+        const max = opts.body?.maxResults ?? 100;
+        return {
+          issues: Array.from({ length: Math.min(100, max) }, (_, i) => ({
+            id: String(searchCalls * 100 + i),
+            key: `PLAT-${searchCalls * 100 + i}`,
+            fields: { labels: ["old"] },
+          })),
+        };
+      }
+      if (method === "GET" && path.startsWith("/rest/api/3/issue/")) {
+        const key = path.split("/").pop();
+        return { id: "x", key, fields: { labels: ["old"] } };
+      }
+      if (method === "PUT" && path.startsWith("/rest/api/3/issue/")) {
+        return null;
+      }
+      throw new Error(`no route for ${method} ${path}`);
+    };
+    const tracker = makeJiraTracker(TARGET, { rest: api });
+    const result = await tracker.labels.relabelBulk({}, {
+      plan: [{ from: "old", to: "new" }],
+      apply: true,
+    });
+    assert.equal(result.results[0].success, false);
+    assert.match(result.results[0].error, /partial rename/);
   });
 });
 

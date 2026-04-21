@@ -272,11 +272,19 @@ function parseInline(raw) {
   // to look across newline boundaries. Two or more trailing spaces
   // before `\n` turn into a literal hardBreak sentinel we splice back
   // in below; all other `\n` become a space.
-  const HB = " HB ";
+  // Normalise hardBreak marker first so the main tokeniser never has
+  // to look across newline boundaries. Two or more trailing spaces
+  // before `\n` turn into a literal hardBreak sentinel we splice back
+  // in below; all other `\n` become a space. The sentinel is a
+  // Unicode Private Use Area codepoint (U+E000): unambiguous,
+  // non-control, never assigned, and cannot legitimately appear in
+  // markdown input (spaces would collide with user text; NUL would
+  // trip editors/diffs).
+  const HARD_BREAK_SENTINEL = "\uE000";
   const normalised = raw
-    .replace(/[ \t]{2,}\n/g, HB)
+    .replace(/[ \t]{2,}\n/g, HARD_BREAK_SENTINEL)
     .replace(/\n/g, " ");
-  const segments = normalised.split(HB);
+  const segments = normalised.split(HARD_BREAK_SENTINEL);
   const out = [];
   for (let s = 0; s < segments.length; s++) {
     pushInlineTokens(segments[s], [], out);

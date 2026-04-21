@@ -31,13 +31,15 @@ import {
 import { markdownToAdf, plainTextToAdf } from "./jira-adf.mjs";
 
 const MAX_PAGES = 10;
-const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 100;
 
-// Jira workflow status categories. Used to map the agent's vocabulary
-// keys onto whatever state name the instance happens to use and, more
-// importantly, to enforce the "never move to Done" human gate without
-// hard-coding the literal word "Done".
+// Maps the agent's vocabulary keys to Jira's statusCategory keys.
+// Used exclusively to enforce the "never move to Done" human gate on
+// the input side (first tier): if the caller asks for `done` /
+// `cancelled`, refuse before touching the API. The second-tier gate
+// (on the transition's destination `statusCategory.key`) catches the
+// opposite shape: a workflow whose literal state name isn't "Done" but
+// still lives in the done category (e.g. "Shipped", "Released").
 const STATUS_CATEGORY_MAP = {
   backlog: "new",
   ready: "new",
@@ -117,7 +119,6 @@ function createCaches() {
   return {
     projectId: null,
     issueTypes: null,
-    statusCategories: new Map(),
   };
 }
 
@@ -641,9 +642,14 @@ async function jiraReconcileLabels(rest, target, caches, _ctx, payload) {
 
   // Discover labels currently in use on the project. Jira has no
   // "project-scoped label registry"; labels exist implicitly when an
-  // issue carries them. Use JQL to enumerate the set.
+  // issue carries them. Use JQL to enumerate the set. The loop is
+  // bounded by MAX_PAGES; refuse to produce a silent undercount when
+  // the API still reports a nextPageToken after the hard cap, because
+  // a truncated sample would drive `reconcileLabels` into suggesting
+  // a spurious "create" for a label that is actually already in use.
   const usedLower = new Set();
   let cursor = null;
+  let truncated = false;
   for (let page = 0; page < MAX_PAGES; page++) {
     const body = {
       jql: `project = "${target.project}"`,
@@ -659,6 +665,12 @@ async function jiraReconcileLabels(rest, target, caches, _ctx, payload) {
     }
     if (!data?.nextPageToken) break;
     cursor = data.nextPageToken;
+    if (page === MAX_PAGES - 1) truncated = true;
+  }
+  if (truncated) {
+    throw new Error(
+      `Jira labels.reconcileLabels: project '${target.project}' has more than ${MAX_PAGES * MAX_PAGE_SIZE} issues; the in-use-labels scan was truncated and the plan would be unreliable. Contact maintainers to raise the page cap.`,
+    );
   }
 
   const plan = [];
@@ -766,31 +778,48 @@ async function jiraRelabelBulk(rest, target, caches, ctx, payload) {
  * Iterate every issue in the project that carries `from` and swap it
  * for `to` via relabelIssue's delta semantics. `to === ""` means
  * delete the label from every issue.
+ *
+ * Pagination intentionally does NOT use `nextPageToken`: each call to
+ * relabelIssue removes `from` from the issue, so the set matching the
+ * JQL shrinks between pages. A cursor anchored to the original
+ * snapshot would skip items; re-running page 1 every iteration keeps
+ * the cursor aligned with the current result set. The MAX_PAGES cap
+ * bounds run-time; a post-sweep probe confirms nothing matches
+ * before returning, so a truncated sweep fails loudly instead of
+ * reporting success while leaving issues behind.
  */
 async function sweepLabel(rest, target, caches, ctx, from, to) {
+  const jql = `project = "${target.project}" AND labels = "${escapeJqlString(from)}"`;
   let touched = 0;
-  let cursor = null;
+  let hitCap = false;
   for (let page = 0; page < MAX_PAGES; page++) {
-    const body = {
-      jql: `project = "${target.project}" AND labels = "${escapeJqlString(from)}"`,
-      maxResults: MAX_PAGE_SIZE,
-      fields: ["labels"],
-    };
-    if (cursor) body.nextPageToken = cursor;
-    const data = await rest("POST", "/rest/api/3/search/jql", { body });
+    const data = await rest("POST", "/rest/api/3/search/jql", {
+      body: { jql, maxResults: MAX_PAGE_SIZE, fields: ["labels"] },
+    });
     const batch = Array.isArray(data?.issues) ? data.issues : [];
+    if (batch.length === 0) return touched;
     for (const issue of batch) {
       const add = to.length > 0 ? [to] : [];
-      const remove = [from];
       await jiraRelabelIssue(rest, target, caches, ctx, {
         issueId: issue.key,
         add,
-        remove,
+        remove: [from],
       });
       touched++;
     }
-    if (!data?.nextPageToken || batch.length === 0) break;
-    cursor = data.nextPageToken;
+    if (page === MAX_PAGES - 1) hitCap = true;
+  }
+  if (hitCap) {
+    // Probe: is there still a matching issue? If yes, the caller's
+    // rename/delete is only partially applied; surface the miss.
+    const probe = await rest("POST", "/rest/api/3/search/jql", {
+      body: { jql, maxResults: 1, fields: ["labels"] },
+    });
+    if (Array.isArray(probe?.issues) && probe.issues.length > 0) {
+      throw new Error(
+        `Jira labels.relabelBulk: swept ${touched} issues carrying '${from}' but more still match after ${MAX_PAGES} pages; partial rename. Re-run with a narrower batch or raise MAX_PAGES.`,
+      );
+    }
   }
   return touched;
 }
@@ -872,6 +901,10 @@ export function makeJiraTracker(target = {}, { rest = null } = {}) {
   const missingReview = REVIEW_METHODS.filter((m) => typeof review[m] !== "function");
   if (missingReview.length > 0) {
     throw new Error(`makeJiraTracker: missing review methods [${missingReview.join(", ")}]`);
+  }
+  const missingProjects = TRACKER_NAMESPACES.projects.filter((m) => typeof projects[m] !== "function");
+  if (missingProjects.length > 0) {
+    throw new Error(`makeJiraTracker: missing projects methods [${missingProjects.join(", ")}]`);
   }
 
   return {
