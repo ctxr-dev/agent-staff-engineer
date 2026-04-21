@@ -1744,6 +1744,19 @@ function computeLabelReconcilePlan(declared, current, opts = {}) {
 async function githubReconcileLabels(trackerTarget, ctx, payload) {
   const { owner, repo } = resolveRepoCoords(ctx, trackerTarget, "github labels.reconcileLabels");
   const { taxonomy, apply = false, allowDeprecate = false } = payload ?? {};
+  // Strict boolean guards. Passing a truthy non-boolean (eg the
+  // string "false" or the number 1) would silently enable writes
+  // or the destructive deprecate path. Reject at the boundary.
+  if (typeof apply !== "boolean") {
+    throw new TypeError(
+      `github labels.reconcileLabels: apply must be a boolean; got ${JSON.stringify(apply)}`,
+    );
+  }
+  if (typeof allowDeprecate !== "boolean") {
+    throw new TypeError(
+      `github labels.reconcileLabels: allowDeprecate must be a boolean; got ${JSON.stringify(allowDeprecate)}`,
+    );
+  }
   if (!Array.isArray(taxonomy)) {
     throw new TypeError(
       "github labels.reconcileLabels: taxonomy must be an array of {name, color?, description?}",
@@ -1943,12 +1956,21 @@ async function githubRelabelBulk(trackerTarget, ctx, payload) {
     if (apply && matching.length > 0) {
       for (const iss of matching) {
         try {
-          await githubRelabelIssue(trackerTarget, ctx, {
+          const delta = await githubRelabelIssue(trackerTarget, ctx, {
             issueNumber: iss.number,
             add: [to],
             remove: [from],
           });
-          entryResult.changed.push(iss.number);
+          // Only record as changed when the delta actually mutated
+          // labels. relabelIssue returns {added: [], removed: []}
+          // when the issue already had `to` and lacked `from`
+          // (listIssues' label filter can drift between our query
+          // and the per-issue mutation).
+          const mutated =
+            (delta?.added?.length ?? 0) > 0 || (delta?.removed?.length ?? 0) > 0;
+          if (mutated) {
+            entryResult.changed.push(iss.number);
+          }
         } catch (e) {
           // Don't let one issue's failure halt the bulk; surface on
           // the result so the caller can retry the failures. Error
@@ -2161,7 +2183,12 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
           `github projects.listProjectItems: item ${n.id} has more than 50 field values; refusing to return truncated data`,
         );
       }
-      const fieldMap = {};
+      // Null-prototype object so server-controlled field names
+      // (which a motivated admin could set to "__proto__" or
+      // "constructor") cannot walk into Object.prototype and
+      // pollute the runtime. The caller gets a plain data bag
+      // they can iterate with for..in safely.
+      const fieldMap = Object.create(null);
       for (const fv of (n.fieldValues?.nodes ?? [])) {
         const fname = fv.field?.name;
         if (!fname) continue;
