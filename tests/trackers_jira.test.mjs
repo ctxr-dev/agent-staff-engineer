@@ -18,7 +18,6 @@ function mockRest(routes) {
         ? path.includes(r.pathHint)
         : r.pathHint.test(path);
       if (r.method === method && pathMatches) {
-        if (r.once) r.consumed = true;
         return typeof r.data === "function" ? r.data(opts) : r.data;
       }
     }
@@ -28,8 +27,8 @@ function mockRest(routes) {
   return fn;
 }
 
-function route(method, pathHint, data, opts = {}) {
-  return { method, pathHint, data, ...opts };
+function route(method, pathHint, data) {
+  return { method, pathHint, data };
 }
 
 const TARGET = {

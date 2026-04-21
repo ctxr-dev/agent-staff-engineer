@@ -203,6 +203,17 @@ describe("markdownToAdf: inline marks", () => {
     const hb = paraContent.find((n) => n.type === "hardBreak");
     assert.ok(hb, "expected hardBreak inline node");
   });
+
+  it("preserves literal U+E000 codepoints in user input (no sentinel collision)", () => {
+    // The previous implementation split on U+E000 internally and would
+    // drop a real U+E000 from the user's input. The walker approach
+    // makes no such assumption.
+    const out = markdownToAdf("ab");
+    const paraContent = out.content[0].content;
+    const flat = paraContent.map((n) => (n.type === "text" ? n.text : `<${n.type}>`)).join("");
+    assert.equal(flat, "ab");
+    assert.ok(!paraContent.some((n) => n.type === "hardBreak"));
+  });
 });
 
 describe("markdownToAdf: whole document", () => {

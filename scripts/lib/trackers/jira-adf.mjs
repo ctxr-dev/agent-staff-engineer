@@ -268,24 +268,36 @@ function listItemNode(text) {
  */
 function parseInline(raw) {
   if (!raw || raw.length === 0) return [];
-  // Normalise hardBreak marker first so the main tokeniser never has
-  // to look across newline boundaries. Two or more trailing spaces
-  // before `\n` turn into a literal hardBreak sentinel we splice back
-  // in below; all other `\n` become a space. The sentinel is a
-  // Unicode Private Use Area codepoint (U+E000): unambiguous,
-  // non-control, never assigned, and cannot legitimately appear in
-  // markdown input (spaces would collide with user text; NUL would
-  // trip editors/diffs).
-  const HARD_BREAK_SENTINEL = "\uE000";
-  const normalised = raw
-    .replace(/[ \t]{2,}\n/g, HARD_BREAK_SENTINEL)
-    .replace(/\n/g, " ");
-  const segments = normalised.split(HARD_BREAK_SENTINEL);
+  // Walk the input character by character instead of splitting on a
+  // sentinel: the earlier U+E000 approach would silently eat any
+  // legitimate Private-Use codepoint already present in the input.
+  // On `\n`, decide by looking at the preceding chunk: 2+ trailing
+  // space/tab chars mean "hard break" (emit the chunk, push a
+  // hardBreak node, reset); anything else is a soft newline that
+  // collapses to a space.
   const out = [];
-  for (let s = 0; s < segments.length; s++) {
-    pushInlineTokens(segments[s], [], out);
-    if (s < segments.length - 1) out.push({ type: "hardBreak" });
+  let chunk = "";
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch !== "\n") {
+      chunk += ch;
+      continue;
+    }
+    let trailing = 0;
+    for (let j = chunk.length - 1; j >= 0; j--) {
+      const tail = chunk[j];
+      if (tail !== " " && tail !== "\t") break;
+      trailing++;
+    }
+    if (trailing >= 2) {
+      pushInlineTokens(chunk.slice(0, chunk.length - trailing), [], out);
+      out.push({ type: "hardBreak" });
+      chunk = "";
+    } else {
+      chunk += " ";
+    }
   }
+  pushInlineTokens(chunk, [], out);
   return out;
 }
 
