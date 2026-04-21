@@ -437,6 +437,13 @@ async function linearRelabelIssue(gql, _target, caches, _ctx, payload) {
   }
 
   const labelIds = [...currentIds];
+  // Skip mutation if delta produced no change
+  const originalIds = new Set(
+    (currentData?.issue?.labels?.nodes ?? []).map((l) => l.id),
+  );
+  if (labelIds.length === originalIds.size && labelIds.every((id) => originalIds.has(id))) {
+    return { id: issueId, labels: currentData?.issue?.labels?.nodes ?? [], noop: true };
+  }
   const data = await gql(
     `mutation($id: String!, $labelIds: [String!]!) {
       issueUpdate(id: $id, input: { labelIds: $labelIds }) {
@@ -561,6 +568,7 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
   const created = [];
   const updated = [];
   const unchanged = [];
+  const seenNames = new Set();
   for (const want of taxonomy) {
     if (want == null || (typeof want !== "string" && typeof want !== "object")) {
       throw new TypeError(
@@ -580,7 +588,10 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
         `linear labels.reconcileLabels: color must be a hex string like '#ff0000'; got ${JSON.stringify(color)}`,
       );
     }
-    const existing = map.get(trimmedName.toLowerCase());
+    const nameKey = trimmedName.toLowerCase();
+    if (seenNames.has(nameKey)) continue;
+    seenNames.add(nameKey);
+    const existing = map.get(nameKey);
     if (existing) {
       if (color && existing.color !== color) {
         if (apply) {
@@ -628,6 +639,14 @@ async function linearReconcileLabels(gql, _target, caches, _ctx, payload) {
   if (allowDeprecate) {
     for (const [key, label] of map) {
       if (!taxonomyNames.has(key)) {
+        if (apply) {
+          await gql(
+            `mutation($id: String!) {
+              issueLabelArchive(id: $id) { success }
+            }`,
+            { id: label.id },
+          );
+        }
         deprecated.push(label.name);
       }
     }
@@ -646,10 +665,13 @@ async function linearRelabelBulk(gql, _target, caches, _ctx, payload) {
   const raw = payload ?? {};
   const plan = raw.plan ?? [];
   const apply = raw.apply === true;
-  if (!Array.isArray(plan) || plan.length === 0) {
+  if (!Array.isArray(plan)) {
     throw new TypeError(
-      "linear labels.relabelBulk: plan must be a non-empty array of {from, to}",
+      "linear labels.relabelBulk: plan must be an array of {from, to}",
     );
+  }
+  if (plan.length === 0) {
+    return { mode: apply ? "applied" : "dry-run", results: [] };
   }
   for (const entry of plan) {
     if (!entry || typeof entry !== "object") {
