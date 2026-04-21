@@ -179,7 +179,7 @@ async function resolveLabelIds(gql, caches, labelNames) {
         `linear resolveLabelIds: every label name must be a non-empty string; got ${JSON.stringify(name)}`,
       );
     }
-    const label = map.get(name.toLowerCase());
+    const label = map.get(name.trim().toLowerCase());
     if (label) ids.push(label.id);
     else missing.push(name);
   }
@@ -226,18 +226,28 @@ async function linearCreateIssue(gql, target, caches, _ctx, payload) {
   });
   const teamId = await resolveTeamId(gql, target, caches);
 
-  // Dedupe: search open issues by exact title match
-  const searchData = await gql(
-    `query($teamId: String!, $first: Int!) {
-      issues(filter: { team: { id: { eq: $teamId } }, state: { type: { nin: ["completed", "canceled"] } } }, first: $first) {
-        nodes { id identifier title url }
-      }
-    }`,
-    { teamId, first: 100 },
-  );
-  const match = (searchData?.issues?.nodes ?? []).find(
-    (n) => n.title === title,
-  );
+  // Dedupe: search open issues by exact title match (paginated)
+  let dedupeCursor = null;
+  const DEDUPE_MAX = 500;
+  let dedupeScanned = 0;
+  let match = null;
+  while (dedupeScanned < DEDUPE_MAX) {
+    const searchData = await gql(
+      `query($teamId: String!, $first: Int!, $after: String) {
+        issues(filter: { team: { id: { eq: $teamId } }, state: { type: { nin: ["completed", "canceled"] } } }, first: $first, after: $after) {
+          nodes { id identifier title url }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`,
+      { teamId, first: 100, after: dedupeCursor },
+    );
+    const nodes = searchData?.issues?.nodes ?? [];
+    match = nodes.find((n) => n.title === title);
+    if (match) break;
+    dedupeScanned += nodes.length;
+    if (!searchData?.issues?.pageInfo?.hasNextPage) break;
+    dedupeCursor = searchData.issues.pageInfo.endCursor;
+  }
   if (match) {
     return {
       id: match.id,
