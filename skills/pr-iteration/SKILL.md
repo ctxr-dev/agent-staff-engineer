@@ -49,20 +49,43 @@ Hard rule baked in: **pr-iteration never merges a PR.** Merge is a human gate. E
 [tracker.review.requestReview on HEAD]
       |
       v
-[poll every poll_interval_seconds]
+[check once via tracker.review.pollForReview]
       |
-      +-- CI terminal AND (unresolved>0 OR reviewOnHead) --> [fetch threads, triage, fix + commit + push + resolve + re-request] --> back to poll
-      +-- poll_timeout_seconds exceeded --> [surface state, stop]
+      +-- CI terminal AND (unresolved>0 OR reviewOnHead)
+      |     --> [fetch threads, triage, fix + commit + push + resolve + re-request]
+      |     --> persist state, ScheduleWakeup --> (next tick re-enters here)
+      +-- CI PENDING, no threads, no review on HEAD
+      |     --> persist state, ScheduleWakeup --> (next tick re-enters here)
+      +-- .stopped sidecar present --> [exit: user cancelled]
+      +-- consecutive wakes >= max --> [write .paused, exit: safety cap]
       +-- NotSupportedError from tracker.review.* --> [clean halt at In review]
       |
       v
 [all three exit conditions hold on current HEAD]
       |
       v
-[write final report; stop]          *** HUMAN GATE 1: merge PR ***
+[write final report; delete state file; stop]   *** HUMAN GATE 1: merge PR ***
 ```
 
 The two human gates from `rules/pr-workflow.md` are preserved: merge and dev-issue Done.
+
+## Autonomous mode (default)
+
+When `workflow.external_review.autonomous.enabled` is `true` (the default), step 4 of the state machine uses `ScheduleWakeup` instead of an in-session poll. Each wakeup is one tick: poll once, evaluate exit conditions, act or reschedule. This survives session close, IDE restart, network hiccups, and context compaction.
+
+**State persistence:** One JSON file per active PR under `.development/local/pr-iteration/<owner>__<repo>__<number>.json`, validated against `schemas/pr-iteration-state.schema.json` on every read. The `.development/local/` subtree is gitignored by convention, so state never leaks into commits.
+
+**Interval:** Default 270 seconds (stays inside the 5-minute Anthropic prompt-cache window, avoiding cache-miss cost). Honours a free-form user override ("every 10 min") and the `autonomous.default_interval_seconds` config key.
+
+**Resume on session start:** On every agent invocation, `rules/agent-boot.md` scans the state directory and surfaces a "PR #N has a pending iteration loop" prompt per pending PR. The user answers resume / defer / stop. Never auto-resumes silently.
+
+**Cancel / pause:**
+
+1. **Normal completion:** All three exit conditions hold. The tick deletes the state file and writes the final report. No further wakeups.
+2. **User cancels:** Agent writes a `.stopped` sidecar. The next wakeup reads it and exits without rescheduling.
+3. **Safety cap:** After `max_consecutive_wakes` (default 96, roughly 7.2 hours) without forward progress, the tick writes a `.paused` sidecar and stops. Human deletes the file to resume.
+
+**Legacy mode:** Set `workflow.external_review.autonomous.enabled` to `false` to restore the pre-PR-14 in-session poll at `poll_interval_seconds` (default 30s), capped by `poll_timeout_seconds` (default 1200s). The full poll loop runs in the active turn, blocking the user.
 
 ## Provider dispatch
 
@@ -99,9 +122,12 @@ This skill writes into `.development/shared/reports/**` and MUST follow `rules/l
 - `workflow.external_review.enabled` (gate the whole loop).
 - `workflow.external_review.provider` (`auto` / `github` / `none`).
 - `workflow.external_review.bots` (per-kind reviewer LOGINS; for GitHub, the skill resolves login → GraphQL node ID at runtime and caches the derived IDs in the in-memory iteration state).
-- `workflow.external_review.poll_interval_seconds`.
-- `workflow.external_review.poll_timeout_seconds`.
+- `workflow.external_review.poll_interval_seconds` (legacy mode only).
+- `workflow.external_review.poll_timeout_seconds` (legacy mode only).
 - `workflow.external_review.auto_resolve_stale_after_commits`.
+- `workflow.external_review.autonomous.enabled` (gate: wakeup-driven vs. legacy poll).
+- `workflow.external_review.autonomous.default_interval_seconds` (wakeup interval).
+- `workflow.external_review.autonomous.max_consecutive_wakes` (safety cap).
 - `workflow.code_review.*` (the pre-push local review, re-checked every round).
 - `paths.reports` (report artefact target, routed through the llm-wiki per rules/llm-wiki.md).
 
@@ -127,6 +153,10 @@ Per-round artefact structure: see `templates/pr-iteration-report.md`. Minimum fi
 
 - `rules/pr-iteration.md`: binding contract.
 - `rules/pr-workflow.md`: full PR state machine in which this skill plugs after "In review".
+- `rules/agent-boot.md`: session-start resume prompt for pending iteration loops.
 - `skills/dev-loop/SKILL.md`: hands off to this skill after opening the PR.
 - `scripts/lib/trackers/*.mjs`: the Tracker implementations (GitHub real; Jira/Linear/GitLab stubbed).
+- `scripts/lib/pr-iteration/state.mjs`: persistent state read/write/list.
+- `scripts/lib/pr-iteration/tick.mjs`: one-shot tick (poll + exit-condition check).
+- `scripts/lib/pr-iteration/reschedule.mjs`: interval computation + wakeup prompt builder.
 - `skills/pr-iteration/runbook.md`: canonical how-to with full GraphQL recipes.
