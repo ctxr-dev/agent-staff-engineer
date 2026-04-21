@@ -1,0 +1,247 @@
+{
+  "$id": "https://ctxr-dev.github.io/agent-staff-engineer/schemas/issue-discovery-session.schema.json",
+  "title": "issue-discovery session state",
+  "description": "Ephemeral scratch state the issue-discovery skill persists under .development/local/issue-discovery/<session-id>.json. Validated on every read (scripts/lib/issueDiscovery.mjs#readSession) so a corrupted file fails loud instead of crashing mid-interview. Never promoted to durable config; archived on Q6 terminal nodes with a .completed.json or .cancelled.json suffix.",
+  "type": "object",
+  "required": [
+    "sessionId",
+    "version",
+    "startedAt",
+    "updatedAt",
+    "currentStep",
+    "intentText",
+    "topicConfirmed",
+    "trackerTarget",
+    "answers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "description": "Session identifier. Format: `<YYYYMMDD-HHMMSS>-<4 hex chars>` as produced by scripts/lib/issueDiscovery.mjs#newSessionId. The hex tail is 2 random bytes rendered as hex; the date/time stamp is UTC so listings sort chronologically.",
+      "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$"
+    },
+    "version": {
+      "type": "integer",
+      "description": "Schema version for migrations. 1 is the initial shape.",
+      "const": 1
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp of the session start."
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp of the last persisted mutation. Updated on every node transition."
+    },
+    "currentStep": {
+      "type": "string",
+      "enum": [
+        "q0",
+        "q1",
+        "q2",
+        "q3a",
+        "q3b",
+        "q3c",
+        "q3d",
+        "q3e-priority",
+        "q3e-size",
+        "q3f",
+        "q4a",
+        "q4c",
+        "q5.1",
+        "q5.2",
+        "q5.3",
+        "q5.4",
+        "q5.5",
+        "q5.6",
+        "q5.7",
+        "q5.8",
+        "q6",
+        "done"
+      ],
+      "description": "Which node of the decision tree is awaiting the user's answer. `done` is the terminal state reached after Q6 Proceed (and before archival)."
+    },
+    "intentText": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The user's first-message free-form intent, recorded verbatim. Never mutated downstream."
+    },
+    "topicConfirmed": {
+      "type": "boolean",
+      "description": "True once Q0 (topic confirmation) returned 'Correct' or an edited version the user accepted."
+    },
+    "trackerTarget": {
+      "description": "Minimal tracker coordinates the skill dispatches against. Resolved at Q1 (or at ENTRY when exactly one writable target exists). `kind`-keyed discriminated union so each backend requires the right coordinate set; an empty object or a kind-only object fails validation.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "owner", "repo"],
+          "properties": {
+            "kind": { "type": "string", "const": "github" },
+            "owner": { "type": "string", "minLength": 1 },
+            "repo": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "site", "project"],
+          "properties": {
+            "kind": { "type": "string", "const": "jira" },
+            "site": { "type": "string", "minLength": 1 },
+            "project": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "workspace", "team"],
+          "properties": {
+            "kind": { "type": "string", "const": "linear" },
+            "workspace": { "type": "string", "minLength": 1 },
+            "team": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "host", "project_path"],
+          "properties": {
+            "kind": { "type": "string", "const": "gitlab" },
+            "host": { "type": "string", "minLength": 1 },
+            "project_path": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "memberName": {
+      "type": ["string", "null"],
+      "description": "Workspace member name when the target project uses workspace.members[]. Null for single-repo projects.",
+      "minLength": 1
+    },
+    "answers": {
+      "type": "array",
+      "description": "Ordered log of every user answer. Each entry records the node id, the raw user input, and a short summary the confirmation-gate renderer uses.",
+      "items": {
+        "type": "object",
+        "required": ["nodeId", "timestamp", "rawInput"],
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": { "type": "string", "minLength": 1 },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "rawInput": { "type": "string" },
+          "summary": { "type": "string", "maxLength": 240 }
+        }
+      }
+    },
+    "proposedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The issue-create payload assembled incrementally through Q3b-Q3f. Surfaced at Q6 for the user to proof-read before the Proceed.",
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "enum": ["feature", "task", "refactor", "bug"] },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "priority": { "type": "string", "enum": ["high", "medium", "low"] },
+        "size": { "type": "string", "enum": ["small", "medium", "large"] },
+        "acceptanceCriteria": { "type": ["string", "null"] }
+      }
+    },
+    "umbrellaDecision": {
+      "description": "The Q4/Q5 outcome. `kind` encodes the branch the user picked; the allowed `ref` / `payload` shape is a function of `kind`. A `kind`-keyed oneOf keeps partial / corrupt decision objects out: {} or a kind-only object fails validation for the create-new branch, and the skip branch refuses stray ref/payload fields.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "description": "Umbrella intentionally skipped. Valid even when trackers.release is present; the user confirmed the skip explicitly per the runbook's Q4a no-umbrella halt.",
+          "properties": {
+            "kind": { "type": "string", "const": "skip" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "ref"],
+          "description": "User linked to an existing open umbrella. `ref` is required.",
+          "properties": {
+            "kind": { "type": "string", "const": "link-existing" },
+            "ref": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["number"],
+              "properties": {
+                "number": { "type": "integer", "minimum": 1 },
+                "nodeId": { "type": "string", "minLength": 1 },
+                "url": { "type": "string", "format": "uri" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "payload"],
+          "description": "User elected to create a new umbrella. `payload` carries the user's Q5 answers; `intent`, `goal`, `scopeTag`, `definitionOfDone`, and `rollbackPlan` are required (the non-skippable core). `targetDate`, `nonGoals`, and `stakeholders` are optional because Q5.4 / Q5.5 / Q5.8 each accept 'none' as a valid answer and the payload stores them as null / [] / []. `ref` is populated after release-tracker.createUmbrellaForIntent returns (or stays null if the backend has not yet landed).",
+          "properties": {
+            "kind": { "type": "string", "const": "create-new" },
+            "ref": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "properties": {
+                "number": { "type": "integer", "minimum": 1 },
+                "nodeId": { "type": "string", "minLength": 1 },
+                "url": { "type": "string", "format": "uri" }
+              }
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["intent", "goal", "scopeTag", "definitionOfDone", "rollbackPlan"],
+              "properties": {
+                "intent": { "type": "string", "minLength": 1 },
+                "goal": { "type": "string", "minLength": 30 },
+                "scopeTag": { "type": "string", "minLength": 1 },
+                "targetDate": {
+                  "type": ["string", "null"],
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                },
+                "nonGoals": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "definitionOfDone": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "minItems": 1
+                },
+                "rollbackPlan": { "type": "string", "minLength": 20 },
+                "stakeholders": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "createdIssueRef": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Populated after Q6 Proceed with the ref tracker-sync.issues.createIssue returned. The presence of this field with `currentStep: done` means the session is ready for archival.",
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "nodeId": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri" }
+      }
+    }
+  }
+}

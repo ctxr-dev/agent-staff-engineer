@@ -58,8 +58,8 @@ Reshapes a live installation when the project's context changes. Every change is
 | --- | --- |
 | `compliance:*` | `ops.config.json -> compliance.*`, `labels.area` additions, new `rules/product-*.md`, template sections |
 | `stack:add:*` / `stack:drop:*` | `ops.config.json -> stack.*`, memory seeds installed, `workflow.pr.tests_required` / `e2e_required_on` if relevant |
-| `domain:*` | `labels.area` additions, `area_keywords` updates, optional `rules/product-*.md`, template sections |
-| `audience:*` | `labels.area` additions (e.g. `area/enterprise`), `templates/release-readiness-checklist.md` sections (e.g. SLA) |
+| `domain:*` | `labels.area` additions, `area_keywords` updates, optional `rules/product-*.md`, template sections, `workflow.issue_discovery.domain_glossary` entries so the intake interview prints a one-line definition when a user's answer mentions the term |
+| `audience:*` | `labels.area` additions (e.g. `area/enterprise`), `templates/release-readiness-checklist.md` sections (e.g. SLA), `workflow.issue_discovery.stakeholders` appends so the Q5.8 stakeholder prompt lists the configured names |
 | `dependency:add:*` / `dependency:drop:*` | `area_keywords`, regression-handler lookup paths, memory-seed removals for dropped stacks |
 | `platform:*` | `stack.platform`, memory seeds, branch patterns if relevant |
 | `cadence:*` | `labels.intent`, release umbrella list (re-derived), `workflow.phase_term` |

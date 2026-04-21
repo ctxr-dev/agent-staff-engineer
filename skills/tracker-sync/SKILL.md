@@ -90,7 +90,8 @@ Violations cause the call to halt with a clear refusal message, not a silent suc
 - Called by `adapt-system` for label reconciliation and relabelling once a config exists.
 - Called by `dev-loop` for `issues.createIssue` (rare), `issues.updateIssueStatus`, `review.requestReview`, `open_pr`, `issues.comment`.
 - Called by `release-tracker` for `issues.updateIssueStatus` on Release umbrellas and `projects.listProjectItems`.
-- Called by `regression-handler` for lookups and `issues.comment`.
+- Called by `regression-handler` for lookups and `issues.comment`. New-bug-issue creation does NOT hit `tracker-sync` directly from `regression-handler`; regression-handler delegates that step to `issue-discovery`, which in turn calls `tracker-sync.issues.createIssue`.
+- Called by `issue-discovery` for read-only pre-fetch (`issues.listIssues`, `issues.getIssue`) and, after the Q6 confirmation gate, for a single `issues.createIssue`. New-umbrella creation from `issue-discovery` routes through `release-tracker.createUmbrellaForIntent` rather than through `tracker-sync` directly, so release-tracker can recompute umbrella status as a side effect.
 - Called by `plan-keeper` only for read-only status confirmation.
 - Called by `pr-iteration` for every `review.*` method.
 

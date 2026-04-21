@@ -142,6 +142,13 @@
       "poll_interval_seconds": 30,
       "poll_timeout_seconds": 1200,
       "auto_resolve_stale_after_commits": 1
+    },
+    "issue_discovery": {
+      "title_templates": [],
+      "stakeholders": [],
+      "domain_glossary": {},
+      "default_type": null,
+      "topic_confirmation": true
     }
   },
 

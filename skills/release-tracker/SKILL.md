@@ -79,11 +79,23 @@ A recompute against the same underlying state is a no-op write (the skill compar
 
 - Triggered by `tracker-sync` (via an event hook or explicit call) when linked issues change.
 - Called by `adapt-system` after a change to `labels.intent` values (adds, renames, or removals), to recreate or reconcile umbrellas.
+- Called by `issue-discovery` at Q5 (new-umbrella creation). `issue-discovery` invokes `release-tracker.createUmbrellaForIntent(intent, payload)` rather than going through `tracker-sync` directly, so release-tracker can recompute umbrella status as a side effect of the create.
 - Consumes `tracker-sync` for every read and write.
 
 ## Release umbrella creation
 
-Umbrellas are created by `tracker-sync.create_release_umbrella` when a new `labels.intent` value exists without a corresponding umbrella on any configured `trackers.release.projects[]` entry. Title template from `workflow.release.umbrella_title`. `release-tracker` verifies one umbrella exists per intent value and asks `tracker-sync` to create missing ones on approval.
+Umbrellas are created via `createUmbrellaForIntent(intent, payload)`, the skill's public entry point for callers that need to create an umbrella outside the normal `reconcile` flow. Today the two callers are:
+
+- `adapt-system`, when a change to `labels.intent` introduces a value without a corresponding umbrella on any configured `trackers.release.projects[]` entry.
+- `issue-discovery`, when the Q5 sub-interview collects a full umbrella payload from the user and asks to create one.
+
+`createUmbrellaForIntent` validates the payload and is intended to hand off to `tracker-sync.create_release_umbrella` (the low-level surface) with a body rendered from `workflow.release.umbrella_title` and `templates/issue-release.md`, then re-run the skill's status computation against the new umbrella so the "Linked Dev Issues" block and `Status` field are correct from the first read.
+
+**Current implementation status**: `tracker-sync.create_release_umbrella` is still on the "stubbed on every backend" track in `skills/tracker-sync/SKILL.md#operations`; it throws `NotSupportedError` pending a port of the pre-trackers code path. While the stub is in place, `createUmbrellaForIntent` collects and validates the payload (so `issue-discovery` Q5 can still walk through the user's answers and persist them into session state) but surfaces the `NotSupportedError` from the dispatched `tracker-sync` call rather than creating the umbrella. Callers halt cleanly per the tracker-sync failure-modes contract.
+
+Callers must not call `tracker-sync.create_release_umbrella` directly even once it lands; keeping creation behind `createUmbrellaForIntent` is what couples the status-recompute side effect with the write.
+
+`reconcile` itself still walks every configured `trackers.release.projects[]` entry and verifies one umbrella exists per intent value; it delegates to `createUmbrellaForIntent` to fill gaps on approval once the low-level surface is available.
 
 ## Project contract
 

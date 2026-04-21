@@ -1,0 +1,77 @@
+{
+  "$id": "https://ctxr-dev.github.io/agent-staff-engineer/schemas/issue-discovery-handoff.schema.json",
+  "title": "issue-discovery handoff tuple",
+  "description": "Shape of the object skills/issue-discovery/SKILL.md returns to its caller (typically skills/dev-loop/SKILL.md). The tuple encodes the decisions the interview reached so the caller can resume its own state machine with no further user prompts. Either a complete tuple (success) or a cancelled marker.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["issueRef", "umbrellaRef", "memberName"],
+      "additionalProperties": false,
+      "description": "Success handoff: the interview reached Q6 Proceed and tracker-sync.issues.createIssue returned a resolvable issue. `umbrellaRef` and `memberName` are required AS fields but may hold null when the intake decided against an umbrella link or the project is single-repo; this keeps the three-field tuple contract stable so callers don't branch on absent-vs-null.",
+      "properties": {
+        "issueRef": {
+          "type": "object",
+          "required": ["number"],
+          "additionalProperties": false,
+          "description": "Minimal issue reference the caller can use to dispatch subsequent tracker-sync calls. Mirrors the shape tracker-sync.issues.createIssue returns.",
+          "properties": {
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Issue number on the target tracker."
+            },
+            "nodeId": {
+              "type": "string",
+              "description": "GraphQL node ID (GitHub) or equivalent opaque ID for other trackers. Optional because not every tracker exposes one.",
+              "minLength": 1
+            },
+            "url": {
+              "type": "string",
+              "description": "Canonical URL of the created / linked issue.",
+              "format": "uri"
+            }
+          }
+        },
+        "umbrellaRef": {
+          "type": ["object", "null"],
+          "required": ["number"],
+          "additionalProperties": false,
+          "description": "Release umbrella the issue links to, if any. Null when trackers.release is absent, when the user picked 'no umbrella', or when the tracker kind does not implement umbrellas yet.",
+          "properties": {
+            "number": { "type": "integer", "minimum": 1 },
+            "nodeId": { "type": "string", "minLength": 1 },
+            "url": { "type": "string", "format": "uri" }
+          }
+        },
+        "memberName": {
+          "type": ["string", "null"],
+          "description": "Name of the workspace.members[] entry the issue belongs to, when the target project is a multi-repo workspace. Null for single-repo projects and for workspace configs where the issue falls outside any nested member.",
+          "minLength": 1
+        },
+        "cancelled": {
+          "type": "boolean",
+          "const": false,
+          "description": "Optional on the success shape; when present it is always false. Callers may branch on `handoff.cancelled` and treat a missing value as false without inspecting other fields.",
+          "default": false
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["cancelled"],
+      "additionalProperties": false,
+      "description": "Cancel handoff: the user picked Q6 Cancel. No tracker writes fired; the caller should stop cleanly without halting or opening any followup.",
+      "properties": {
+        "cancelled": {
+          "type": "boolean",
+          "const": true
+        },
+        "reason": {
+          "type": "string",
+          "description": "Optional free-form cancellation reason captured at Q6 (e.g. 'user wants to think about it'). Not required.",
+          "maxLength": 500
+        }
+      }
+    }
+  ]
+}
