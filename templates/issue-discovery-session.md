@@ -13,7 +13,7 @@ The rest of the bundle's templates use plain `{{ key }}` substitution with no co
 scalar placeholders:
   {{ session_id }}                        session identifier (YYYYMMDD-HHMMSS-<4 hex>)
   {{ started_at }}                        ISO-8601 session start timestamp
-  {{ status }}                            pending | completed | cancelled
+  {{ status }}                            pending | completed | cancelled | timed-out (see scripts/lib/issueDiscovery.mjs#archiveSession for the authoritative outcome list)
   {{ tracker_target }}                    short tracker coords, e.g. ctxr-dev/agent-staff-engineer
   {{ member_suffix }}                     " (member: `libs/shared`)" or "" when no workspace member
   {{ current_step }}                      active node id (q0, q1, ..., q6, done)
