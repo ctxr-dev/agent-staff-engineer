@@ -329,10 +329,20 @@ async function gitlabGetIssue(api, target, _caches, _ctx, payload) {
 
 async function gitlabListIssues(api, target, caches, _ctx, payload = {}) {
   const { state, labels: filterLabels, first, limit } = payload;
-  const rawCap = first ?? limit ?? 50;
-  const cap = typeof rawCap === "number" && rawCap > 0
-    ? Math.min(Math.floor(rawCap), 1000)
-    : 50;
+  // Match the github backend: `first`/`limit`, if provided, must be a
+  // positive integer. Silently coercing bad input to 50 hides caller
+  // bugs and makes cross-backend behaviour diverge.
+  if (first != null && (typeof first !== "number" || !Number.isInteger(first) || first <= 0)) {
+    throw new TypeError(
+      `gitlab issues.listIssues: first must be a positive integer; got ${JSON.stringify(first)}`,
+    );
+  }
+  if (limit != null && (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0)) {
+    throw new TypeError(
+      `gitlab issues.listIssues: limit must be a positive integer; got ${JSON.stringify(limit)}`,
+    );
+  }
+  const cap = Math.min(first ?? limit ?? 50, 1000);
   const pid = projectPath(target);
   const query = { state: "opened", per_page: Math.min(cap, MAX_PER_PAGE) };
   if (state != null) {
@@ -372,6 +382,19 @@ async function gitlabListIssues(api, target, caches, _ctx, payload = {}) {
 async function gitlabReconcileLabels(api, target, caches, _ctx, payload) {
   const raw = payload ?? {};
   const taxonomy = raw.taxonomy ?? raw.desired ?? [];
+  // Match the github backend's strict-boolean contract so a caller bug
+  // like `apply: "true"` fails loudly instead of silently dropping into
+  // dry-run mode. See github.mjs labels.reconcileLabels for the pattern.
+  if (raw.apply != null && typeof raw.apply !== "boolean") {
+    throw new TypeError(
+      `gitlab labels.reconcileLabels: apply must be a boolean; got ${JSON.stringify(raw.apply)}`,
+    );
+  }
+  if (raw.allowDeprecate != null && typeof raw.allowDeprecate !== "boolean") {
+    throw new TypeError(
+      `gitlab labels.reconcileLabels: allowDeprecate must be a boolean; got ${JSON.stringify(raw.allowDeprecate)}`,
+    );
+  }
   const apply = raw.apply === true;
   const allowDeprecate = raw.allowDeprecate === true;
   if (!Array.isArray(taxonomy)) {
@@ -448,6 +471,11 @@ async function gitlabReconcileLabels(api, target, caches, _ctx, payload) {
 async function gitlabRelabelBulk(api, target, caches, _ctx, payload) {
   const raw = payload ?? {};
   const plan = raw.plan ?? [];
+  if (raw.apply != null && typeof raw.apply !== "boolean") {
+    throw new TypeError(
+      `gitlab labels.relabelBulk: apply must be a boolean; got ${JSON.stringify(raw.apply)}`,
+    );
+  }
   const apply = raw.apply === true;
   if (!Array.isArray(plan)) {
     throw new TypeError("gitlab labels.relabelBulk: plan must be an array of {from, to}");

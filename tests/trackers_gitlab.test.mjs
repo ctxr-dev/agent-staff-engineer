@@ -319,6 +319,38 @@ describe("gitlab issues.relabelIssue", () => {
   });
 });
 
+// ── listIssues input validation ─────────────────────────────────────
+
+describe("gitlab issues.listIssues input validation", () => {
+  it("throws TypeError on non-number first", async () => {
+    const tracker = makeGitlabTracker(TARGET, { rest: mockRest([]) });
+    await assert.rejects(
+      () => tracker.issues.listIssues({}, { first: "50" }),
+      /first must be a positive integer/,
+    );
+  });
+
+  it("throws TypeError on zero or negative limit", async () => {
+    const tracker = makeGitlabTracker(TARGET, { rest: mockRest([]) });
+    await assert.rejects(
+      () => tracker.issues.listIssues({}, { limit: 0 }),
+      /limit must be a positive integer/,
+    );
+    await assert.rejects(
+      () => tracker.issues.listIssues({}, { limit: -5 }),
+      /limit must be a positive integer/,
+    );
+  });
+
+  it("throws TypeError on non-integer first (e.g. 1.5)", async () => {
+    const tracker = makeGitlabTracker(TARGET, { rest: mockRest([]) });
+    await assert.rejects(
+      () => tracker.issues.listIssues({}, { first: 1.5 }),
+      /first must be a positive integer/,
+    );
+  });
+});
+
 // ── labels.reconcileLabels ──────────────────────────────────────────
 
 describe("gitlab labels.reconcileLabels", () => {
@@ -344,6 +376,22 @@ describe("gitlab labels.reconcileLabels", () => {
     const tracker = makeGitlabTracker(TARGET, { rest: api });
     const result = await tracker.labels.reconcileLabels({}, { taxonomy: ["x"] });
     assert.equal(result.mode, "dry-run");
+  });
+
+  it("throws TypeError when apply is not a boolean (string 'true' silently became dry-run before)", async () => {
+    const tracker = makeGitlabTracker(TARGET, { rest: mockRest([]) });
+    await assert.rejects(
+      () => tracker.labels.reconcileLabels({}, { taxonomy: ["x"], apply: "true" }),
+      /apply must be a boolean/,
+    );
+  });
+
+  it("throws TypeError when allowDeprecate is not a boolean", async () => {
+    const tracker = makeGitlabTracker(TARGET, { rest: mockRest([]) });
+    await assert.rejects(
+      () => tracker.labels.reconcileLabels({}, { taxonomy: ["x"], allowDeprecate: 1 }),
+      /allowDeprecate must be a boolean/,
+    );
   });
 });
 
@@ -371,6 +419,14 @@ describe("gitlab labels.relabelBulk", () => {
     });
     assert.equal(result.mode, "dry-run");
     assert.equal(result.results[0].action, "would-rename");
+  });
+
+  it("throws TypeError when apply is not a boolean", async () => {
+    const tracker = makeGitlabTracker(TARGET, { rest: mockRest([]) });
+    await assert.rejects(
+      () => tracker.labels.relabelBulk({}, { plan: [{ from: "a", to: "b" }], apply: "true" }),
+      /apply must be a boolean/,
+    );
   });
 });
 
