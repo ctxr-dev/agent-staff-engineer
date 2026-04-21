@@ -271,10 +271,6 @@ function parseInline(raw) {
   // Normalise hardBreak marker first so the main tokeniser never has
   // to look across newline boundaries. Two or more trailing spaces
   // before `\n` turn into a literal hardBreak sentinel we splice back
-  // in below; all other `\n` become a space.
-  // Normalise hardBreak marker first so the main tokeniser never has
-  // to look across newline boundaries. Two or more trailing spaces
-  // before `\n` turn into a literal hardBreak sentinel we splice back
   // in below; all other `\n` become a space. The sentinel is a
   // Unicode Private Use Area codepoint (U+E000): unambiguous,
   // non-control, never assigned, and cannot legitimately appear in
@@ -380,10 +376,14 @@ function pushInlineTokens(text, marks, out) {
   flush();
 }
 
-// Find the next occurrence of `delim` after `start` that is not a
-// delimiter boundary inside a word. Returns the index, or -1 if
-// absent. Keeps the implementation simple: we only ever match against
-// same-character delimiters (`*`, `_`, `**`, `__`, `~~`, `` ` ``).
+// Find the next raw occurrence of `delim` after `start`. Returns the
+// index, or -1 if absent. Intentionally simple: we only match against
+// same-character delimiters (`*`, `_`, `**`, `__`, `~~`, `` ` ``) and
+// this helper does NOT apply word-boundary checks. Callers accept the
+// approximation because the agent's own templates emit well-formed
+// markdown (no intra-word underscores / asterisks); user-written
+// bodies pass through the same path, and we prefer a misparse that
+// still produces valid ADF over a heavier word-aware tokeniser.
 function findClosingDelim(str, delim, start) {
   let i = start;
   while (i <= str.length - delim.length) {

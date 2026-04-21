@@ -531,6 +531,15 @@ async function jiraListIssues(rest, target, caches, _ctx, payload = {}) {
           `jira issues.listIssues: every labels[] entry must be a non-empty string; got ${JSON.stringify(name)}`,
         );
       }
+      // Jira labels cannot contain whitespace (the server silently
+      // collapses them), so a whitespace-bearing filter would either
+      // match nothing or match the wrong thing. Reject at the boundary
+      // for consistency with createIssue / relabelIssue / reconcileLabels.
+      if (/\s/.test(name.trim())) {
+        throw new TypeError(
+          `jira issues.listIssues: Jira labels cannot contain whitespace; got ${JSON.stringify(name)}`,
+        );
+      }
     }
   }
   await resolveProjectId(rest, target, caches); // validates project

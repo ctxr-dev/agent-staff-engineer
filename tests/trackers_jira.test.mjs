@@ -342,6 +342,14 @@ describe("jira issues.listIssues", () => {
       /first must be a positive integer/,
     );
   });
+
+  it("rejects whitespace in filter labels (parity with createIssue / relabelIssue / reconcileLabels)", async () => {
+    const tracker = makeJiraTracker(TARGET, { rest: mockRest([]) });
+    await assert.rejects(
+      () => tracker.issues.listIssues({}, { labels: ["has space"] }),
+      /cannot contain whitespace/,
+    );
+  });
 });
 
 // ── labels.reconcileLabels ──────────────────────────────────────────
