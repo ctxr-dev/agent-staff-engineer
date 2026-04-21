@@ -601,19 +601,23 @@ async function gitlabFetchUnresolvedThreads(api, target, _caches, ctx) {
     if (!Array.isArray(discussions) || discussions.length === 0) break;
     for (const d of discussions) {
       if (!Array.isArray(d.notes) || d.notes.length === 0) continue;
-      // Find the first resolvable note (not always d.notes[0])
-      const resolvableNote = d.notes.find((n) => n.resolvable);
-      if (!resolvableNote) continue;
-      const isUnresolved = d.notes.some((n) => n.resolvable && !n.resolved);
-      if (!isUnresolved) continue;
+      // Pick the representative note from the currently-unresolved set,
+      // not from the full resolvable set. In a mixed discussion (an
+      // earlier resolvable note was resolved, a later resolvable note
+      // is still open), the first `resolvable` match would report
+      // stale path / author / body from a resolved note while the
+      // thread itself is still unresolved: downstream triage would
+      // react to the wrong comment.
+      const representative = d.notes.find((n) => n.resolvable && !n.resolved);
+      if (!representative) continue;
       threads.push({
         id: d.id,
-        path: resolvableNote.position?.new_path ?? null,
-        line: resolvableNote.position?.new_line ?? null,
-        isOutdated: resolvableNote.position?.line_range == null && resolvableNote.position?.new_line == null,
-        commitSha: resolvableNote.position?.head_sha ?? null,
-        authorLogin: resolvableNote.author?.username ?? null,
-        body: resolvableNote.body ?? "",
+        path: representative.position?.new_path ?? null,
+        line: representative.position?.new_line ?? null,
+        isOutdated: representative.position?.line_range == null && representative.position?.new_line == null,
+        commitSha: representative.position?.head_sha ?? null,
+        authorLogin: representative.author?.username ?? null,
+        body: representative.body ?? "",
       });
     }
     if (discussions.length < MAX_PER_PAGE) break;

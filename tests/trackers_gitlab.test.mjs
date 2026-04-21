@@ -194,6 +194,33 @@ describe("gitlab review.fetchUnresolvedThreads", () => {
     assert.equal(threads[0].line, 5);
     assert.equal(threads[0].authorLogin, "reviewer");
   });
+
+  it("mixed discussion: picks the still-unresolved note, not an earlier resolved one", async () => {
+    // Ordering matters here: the earlier note is resolvable AND already
+    // resolved; the later note is the live one. Previous code picked
+    // the first `resolvable` match (the resolved one), so the thread
+    // surfaced with stale path / author / body.
+    const api = mockRest([
+      route("GET", "/discussions", [
+        {
+          id: "d-mixed",
+          notes: [
+            { resolvable: true, resolved: true, body: "old closed comment", position: { new_path: "old/file.js", new_line: 2, head_sha: "sha-old" }, author: { username: "resolved-author" } },
+            { resolvable: true, resolved: false, body: "still open", position: { new_path: "src/real.js", new_line: 99, head_sha: "sha-new" }, author: { username: "live-author" } },
+          ],
+        },
+      ]),
+    ]);
+    const tracker = makeGitlabTracker(TARGET, { rest: api });
+    const threads = await tracker.review.fetchUnresolvedThreads({ mrIid: 1 });
+    assert.equal(threads.length, 1);
+    assert.equal(threads[0].id, "d-mixed");
+    assert.equal(threads[0].path, "src/real.js", "must surface the live note's path, not the resolved predecessor's");
+    assert.equal(threads[0].line, 99);
+    assert.equal(threads[0].authorLogin, "live-author");
+    assert.equal(threads[0].body, "still open");
+    assert.equal(threads[0].commitSha, "sha-new");
+  });
 });
 
 // ── review.resolveThread ────────────────────────────────────────────
