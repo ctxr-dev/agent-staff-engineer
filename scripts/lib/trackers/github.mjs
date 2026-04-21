@@ -1893,6 +1893,11 @@ async function githubReconcileLabels(trackerTarget, ctx, payload) {
 async function githubRelabelBulk(trackerTarget, ctx, payload) {
   const { owner, repo } = resolveRepoCoords(ctx, trackerTarget, "github labels.relabelBulk");
   const { plan, apply = false, state = "OPEN" } = payload ?? {};
+  if (typeof apply !== "boolean") {
+    throw new TypeError(
+      `github labels.relabelBulk: apply must be a boolean; got ${JSON.stringify(apply)}`,
+    );
+  }
   // Validate `state` at this surface: listIssues accepts the same
   // set but raises with an "issues.*" error prefix, which is
   // confusing for a labels.* caller debugging a typo.
@@ -2060,10 +2065,14 @@ async function resolveProjectNodeId(owner, projectNumber) {
  * `{title, startDate, duration}`. Callers that want a flat scalar
  * form should project each value via its field's known type.
  *
- * `hasNextPage` is `true` when either the server reports
- * `hasNextPage: true` on its pageInfo, OR when the `limit` cap
- * truncated the result; either way `endCursor` points to the next
- * item past the current window so a caller can resume from there.
+ * `hasNextPage` reflects the server's pageInfo: true when more
+ * items exist on the board past the ones we returned. `endCursor`
+ * follows GraphQL convention — it is the cursor of the LAST
+ * returned item, which a caller passes back as `after` to fetch
+ * the next page. The pagination loop caps per-request `first` to
+ * the remaining budget, so when `limit` truncates the window the
+ * server never returned any item we didn't keep; `endCursor`
+ * therefore always matches the last item in `items[]`.
  */
 async function githubListProjectItems(trackerTarget, ctx, payload) {
   const { projectNumber, projectOwner, first = 100, after: rawAfter = null, limit = 500 } = payload ?? {};
@@ -2249,12 +2258,18 @@ async function githubListProjectItems(trackerTarget, ctx, payload) {
  */
 async function githubUpdateProjectField(trackerTarget, ctx, payload) {
   const { projectNumber, projectOwner, itemId, field, value, apply = false } = payload ?? {};
+  if (typeof apply !== "boolean") {
+    throw new TypeError(
+      `github projects.updateProjectField: apply must be a boolean; got ${JSON.stringify(apply)}`,
+    );
+  }
   requirePositiveInt(projectNumber, "projectNumber", "github projects.updateProjectField");
   if (typeof itemId !== "string" || itemId.trim().length === 0) {
     throw new TypeError(
       `github projects.updateProjectField: itemId must be a non-empty string; got ${JSON.stringify(itemId)}`,
     );
   }
+  const canonicalItemId = itemId.trim();
   if (typeof field !== "string" || field.trim().length === 0) {
     throw new TypeError(
       `github projects.updateProjectField: field must be a non-empty string; got ${JSON.stringify(field)}`,
@@ -2419,7 +2434,7 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
       `github projects.updateProjectField: unknown value kind '${kind}'; expected text / number / date / singleSelect`,
     );
   }
-  const mutationArgs = { projectId, itemId, fieldId: fieldNode.id, field: canonicalField, kind };
+  const mutationArgs = { projectId, itemId: canonicalItemId, fieldId: fieldNode.id, field: canonicalField, kind };
   if (!apply) {
     return { mode: "dry-run", mutationArgs };
   }
@@ -2435,7 +2450,7 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
       }
     }
   `;
-  await ghGraphqlMutation(mutation, { projectId, itemId, fieldId: fieldNode.id });
+  await ghGraphqlMutation(mutation, { projectId, itemId: canonicalItemId, fieldId: fieldNode.id });
   return { mode: "applied", mutationArgs };
 }
 
@@ -2456,6 +2471,11 @@ async function githubUpdateProjectField(trackerTarget, ctx, payload) {
  */
 async function githubReconcileProjectFields(trackerTarget, ctx, payload) {
   const { projectNumber, projectOwner, declared, apply = false } = payload ?? {};
+  if (typeof apply !== "boolean") {
+    throw new TypeError(
+      `github projects.reconcileProjectFields: apply must be a boolean; got ${JSON.stringify(apply)}`,
+    );
+  }
   requirePositiveInt(projectNumber, "projectNumber", "github projects.reconcileProjectFields");
   if (!Array.isArray(declared)) {
     throw new TypeError(
