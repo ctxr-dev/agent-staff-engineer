@@ -1,13 +1,12 @@
 // lint/require-cache-block.mjs
-// Enforces that every SKILL.md with > 500 tokens (rough: > 40 lines after
-// frontmatter) contains a <!-- cache-control:static --> marker. Files below
-// the threshold are exempt because caching overhead exceeds savings.
+// Enforces that every SKILL.md with more than 40 non-blank body lines
+// (after frontmatter) contains <!-- cache-control:static --> and
+// <!-- cache-control:dynamic --> markers in the body.
 //
-// Usage: node scripts/lint/require-cache-block.mjs [--fix]
-//   --fix: not supported yet (marker placement requires judgment).
+// Usage: node scripts/lint/require-cache-block.mjs
 //   Exit 0 on pass, 1 on failure.
 
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
@@ -23,31 +22,32 @@ const MIN_LINES_THRESHOLD = 40;
  * Returns { ok, results } where results is an array of per-file outcomes.
  */
 export async function lintCacheBlocks() {
-  const { readdir } = await import("node:fs/promises");
   const skillDirs = await readdir(SKILLS_DIR, { withFileTypes: true });
   const results = [];
 
   for (const entry of skillDirs) {
     if (!entry.isDirectory()) continue;
     const skillMd = join(SKILLS_DIR, entry.name, "SKILL.md");
+    const relPath = relative(BUNDLE, skillMd);
     let content;
     try {
       content = await readFile(skillMd, "utf8");
     } catch {
+      results.push({ path: relPath, status: "warn", reason: "SKILL.md missing or unreadable" });
       continue;
     }
 
     const parsed = matter(content);
-    const bodyLines = parsed.content.split("\n").filter((l) => l.trim().length > 0).length;
-    const relPath = relative(BUNDLE, skillMd);
+    const body = parsed.content;
+    const bodyLines = body.split("\n").filter((l) => l.trim().length > 0).length;
 
-    if (bodyLines < MIN_LINES_THRESHOLD) {
-      results.push({ path: relPath, status: "exempt", reason: `${bodyLines} lines < ${MIN_LINES_THRESHOLD}` });
+    if (bodyLines <= MIN_LINES_THRESHOLD) {
+      results.push({ path: relPath, status: "exempt", reason: `${bodyLines} lines <= ${MIN_LINES_THRESHOLD}` });
       continue;
     }
 
-    const hasStatic = content.includes(STATIC_MARKER);
-    const hasDynamic = content.includes(DYNAMIC_MARKER);
+    const hasStatic = body.includes(STATIC_MARKER);
+    const hasDynamic = body.includes(DYNAMIC_MARKER);
 
     if (hasStatic && hasDynamic) {
       results.push({ path: relPath, status: "pass" });
@@ -70,6 +70,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.stdout.write(`  PASS  ${r.path}\n`);
     } else if (r.status === "exempt") {
       process.stdout.write(`  SKIP  ${r.path} (${r.reason})\n`);
+    } else if (r.status === "warn") {
+      process.stderr.write(`  WARN  ${r.path} (${r.reason})\n`);
     } else {
       process.stderr.write(`  FAIL  ${r.path} — missing: ${r.missing.join(", ")}\n`);
     }
