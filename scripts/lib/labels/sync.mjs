@@ -8,6 +8,8 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { ghExec } from "../ghExec.mjs";
 
+// js-yaml is a transitive dependency of gray-matter (a direct dep).
+// Use createRequire to import it from the CJS module.
 const require = createRequire(import.meta.url);
 const { load: yamlLoad } = require("js-yaml");
 
@@ -48,11 +50,11 @@ export async function loadTaxonomy(taxonomyPath) {
  * Returns a Map<name, { color, description }>.
  */
 export async function fetchRepoLabels(owner, repo) {
-  const result = await ghExec(["label", "list", "--repo", `${owner}/${repo}`, "--json", "name,color,description", "--limit", "200"]);
+  const result = await ghExec(["label", "list", "--repo", `${owner}/${repo}`, "--json", "name,color,description", "--limit", "200"], { format: "json" });
   if (result.code !== 0) {
-    throw new Error(`gh label list failed for ${owner}/${repo}: ${result.stderr}`);
+    throw new Error(`gh label list failed for ${owner}/${repo}: ${result.stderr || result.stdout}`);
   }
-  const labels = JSON.parse(result.stdout);
+  const labels = result.json ?? JSON.parse(result.stdout);
   const map = new Map();
   for (const l of labels) {
     map.set(l.name, { color: (l.color ?? "").replace(/^#/, ""), description: l.description ?? "" });

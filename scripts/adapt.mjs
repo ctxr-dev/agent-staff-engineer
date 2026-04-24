@@ -364,7 +364,7 @@ export function applySignalToConfig(cfg, signal, changeLog) {
     }
     case signal.kind === "labels:install-taxonomy": {
       changeLog.push(
-        "install canonical label taxonomy from templates/labels/default-taxonomy.yaml (via tracker-sync or gh label create)"
+        "install canonical label taxonomy from templates/labels/default-taxonomy.yaml (via gh label create)"
       );
       return;
     }
