@@ -81,6 +81,19 @@ describe("DECISION_TREE: shape + invariants", () => {
     assert.deepEqual(proceedTargets, ["q6"]);
   });
 
+  it("q3d has an areaSkipped branch to q3e-priority for empty labels.area", () => {
+    const q3d = DECISION_TREE.q3d;
+    const skipBranch = q3d.next.find((b) => b.when === "areaSkipped");
+    assert.ok(skipBranch, "q3d must have an areaSkipped branch");
+    assert.equal(skipBranch.target, "q3e-priority");
+  });
+
+  it("q3e-priority predecessor is q3d (skip path still routes through q3d)", () => {
+    const q3e = DECISION_TREE["q3e-priority"];
+    assert.ok(q3e.predecessors.includes("q3d"), "q3e-priority must list q3d as a predecessor");
+    assert.equal(q3e.predecessors.length, 1, "q3e-priority has exactly one predecessor (q3d handles both normal and skip paths)");
+  });
+
   it("nodes with customEscape=true list `canHalt: true` (custom option must be able to halt per ambiguity rules)", () => {
     for (const node of nodes) {
       if (!node.customEscape) continue;
@@ -108,6 +121,11 @@ describe("scoreArea", () => {
     });
     assert.deepEqual(result.matchedKeywords.sort(), ["checkout", "payment"]);
     assert.equal(result.score, 2 / 4);
+  });
+
+  it("returns zero for an area with no name or missing object (graceful on empty labels.area)", () => {
+    assert.deepEqual(scoreArea("anything", undefined), { score: 0, matchedKeywords: [] });
+    assert.deepEqual(scoreArea("anything", {}), { score: 0, matchedKeywords: [] });
   });
 
   it("handles non-string inputs without throwing", () => {

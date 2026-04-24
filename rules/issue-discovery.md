@@ -40,6 +40,10 @@ Two kinds of node sit outside this clause and follow their own contract:
 - Shortlists (issues, umbrellas) are ranked by a deterministic criterion (priority + age for issues; status + target date for umbrellas) and capped at 4 domain options. A "show more" meta-option is always offered on top when more candidates exist on the tracker.
 - "Custom" is always the last option and always triggers a halt per [rules/ambiguity-halt.md](ambiguity-halt.md) when the custom value falls outside the configured surface (e.g. an area that does not exist in `labels.area`, an intent not in `labels.intent`). Halt surfaces the next step as an `adapt-system` invocation.
 
+### Clause 2a: graceful skip when labels.area is empty
+
+When `labels.area = []` in ops.config.json (typical for fresh solo repos or projects that have not seeded a label taxonomy), Q3d MUST NOT halt. Instead it offers a 2-option prompt: add an area label inline (creating it via tracker-sync), or skip area for this issue (setting area to null and proceeding to Q3e). The skill treats the absence of area labels as a valid project state, not an error.
+
 ### Clause 3: delegate every tracker write to tracker-sync
 
 The skill reads from and collects structured data about the tracker, but **never calls the tracker API directly**. Every create, update, link, and read routes through [skills/tracker-sync/SKILL.md](../skills/tracker-sync/SKILL.md). This mirrors [rules/tracker-source-of-truth.md](tracker-source-of-truth.md) but is called out explicitly here because the intake is the first place a newly-arriving user's intent hits bundle code: a single direct `gh`/`jira`/`linear` call here would break the invariant for every downstream skill.

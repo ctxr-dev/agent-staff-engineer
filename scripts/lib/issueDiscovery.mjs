@@ -155,12 +155,16 @@ export const DECISION_TREE = Object.freeze({
   q3d: Object.freeze({
     id: "q3d",
     predecessors: Object.freeze(["q3c"]),
-    next: Object.freeze([{ target: "q3e-priority", when: "areaSelected" }]),
+    next: Object.freeze([
+      { target: "q3e-priority", when: "areaSelected" },
+      { target: "q3e-priority", when: "areaSkipped" },
+    ]),
     minOptions: 2,
     maxOptions: 4,
     canHalt: true,
     customEscape: true,
-    description: "Area label. Top-3 scored from intent + custom (halts on unknown area).",
+    description:
+      "Area label. When labels.area is non-empty: top-3 scored from intent + custom (halts on unknown area). When labels.area is empty: 2-option prompt offering to add a label inline or skip. Skip sets area to null and proceeds without an area label.",
   }),
   "q3e-priority": Object.freeze({
     id: "q3e-priority",

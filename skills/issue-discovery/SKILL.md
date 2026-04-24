@@ -82,9 +82,13 @@ Hard rule baked in: **the skill never calls a tracker API directly.** Every crea
       |
       v
 [Q3d. AREA LABEL]
-  agent scores user intent against area_keywords; presents top 3 plus custom
-  1..3: propose area
-  4. Something else (halt per ambiguity-halt with `/adapt-system` hint)
+  when labels.area is non-empty:
+    agent scores user intent against area_keywords; presents top 3 plus custom
+    1..3: propose area
+    4. Something else (halt per ambiguity-halt with `/adapt-system` hint)
+  when labels.area is empty:
+    1. Add an area label now (user provides name; skill creates via tracker-sync)
+    2. Skip area for this issue (sets area to null; proceeds to Q3e)
       |
       v
 [Q3e. PRIORITY + SIZE]
@@ -191,7 +195,7 @@ The session scratch file is ephemeral local state, not a durable artefact. Unlik
 - `trackers.dev[]` (at least one entry with depth != `read-only`).
 - `trackers.release` (optional; absent means the Q4 umbrella branch is skipped entirely per the PR 7 rule).
 - `workspace.members[]` (optional; present for multi-repo workspaces).
-- `labels.type`, `labels.area`, `labels.priority`, `labels.intent`, `labels.size` (every label set the interview offers as an option comes from here).
+- `labels.type`, `labels.area` (may be empty; Q3d gracefully skips or offers inline add), `labels.priority`, `labels.intent`, `labels.size` (every label set the interview offers as an option comes from here).
 - `workflow.issue_discovery.title_templates` (optional; when present, Q3b uses these as the proposal seeds instead of area-keyword matching).
 - `workflow.issue_discovery.stakeholders` (optional; surfaced as options at Q5.8).
 - `workflow.issue_discovery.domain_glossary` (optional; surfaces a one-line definition when an answer matches a glossary term).
