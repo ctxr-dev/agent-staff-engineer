@@ -49,6 +49,7 @@ function buildCtx(state) {
  * @returns {Promise<{done: boolean, action: string, state: object}>}
  *   action is one of:
  *     "complete"        all three exit conditions hold; state file removed
+ *     "solo-ready"      solo path: localReviewGo + ciSuccess hold; skill should prompt merge
  *     "needs-triage"    CI terminal + threads/review arrived; skill should fix
  *     "still-waiting"   CI pending or no review yet; reschedule
  *     "user-cancelled"  .stopped sidecar found; no remote call made
@@ -56,7 +57,12 @@ function buildCtx(state) {
  *     "safety-cap"      consecutive-wakes cap reached; .paused written
  */
 export async function runTick(tracker, state, opts) {
-  const { stateDir, maxConsecutiveWakes = DEFAULT_MAX_CONSECUTIVE_WAKES } = opts;
+  const {
+    stateDir,
+    maxConsecutiveWakes = DEFAULT_MAX_CONSECUTIVE_WAKES,
+    soloPath = false,
+    ciState: soloCiState,
+  } = opts;
 
   // ── 1. User-cancel / paused gates ──
   if (await isStateStopped(stateDir, state.prId)) {
@@ -66,11 +72,54 @@ export async function runTick(tracker, state, opts) {
     return { done: true, action: "paused", state };
   }
 
-  // ── 2. Single remote poll ──
+  // ── 2. Solo path: no external review, relaxed exit conditions ──
+  // When workflow.external_review.provider is "none", the caller sets
+  // soloPath=true and passes ciState directly (fetched via gh api).
+  // No pollForReview call (the stub tracker would throw).
+  // Exit set: localReviewGo + ciSuccessOnHead. No zeroUnresolvedOnHead.
+  // Returns "solo-ready" when both hold; the skill layer prompts the user.
+  if (soloPath) {
+    const ciNow = soloCiState ?? "PENDING";
+    state.lastPollResult = {
+      ciState: ciNow,
+      unresolvedCount: 0,
+      reviewOnHead: false,
+      observedAt: new Date().toISOString(),
+    };
+    state.exitConditions.ciSuccessOnHead = ciNow === "SUCCESS";
+
+    if (state.exitConditions.localReviewGo && state.exitConditions.ciSuccessOnHead) {
+      await writePrState(stateDir, state);
+      return { done: false, action: "solo-ready", state };
+    }
+
+    const ciFailed = ciNow === "FAILURE" || ciNow === "ERROR";
+    if (ciFailed) {
+      state.consecutiveWakes = 0;
+      await writePrState(stateDir, state);
+      return { done: false, action: "needs-triage", state };
+    }
+
+    state.consecutiveWakes = (state.consecutiveWakes ?? 0) + 1;
+    if (state.consecutiveWakes >= maxConsecutiveWakes) {
+      await markPrStatePaused(
+        stateDir,
+        state.prId,
+        `Safety cap reached: ${maxConsecutiveWakes} consecutive wakes without forward progress`,
+      );
+      await writePrState(stateDir, state);
+      return { done: true, action: "safety-cap", state };
+    }
+
+    await writePrState(stateDir, state);
+    return { done: false, action: "still-waiting", state };
+  }
+
+  // ── 3. Team path: single remote poll ──
   const ctx = buildCtx(state);
   const pollResult = await tracker.review.pollForReview(ctx);
 
-  // ── 3. Update state with poll results ──
+  // ── 4. Update state with poll results ──
   state.lastPollResult = {
     ciState: pollResult.ciState,
     unresolvedCount: pollResult.unresolvedCount,
@@ -81,7 +130,7 @@ export async function runTick(tracker, state, opts) {
   state.exitConditions.zeroUnresolvedOnHead =
     pollResult.unresolvedCount === 0 && pollResult.reviewOnHead;
 
-  // ── 4. All exit conditions green? ──
+  // ── 5. All exit conditions green? ──
   const allGreen =
     state.exitConditions.localReviewGo &&
     state.exitConditions.zeroUnresolvedOnHead &&
@@ -92,7 +141,7 @@ export async function runTick(tracker, state, opts) {
     return { done: true, action: "complete", state };
   }
 
-  // ── 5. Needs triage? ──
+  // ── 6. Needs triage? ──
   // CI failure/error always needs triage (rule: "CI goes red: fix, re-push").
   // CI success with threads or review also needs triage.
   const ciFailed =
@@ -107,7 +156,7 @@ export async function runTick(tracker, state, opts) {
     return { done: false, action: "needs-triage", state };
   }
 
-  // ── 6. Still waiting; bump consecutive-wakes counter ──
+  // ── 7. Still waiting; bump consecutive-wakes counter ──
   state.consecutiveWakes = (state.consecutiveWakes ?? 0) + 1;
 
   if (state.consecutiveWakes >= maxConsecutiveWakes) {

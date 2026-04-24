@@ -216,6 +216,97 @@ describe("runTick: safety-cap", () => {
   });
 });
 
+describe("runTick: solo path", () => {
+  it("returns solo-ready when localReviewGo + CI SUCCESS", async () => {
+    const dir = join(scratch, "solo-ready");
+    const state = makeState({
+      exitConditions: { localReviewGo: true, zeroUnresolvedOnHead: false, ciSuccessOnHead: false },
+      botIds: [],
+      botLogins: [],
+    });
+    await writePrState(dir, state);
+
+    let pollCalled = false;
+    const tracker = {
+      review: {
+        pollForReview: async () => { pollCalled = true; return {}; },
+      },
+    };
+    const result = await runTick(tracker, state, {
+      stateDir: dir,
+      soloPath: true,
+      ciState: "SUCCESS",
+    });
+
+    assert.equal(result.done, false);
+    assert.equal(result.action, "solo-ready");
+    assert.equal(result.state.exitConditions.ciSuccessOnHead, true);
+    assert.equal(pollCalled, false, "should not call pollForReview on solo path");
+  });
+
+  it("returns needs-triage when CI FAILURE on solo path", async () => {
+    const dir = join(scratch, "solo-ci-fail");
+    const state = makeState({
+      exitConditions: { localReviewGo: true, zeroUnresolvedOnHead: false, ciSuccessOnHead: false },
+      botIds: [],
+      botLogins: [],
+    });
+    await writePrState(dir, state);
+
+    const tracker = { review: { pollForReview: async () => ({}) } };
+    const result = await runTick(tracker, state, {
+      stateDir: dir,
+      soloPath: true,
+      ciState: "FAILURE",
+    });
+
+    assert.equal(result.done, false);
+    assert.equal(result.action, "needs-triage");
+  });
+
+  it("returns still-waiting when CI PENDING on solo path", async () => {
+    const dir = join(scratch, "solo-ci-pending");
+    const state = makeState({
+      exitConditions: { localReviewGo: true, zeroUnresolvedOnHead: false, ciSuccessOnHead: false },
+      botIds: [],
+      botLogins: [],
+    });
+    await writePrState(dir, state);
+
+    const tracker = { review: { pollForReview: async () => ({}) } };
+    const result = await runTick(tracker, state, {
+      stateDir: dir,
+      soloPath: true,
+      ciState: "PENDING",
+    });
+
+    assert.equal(result.done, false);
+    assert.equal(result.action, "still-waiting");
+    assert.equal(result.state.consecutiveWakes, 1);
+  });
+
+  it("returns still-waiting when localReviewGo is false (even with CI SUCCESS)", async () => {
+    const dir = join(scratch, "solo-no-local-review");
+    const state = makeState({
+      exitConditions: { localReviewGo: false, zeroUnresolvedOnHead: false, ciSuccessOnHead: false },
+      botIds: [],
+      botLogins: [],
+    });
+    await writePrState(dir, state);
+
+    const tracker = { review: { pollForReview: async () => ({}) } };
+    const result = await runTick(tracker, state, {
+      stateDir: dir,
+      soloPath: true,
+      ciState: "SUCCESS",
+    });
+
+    // CI is SUCCESS but localReviewGo is false, so NOT solo-ready
+    assert.equal(result.action, "still-waiting");
+    assert.equal(result.state.exitConditions.ciSuccessOnHead, true);
+  });
+});
+
 describe("runTick: lastPollResult is always updated", () => {
   it("persists the poll result in state even when still-waiting", async () => {
     const dir = join(scratch, "poll-persist");

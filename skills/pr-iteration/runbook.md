@@ -307,3 +307,28 @@ gh api graphql -F tid="PRRT_xxx" -f query='mutation($tid:ID!){resolveReviewThrea
 ```
 
 That's the whole protocol. Loop is: local-review GO → push → trigger Copilot → wait → fix+resolve → re-trigger → repeat until both reviews green and no unresolved threads remain.
+
+---
+
+## Solo dev flow (no external reviewer)
+
+When `workflow.external_review.provider` is `"none"` (typical for solo repos or projects without Copilot), the loop runs a simplified path:
+
+1. **No `requestReview`** call. No external reviewer to request.
+2. **No `fetchUnresolvedThreads`** call. No threads to triage.
+3. **CI check only.** The tick fetches CI status via `gh api graphql` (statusCheckRollup on HEAD). No review polling.
+4. **Relaxed exit set.** The tick checks `localReviewGo + ciSuccessOnHead` only. The `zeroUnresolvedOnHead` condition is not applicable.
+5. **Merge prompt.** When both conditions hold, the tick returns `"solo-ready"`. The skill layer prompts:
+
+```text
+CI is green and local code review passed on HEAD <sha>.
+
+1. Merge now (I will stop; you merge manually).
+2. Not yet (reschedule; I will check again later).
+```
+
+Option 1: the skill writes the final report, deletes the state file, and stops. The user merges manually (human gate preserved).
+
+Option 2: the skill reschedules a wakeup tick and re-checks on the next wake.
+
+**Safety cap and cancel** work identically to the team path: `.stopped` sidecar for user cancel, `.paused` sidecar after `max_consecutive_wakes`.

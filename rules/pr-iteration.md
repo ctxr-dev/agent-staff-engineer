@@ -9,13 +9,27 @@ scope: every session that opened a PR via dev-loop and has workflow.external_rev
 
 ## The rule
 
-After `dev-loop` opens a PR, the agent enters the **PR iteration loop** until all three exit conditions hold on the current HEAD:
+After `dev-loop` opens a PR, the agent enters the **PR iteration loop** until the exit conditions hold on the current HEAD.
+
+### Team path (external review enabled)
+
+All three conditions must hold:
 
 1. **Local code-review says GO** on current HEAD.
-2. **Zero unresolved review threads** on HEAD, AND the most recent external review is on the current HEAD SHA.
+2. **Zero unresolved review threads** on HEAD, AND the most recent external review is on the current HEAD SHA. *(Only when `workflow.external_review.provider` is not `"none"`.)*
 3. **CI is SUCCESS on current HEAD** across every required job.
 
-When all three hold, the agent reports the final state to the human and stops. **PR merge is a human gate. The agent never merges.** The canonical runbook with the full GraphQL recipes and edge-case handling lives in the bundle at `skills/pr-iteration/runbook.md`; this rule is the binding contract, the runbook is the how-to. Target projects that want to mirror the runbook into their own wiki do so via `@ctxr/skill-llm-wiki` per `rules/llm-wiki.md`; the canonical source stays in the bundle.
+### Solo path (provider = "none")
+
+When `workflow.external_review.provider` is `"none"`, condition 2 is not applicable (no external reviewer exists). The exit set is:
+
+1. **Local code-review says GO** on current HEAD.
+2. **CI is SUCCESS on current HEAD** across every required job.
+3. **User confirms merge intent** via a single prompt ("CI green, local review GO. Merge now?").
+
+The tick returns `"solo-ready"` when conditions 1 + 2 hold; the skill layer prompts the user. The user's confirmation is the third gate.
+
+When all applicable conditions hold, the agent reports the final state to the human and stops. **PR merge is a human gate. The agent never merges.** The canonical runbook with the full GraphQL recipes and edge-case handling lives in the bundle at `skills/pr-iteration/runbook.md`; this rule is the binding contract, the runbook is the how-to. Target projects that want to mirror the runbook into their own wiki do so via `@ctxr/skill-llm-wiki` per `rules/llm-wiki.md`; the canonical source stays in the bundle.
 
 ## State machine inside the loop
 
@@ -47,7 +61,7 @@ Every round writes a `pr-iteration-report.md` into `.development/shared/reports/
 ## Config (`workflow.external_review`)
 
 - `enabled` (default `true`): flip to `false` to skip the loop entirely. `dev-loop` then halts at "In review" like the pre-PR-2 behaviour.
-- `provider` (`auto` / `github` / `none`): `auto` picks from `trackers.dev.kind` via the dispatcher; `github` forces the GitHub impl (for projects where code lives on GitHub but tickets are elsewhere); `none` is equivalent to `enabled: false`.
+- `provider` (`auto` / `github` / `none`): `auto` picks from `trackers.dev.kind` via the dispatcher; `github` forces the GitHub impl (for projects where code lives on GitHub but tickets are elsewhere); `none` activates the solo path (no external reviewer, relaxed exit conditions, merge prompt instead of silent halt).
 - `bots`: per-kind map of reviewer LOGINS (portable across repos). For GitHub each value is the bot's login string (e.g. `copilot-pull-request-reviewer`). The skill resolves each login to its GraphQL node ID once per PR via the capture recipe below and caches the mapping in the in-memory iteration state. Config never stores node IDs: they vary across installations and are not portable.
 - `poll_interval_seconds`, `poll_timeout_seconds`, `auto_resolve_stale_after_commits`: see the schema for ranges and defaults.
 - `autonomous.enabled` (default `true`): when true, step 4 uses `ScheduleWakeup` ticks instead of the in-session poll. When false, restores the pre-PR-14 in-session poll behaviour.

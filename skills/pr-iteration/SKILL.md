@@ -4,9 +4,9 @@ description: Drives a PR from "just opened" to a green terminal state by request
 trigger_on:
   - dev-loop hands off after opening a PR (and workflow.external_review.enabled is true).
   - User explicitly runs /pr-iteration <pr-number> on an existing PR.
+  - "workflow.external_review.provider is none triggers the solo path automatically (no external reviewer, relaxed exit set, merge prompt). See Solo dev flow below."
 do_not_trigger_on:
   - workflow.external_review.enabled is false (dev-loop halts at In review instead).
-  - workflow.external_review.provider is "none", i.e. the dispatcher resolves kind to "none" as an explicit opt-out. Same effect as enabled:false; halt cleanly at In review, do NOT surface a NotSupportedError (which is reserved for unsupported tracker kinds).
   - PRs on trackers where the tracker dispatcher (`scripts/lib/trackers/dispatcher.mjs#pickReviewProvider`) returns the stub `.review` namespace for a tracker kind that isn't "none" (Jira / Linear today). Surface the `NotSupportedError` message and halt.
   - On GitLab, `review.requestReview` is stubbed (GitLab's approval flow requires admin-configured approval rules). The loop can poll, fetch threads, resolve, and check CI, but cannot programmatically request a reviewer. Skip the requestReview step on GitLab and rely on project-level approval rules to surface the MR for review.
   - Without a valid ops.config.json (halt and point at bootstrap-ops-config).
@@ -67,6 +67,34 @@ Hard rule baked in: **pr-iteration never merges a PR.** Merge is a human gate. E
       v
 [write final report; delete state file; stop]   *** HUMAN GATE 1: merge PR ***
 ```
+
+### Solo dev flow (provider = "none")
+
+When `workflow.external_review.provider` is `"none"`, the skill enters the **solo path**:
+
+```text
+[dev-loop hands off; PR at "In review"]
+      |
+      v
+[assert local review GO on HEAD] -- NOT GO --> [fix + re-run local review]
+      |
+      v
+[push feature branch]
+      |
+      v
+[check CI via gh api (no review poll)]
+      +-- CI SUCCESS + localReviewGo
+      |     --> prompt user: "CI green, local review GO. Merge now? y/n"
+      |     --> user says yes: [write final report; delete state; stop]
+      |     --> user says no:  [reschedule; next tick re-enters here]
+      +-- CI FAILURE/ERROR
+      |     --> [needs-triage: fix CI, re-push]
+      +-- CI PENDING
+      |     --> [reschedule; next tick re-enters here]
+      +-- .stopped / safety cap --> [same as team path]
+```
+
+No `requestReview`, no `fetchUnresolvedThreads`, no `zeroUnresolvedOnHead` condition. The exit set is: (a) local review GO on HEAD, (b) CI success on HEAD, (c) user confirms merge intent.
 
 The two human gates from `rules/pr-workflow.md` are preserved: merge and dev-issue Done.
 
