@@ -3,7 +3,8 @@
 //
 // Each tick:
 //   1. Checks for a .stopped sidecar (user cancelled).
-//   2. Polls remote state once via tracker.review.pollForReview.
+//   2. Team path: polls remote state via tracker.review.pollForReview.
+//      Solo path: uses caller-provided ciState (no remote poll).
 //   3. Updates exit conditions.
 //   4. Returns an action the skill caller acts on.
 //

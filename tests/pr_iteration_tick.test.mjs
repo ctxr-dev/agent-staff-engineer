@@ -298,6 +298,30 @@ describe("runTick: solo path", () => {
     assert.equal(result.state.consecutiveWakes, 1);
   });
 
+  it("returns safety-cap on solo-ready when consecutive wakes hit the cap", async () => {
+    const dir = join(scratch, "solo-safety-cap");
+    const state = makeState({
+      exitConditions: { localReviewGo: true, zeroUnresolvedOnHead: false, ciSuccessOnHead: false },
+      botIds: [],
+      botLogins: [],
+      consecutiveWakes: 2,
+    });
+    await writePrState(dir, state);
+
+    const tracker = { review: { pollForReview: async () => ({}) } };
+    const result = await runTick(tracker, state, {
+      stateDir: dir,
+      soloPath: true,
+      ciState: "SUCCESS",
+      maxConsecutiveWakes: 3,
+    });
+
+    assert.equal(result.done, true);
+    assert.equal(result.action, "safety-cap");
+    assert.equal(result.state.consecutiveWakes, 3);
+    assert.ok(await isStatePaused(dir, state.prId));
+  });
+
   it("returns still-waiting when localReviewGo is false (even with CI SUCCESS)", async () => {
     const dir = join(scratch, "solo-no-local-review");
     const state = makeState({
