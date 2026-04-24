@@ -607,21 +607,6 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
   }
 }
 
-// Deferred config write: if the code-review probe changed the provider
-// in memory, persist it now that all preflights have passed. This avoids
-// leaving a partially-applied config on disk if a preflight exits.
-if (
-  (MODE === "apply" || MODE === "update") &&
-  opsConfig.workflow?.code_review?.provider === CODE_REVIEW_INTERNAL
-) {
-  // Only write if we actually changed it (the probe sets it to
-  // CODE_REVIEW_INTERNAL when the external skill was missing).
-  const onDisk = await readJsonOrNull(opsConfigPath);
-  const diskProvider = onDisk?.workflow?.code_review?.provider;
-  if (diskProvider !== CODE_REVIEW_INTERNAL) {
-    await atomicWriteJson(opsConfigPath, opsConfig);
-  }
-}
 
 /**
  * Decide interactive vs fail-fast based on TTY state and --yes, then
@@ -962,6 +947,20 @@ for (const w of writes) {
 }
 
 // Manifest.
+// Deferred config write: if the code-review probe changed the provider
+// in memory, persist it now — after all preflights, wrapper writes, and
+// memory-seed installs succeeded. Writing here (just before the manifest)
+// ensures a partial install abort never leaves a half-applied config.
+if (
+  (MODE === "apply" || MODE === "update") &&
+  opsConfig.workflow?.code_review?.provider === CODE_REVIEW_INTERNAL
+) {
+  const onDisk = await readJsonOrNull(opsConfigPath);
+  if (onDisk?.workflow?.code_review?.provider !== CODE_REVIEW_INTERNAL) {
+    await atomicWriteJson(opsConfigPath, opsConfig);
+  }
+}
+
 const manifest = {
   version: "0.1.0",
   bundle_root: BUNDLE_REF,
