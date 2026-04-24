@@ -424,6 +424,18 @@ export function buildNonConfigPlan(signals, current, proposed) {
   if (signals.some((s) => s.kind === "compliance:add")) {
     steps.push("consider authoring a rules/product-<regime>.md (portable: false) to capture new obligations");
   }
+
+  if (signals.some((s) => s.kind === "labels:install-taxonomy")) {
+    steps.push("run scripts/lib/labels/sync.mjs to provision canonical labels from templates/labels/default-taxonomy.yaml");
+  }
+  if (signals.some((s) => s.kind === "labels:sync-taxonomy")) {
+    steps.push("run scripts/lib/labels/sync.mjs to reconcile repo labels against taxonomy + extensions");
+  }
+  const areaExtensions = signals.filter((s) => s.kind === "labels:extend:area");
+  if (areaExtensions.length > 0) {
+    steps.push(`via gh label create: provision ${areaExtensions.map((s) => `area:${s.value}`).join(", ")}`);
+  }
+
   return steps;
 }
 

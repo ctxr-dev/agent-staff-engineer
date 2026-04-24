@@ -2,14 +2,14 @@
 // Reads the canonical label taxonomy YAML and reconciles labels on one
 // or more GitHub repos via `gh label create --force`. Never deletes.
 // Color/description diffs on existing labels are reported but not
-// overwritten (the user must run sync with review to apply diffs).
+// overwritten. Applying diffs is a future enhancement.
 
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { ghExec } from "../ghExec.mjs";
 
 const require = createRequire(import.meta.url);
-const { load: yamlLoad } = require("js-yaml");
+const { safeLoad: yamlLoad } = require("js-yaml");
 
 /**
  * Parse the taxonomy YAML into a flat array of { name, color, description }
@@ -50,7 +50,7 @@ export async function loadTaxonomy(taxonomyPath) {
  * false "created" results for labels beyond the limit.
  */
 export async function fetchRepoLabels(owner, repo) {
-  const result = await ghExec(["label", "list", "--repo", `${owner}/${repo}`, "--json", "name,color,description", "--limit", "200"], { format: "json" });
+  const result = await ghExec(["label", "list", "--repo", `${owner}/${repo}`, "--json", "name,color,description", "--limit", "500"], { format: "json" });
   if (result.code !== 0) {
     throw new Error(`gh label list failed for ${owner}/${repo}: ${result.stderr || result.stdout}`);
   }
