@@ -22,7 +22,7 @@ import { parseArgv, boolFlag, requireStringFlag } from "./lib/argv.mjs";
 import { atomicWriteJson, readJsonOrNull } from "./lib/fsx.mjs";
 import { validate } from "./lib/schema.mjs";
 import { diffLines } from "./lib/diff.mjs";
-import { CODE_REVIEW_SKILL, CODE_REVIEW_PROVIDERS } from "./lib/constants.mjs";
+import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL, CODE_REVIEW_NONE, CODE_REVIEW_PROVIDERS } from "./lib/constants.mjs";
 
 // Guard: when tests import this module to exercise classify/applySignalToConfig,
 // the CLI body must not run.
@@ -240,10 +240,10 @@ export function classify(intent) {
     sigs.push({ kind: "code-review:switch", value: CODE_REVIEW_SKILL });
   }
   if (hasPhrase("use internal code review") || hasPhrase("use internal template")) {
-    sigs.push({ kind: "code-review:switch", value: "internal-template" });
+    sigs.push({ kind: "code-review:switch", value: CODE_REVIEW_INTERNAL });
   }
   if (hasPhrase("disable code review") || hasPhrase("skip code review") || hasPhrase("no code review")) {
-    sigs.push({ kind: "code-review:switch", value: "none" });
+    sigs.push({ kind: "code-review:switch", value: CODE_REVIEW_NONE });
   }
 
   // Cadence. Only explicit phrases — a stray `\bv\d+\b` match in unrelated

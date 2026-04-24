@@ -7,7 +7,7 @@ import {
   buildNonConfigPlan,
   diffArray,
 } from "../scripts/adapt.mjs";
-import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL } from "../scripts/lib/constants.mjs";
+import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL, CODE_REVIEW_NONE } from "../scripts/lib/constants.mjs";
 
 describe("adapt.classify", () => {
   it("detects explicit compliance regimes at word boundaries", () => {
@@ -48,7 +48,7 @@ describe("adapt.classify", () => {
       (s) => s.kind === "code-review:switch" && s.value === CODE_REVIEW_SKILL,
     ));
     assert.ok(classify("disable code review").some(
-      (s) => s.kind === "code-review:switch" && s.value === "none",
+      (s) => s.kind === "code-review:switch" && s.value === CODE_REVIEW_NONE,
     ));
   });
 
