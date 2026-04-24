@@ -50,8 +50,8 @@
     "test": "node --test tests/*.test.mjs",
     "validate": "node scripts/validate_bundle.mjs",
     "preflight": "node scripts/preflight.mjs",
-    "lint": "markdownlint-cli2 '**/*.md' '#node_modules' '#tests'",
-    "lint:fix": "markdownlint-cli2 --fix '**/*.md' '#node_modules' '#tests'",
+    "lint": "markdownlint-cli2 '**/*.md' '#node_modules' '#tests' '#.claude' '#.memory' '#.idea' '#daily'",
+    "lint:fix": "markdownlint-cli2 --fix '**/*.md' '#node_modules' '#tests' '#.claude' '#.memory' '#.idea' '#daily'",
     "prepare": "husky"
   },
   "dependencies": {

@@ -169,9 +169,9 @@
         },
         "area": {
           "type": "array",
-          "description": "Scope area/*. Project-specific. Example defaults: frontend, backend, data, security, performance, compliance, ux, devx, testing, docs.",
+          "description": "Scope area/*. Project-specific. Example defaults: frontend, backend, data, security, performance, compliance, ux, devx, testing, docs. When empty, issue-discovery Q3d gracefully skips or offers to add a label inline.",
           "items": { "type": "string", "minLength": 1 },
-          "minItems": 1
+          "minItems": 0
         },
         "priority": {
           "type": "array",

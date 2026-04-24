@@ -128,6 +128,8 @@ Option 4 hands off to `regression-handler` with `{title, intentText, memberName}
 
 ### Q3d. Area label
 
+**When `labels.area` is non-empty** (the typical case for projects with a seeded taxonomy):
+
 Score `session.intentText` against the keywords attached to each entry in `labels.area` (per the bundle-standard `area_keywords` shape). Surface the top 3 plus a custom option.
 
 ```text
@@ -144,6 +146,21 @@ When the user picks option 4 and types a free-form area, if that area is not in 
 ```text
 I see you want area "{{user_answer}}", which isn't in `labels.area`: {{configured_list}}. Adding a new area is an adapt-system change, not something I'll do silently. Pick an existing area, halt for `/adapt-system "add area <short desc>"` first, or re-route this issue to the closest existing area. How do you want me to proceed?
 ```
+
+**When `labels.area` is empty** (fresh solo repos, projects without a label taxonomy):
+
+The skill does not halt. Instead it offers a 2-option prompt:
+
+```text
+No area labels are configured for this project.
+
+1. Add an area label now (I will create it via tracker-sync).
+2. Skip area for this issue.
+```
+
+Option 1: the user provides a label name. The skill creates and assigns it by calling `tracker-sync.labels.reconcileLabels` with `apply: true` and a one-entry taxonomy for the new `area:*` label. On backends that support label CRUD, this materializes the label; on Jira, label "creation" is effectively a no-op until the label is applied to an issue. The new label is not automatically added to `labels.area` in ops.config.json (that is an adapt-system change).
+
+Option 2: the skill sets area to null on the draft issue and proceeds to Q3e. The generated issue will have no `area:*` label.
 
 ### Q3e. Priority + size
 
