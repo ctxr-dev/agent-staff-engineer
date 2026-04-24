@@ -110,6 +110,7 @@ export async function runTick(tracker, state, opts) {
       observedAt: new Date().toISOString(),
     };
     state.exitConditions.ciSuccessOnHead = ciNow === "SUCCESS";
+    state.exitConditions.zeroUnresolvedOnHead = false;
 
     if (state.exitConditions.localReviewGo && state.exitConditions.ciSuccessOnHead) {
       // Increment consecutiveWakes even on solo-ready so the safety cap
