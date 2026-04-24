@@ -225,6 +225,27 @@ export function classify(intent) {
   if (hasWord("b2b") || hasWord("enterprise")) sigs.push({ kind: "audience:add", value: "enterprise" });
   if (hasWord("consumer")) sigs.push({ kind: "audience:add", value: "consumer" });
 
+  // Code-review provider switch.
+  const crTargets = ["ctxr-skill-code-review", "internal-template", "none"];
+  for (const target of crTargets) {
+    if (
+      hasPhrase(`switch code-review provider to ${target}`) ||
+      hasPhrase(`use ${target} for code review`) ||
+      hasPhrase(`code review ${target}`)
+    ) {
+      sigs.push({ kind: "code-review:switch", value: target });
+    }
+  }
+  if (hasPhrase("use external code review") || hasPhrase("switch to external code review")) {
+    sigs.push({ kind: "code-review:switch", value: "ctxr-skill-code-review" });
+  }
+  if (hasPhrase("use internal code review") || hasPhrase("use internal template")) {
+    sigs.push({ kind: "code-review:switch", value: "internal-template" });
+  }
+  if (hasPhrase("disable code review") || hasPhrase("skip code review") || hasPhrase("no code review")) {
+    sigs.push({ kind: "code-review:switch", value: "none" });
+  }
+
   // Cadence. Only explicit phrases — a stray `\bv\d+\b` match in unrelated
   // prose ("we upgraded to macOS v14") would otherwise silently mutate the
   // config on --apply.
@@ -312,6 +333,18 @@ export function applySignalToConfig(cfg, signal, changeLog) {
       if (!cfg.labels.area.includes(`audience-${signal.value}`)) {
         cfg.labels.area.push(`audience-${signal.value}`);
         changeLog.push(`add audience label 'area/audience-${signal.value}'`);
+      }
+      return;
+    }
+    case signal.kind === "code-review:switch": {
+      cfg.workflow = cfg.workflow ?? {};
+      cfg.workflow.code_review = cfg.workflow.code_review ?? {};
+      const prev = cfg.workflow.code_review.provider;
+      cfg.workflow.code_review.provider = signal.value;
+      if (prev !== signal.value) {
+        changeLog.push(
+          `switch code-review provider: ${prev ?? "(unset)"} -> ${signal.value}`
+        );
       }
       return;
     }

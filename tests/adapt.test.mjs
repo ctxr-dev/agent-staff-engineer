@@ -39,6 +39,18 @@ describe("adapt.classify", () => {
     assert.ok(sigs.some((s) => s.kind === "cadence:set" && s.value === "continuous"));
   });
 
+  it("detects code-review switch intents", () => {
+    assert.ok(classify("switch code-review provider to internal-template").some(
+      (s) => s.kind === "code-review:switch" && s.value === "internal-template",
+    ));
+    assert.ok(classify("use external code review").some(
+      (s) => s.kind === "code-review:switch" && s.value === "ctxr-skill-code-review",
+    ));
+    assert.ok(classify("disable code review").some(
+      (s) => s.kind === "code-review:switch" && s.value === "none",
+    ));
+  });
+
   it("detects drop intent separately from add", () => {
     const sigs = classify("drop gdpr, not applicable");
     assert.ok(sigs.some((s) => s.kind === "compliance:drop" && s.value === "gdpr"));
@@ -90,6 +102,15 @@ describe("adapt.applySignalToConfig", () => {
     applySignalToConfig(cfg, { kind: "stack:add:language", value: "swift" }, log);
     assert.deepEqual(cfg.stack.language, ["swift"]);
     assert.equal(log.length, 1);
+  });
+
+  it("code-review:switch updates workflow.code_review.provider", () => {
+    const cfg = { workflow: { code_review: { provider: "ctxr-skill-code-review" } } };
+    const log = [];
+    applySignalToConfig(cfg, { kind: "code-review:switch", value: "internal-template" }, log);
+    assert.equal(cfg.workflow.code_review.provider, "internal-template");
+    assert.equal(log.length, 1);
+    assert.match(log[0], /internal-template/);
   });
 
   it("cadence:set flips phase_term to 'track' for continuous", () => {
