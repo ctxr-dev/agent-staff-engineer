@@ -13,6 +13,8 @@ writes_to_github: yes for github targets, on approval or when called programmati
 writes_to_filesystem: no
 ---
 
+<!-- cache-control:static -->
+
 # tracker-sync
 
 Before acting, read the target project's `.claude/ops.config.json`. Refuse to run if it is missing or invalid; tell the caller to run `bootstrap-ops-config` or `adapt-system` first.
@@ -111,3 +113,5 @@ Violations cause the call to halt with a clear refusal message, not a silent suc
 - `workflow.pr.title`, `workflow.pr.body_template`, `workflow.pr.link_issue_with`, `workflow.pr.request_reviewers`.
 - `workflow.release.umbrella_title`.
 - `paths.templates` (to locate template files for rendering).
+
+<!-- cache-control:dynamic -->

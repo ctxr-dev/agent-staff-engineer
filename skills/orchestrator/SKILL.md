@@ -12,6 +12,8 @@ writes_to_github: no (Soldiers that write go through tracker-sync; this skill is
 writes_to_filesystem: no (Soldiers that write files are documented here but the skill itself does not write)
 ---
 
+<!-- cache-control:static -->
+
 # orchestrator
 
 Before acting, read [rules/subagent-orchestration.md](../../rules/subagent-orchestration.md). That rule is the binding contract; this skill is the how-to. Everything below assumes the rule's triggers, inherited invariants, and parallelisation heuristics are already satisfied; the skill addresses WHAT the brief says when delegation is already decided.
@@ -215,3 +217,5 @@ Sequential, not parallel. The Captain reads the Reviewer report, picks which fin
 - `workflow.orchestration.enabled` (optional; default true): master switch. When false, the Captain never dispatches Soldiers; every task runs inline. Useful on projects where delegation overhead isn't worth it.
 - `workflow.orchestration.max_parallel_soldiers` (optional; default 3): upper bound on simultaneous Agent calls. Claude Code's common cap is 3; raising it is untested territory.
 - `workflow.orchestration.session_log` (optional; default `.development/local/orchestration/session.log`): where the Captain records dispatched briefings + returned reports for post-hoc inspection. Session-scoped and gitignored per the `.development/local/` convention.
+
+<!-- cache-control:dynamic -->

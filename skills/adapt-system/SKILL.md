@@ -15,6 +15,8 @@ writes_to_github: yes, but only via tracker-sync (label taxonomy changes, relabe
 writes_to_filesystem: yes, with diff preview and explicit user approval
 ---
 
+<!-- cache-control:static -->
+
 # adapt-system
 
 Before acting, read the target project's `.claude/ops.config.json`. If the file is missing or invalid, halt and point at `bootstrap-ops-config`.
@@ -118,3 +120,5 @@ If an intent contradicts a prior adapt ("we dropped the legacy analytics SDK" af
 - `stack.language`, `stack.testing`, `stack.platform`.
 - `area_keywords`.
 - `compliance.regimes`, `compliance.data_classes`.
+
+<!-- cache-control:dynamic -->

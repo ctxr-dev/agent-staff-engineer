@@ -15,6 +15,8 @@ writes_to_github: no
 writes_to_filesystem: plan files within paths.plans_root only
 ---
 
+<!-- cache-control:static -->
+
 # plan-keeper
 
 Before acting, read the target project's `.claude/ops.config.json`. Refuse to run if missing or invalid.
@@ -130,3 +132,5 @@ When `workflow.pr.update_plan_oneliner` is true and `dev-loop` crosses a gate, `
 - `workflow.pr.update_plan_oneliner` (whether to honour requests from `dev-loop`).
 - `labels.state_modifiers` (to align plan frontmatter with blocker/deferred conditions).
 - Never reads or writes anything outside the above.
+
+<!-- cache-control:dynamic -->
