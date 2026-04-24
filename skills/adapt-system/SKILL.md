@@ -67,6 +67,9 @@ Reshapes a live installation when the project's context changes. Every change is
 | `cadence:*` | `labels.intent`, release umbrella list (re-derived), `workflow.phase_term` |
 | `tracker:migrate:<from>:<to>` | `ops.config.json -> trackers.dev` (new kind), `trackers.observed[]` (old kind appended as read-only), optional `trackers.release` update, new `migration` sidecar block on the config |
 | `code-review:switch:<target>` | `ops.config.json -> workflow.code_review.provider` set to `<target>`. Valid targets: `ctxr-skill-code-review`, `internal-template` (bundled fallback), `none` (skip review). Triggered by: "switch code-review provider to internal-template", "use external code review", "disable code review". When switching to `ctxr-skill-code-review`, the user is responsible for ensuring the skill is installed (the next `dev-loop` run halts with remediation if missing). |
+| `labels:install-taxonomy` | Provision canonical labels from `templates/labels/default-taxonomy.yaml` + any `labels.taxonomy.extensions` in ops.config.json to the target repo (and workspace members if present). Uses `gh label create --force`. Triggered by: "install label taxonomy", "provision labels". |
+| `labels:extend:area:<slug>` | Add one `area:<slug>` label to the repo and persist `labels.taxonomy.extensions.areas[]` in ops.config.json. Triggered by: "extend label taxonomy with area:crypto", "add area label payments". |
+| `labels:sync-taxonomy` | Reconcile drift: compare repo labels against taxonomy + extensions, report diffs. Uses `scripts/lib/labels/sync.mjs`. Triggered by: "sync label taxonomy", "reconcile labels". |
 
 ## Tracker migration op
 
