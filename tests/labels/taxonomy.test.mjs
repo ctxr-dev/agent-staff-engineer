@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseTaxonomy, loadTaxonomy, buildExtensionLabels } from "../../scripts/lib/labels/sync.mjs";
+import { parseTaxonomy, loadTaxonomy, buildExtensionLabels, syncLabelsToRepo } from "../../scripts/lib/labels/sync.mjs";
 
 const BUNDLE = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TAXONOMY_PATH = join(BUNDLE, "templates/labels/default-taxonomy.yaml");
@@ -87,5 +87,53 @@ describe("buildExtensionLabels", () => {
     assert.deepEqual(buildExtensionLabels(undefined), []);
     assert.deepEqual(buildExtensionLabels(null), []);
     assert.deepEqual(buildExtensionLabels({}), []);
+  });
+});
+
+describe("syncLabelsToRepo (stubbed gh)", () => {
+  function fakeGh(existingLabels) {
+    const created = [];
+    return {
+      fn: async (args) => {
+        if (args[0] === "label" && args[1] === "list") {
+          return { code: 0, stdout: JSON.stringify(existingLabels), json: existingLabels };
+        }
+        if (args[0] === "label" && args[1] === "create") {
+          created.push(args[2]);
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        return { code: 1, stdout: "", stderr: "unknown command" };
+      },
+      created,
+    };
+  }
+
+  it("creates missing labels and skips existing ones", async () => {
+    const existing = [{ name: "type:bug", color: "D73A4A", description: "Defect" }];
+    const gh = fakeGh(existing);
+    const taxonomy = [
+      { name: "type:bug", color: "D73A4A", description: "Defect" },
+      { name: "type:feature", color: "0366D6", description: "New capability" },
+    ];
+    const result = await syncLabelsToRepo(taxonomy, "test", "repo", { gh: gh.fn });
+    assert.deepEqual(result.created, ["type:feature"]);
+    assert.ok(result.skipped.some((s) => s.name === "type:bug"));
+  });
+
+  it("reports color diffs on existing labels", async () => {
+    const existing = [{ name: "type:bug", color: "FF0000", description: "Defect" }];
+    const gh = fakeGh(existing);
+    const taxonomy = [{ name: "type:bug", color: "D73A4A", description: "Defect" }];
+    const result = await syncLabelsToRepo(taxonomy, "test", "repo", { gh: gh.fn });
+    assert.ok(result.diffs.some((d) => d.name === "type:bug" && d.field === "color"));
+  });
+
+  it("dedupes taxonomy and extraLabels by name", async () => {
+    const gh = fakeGh([]);
+    const taxonomy = [{ name: "area:docs", color: "AAA", description: "A" }];
+    const extra = [{ name: "area:docs", color: "BBB", description: "B" }];
+    const result = await syncLabelsToRepo(taxonomy, "test", "repo", { extraLabels: extra, gh: gh.fn });
+    assert.equal(gh.created.length, 1);
+    assert.equal(gh.created[0], "area:docs");
   });
 });

@@ -48,9 +48,10 @@ export async function loadTaxonomy(taxonomyPath) {
  * Returns a Map<name, { color, description }>.
  * Note: requests up to 500 labels. Repos with >500 labels may see
  * false "created" results for labels beyond the limit.
+ * @param {Function} [gh] override for ghExec (testing)
  */
-export async function fetchRepoLabels(owner, repo) {
-  const result = await ghExec(["label", "list", "--repo", `${owner}/${repo}`, "--json", "name,color,description", "--limit", "500"], { format: "json" });
+export async function fetchRepoLabels(owner, repo, gh = ghExec) {
+  const result = await gh(["label", "list", "--repo", `${owner}/${repo}`, "--json", "name,color,description", "--limit", "500"], { format: "json" });
   if (result.code !== 0) {
     throw new Error(`gh label list failed for ${owner}/${repo}: ${result.stderr || result.stdout}`);
   }
@@ -67,13 +68,13 @@ export async function fetchRepoLabels(owner, repo) {
  * Returns { created, skipped, diffs } where diffs is an array of
  * { name, field, expected, actual } for labels that exist but differ.
  */
-export async function syncLabelsToRepo(taxonomyLabels, owner, repo, extraLabels = []) {
+export async function syncLabelsToRepo(taxonomyLabels, owner, repo, { extraLabels = [], gh = ghExec } = {}) {
   // Dedupe by name: extraLabels override taxonomy entries with the same name.
   const byName = new Map();
   for (const l of taxonomyLabels) byName.set(l.name, l);
   for (const l of extraLabels) byName.set(l.name, l);
   const allLabels = [...byName.values()];
-  const existing = await fetchRepoLabels(owner, repo);
+  const existing = await fetchRepoLabels(owner, repo, gh);
   const created = [];
   const skipped = [];
   const diffs = [];
@@ -81,7 +82,7 @@ export async function syncLabelsToRepo(taxonomyLabels, owner, repo, extraLabels 
   for (const label of allLabels) {
     const current = existing.get(label.name);
     if (!current) {
-      const result = await ghExec([
+      const result = await gh([
         "label", "create", label.name,
         "--repo", `${owner}/${repo}`,
         "--color", label.color,
