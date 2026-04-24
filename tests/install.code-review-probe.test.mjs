@@ -50,6 +50,7 @@ async function seedCodeReviewStub(target) {
 describe("install.mjs code-review probe: skill present", () => {
   let scratch;
   let installed;
+  let installResult;
 
   before(async () => {
     scratch = await mkdtemp(join(tmpdir(), "cr-probe-ok-"));
@@ -61,6 +62,9 @@ describe("install.mjs code-review probe: skill present", () => {
     );
     await seedWikiSkillStub(scratch);
     await seedCodeReviewStub(scratch);
+    // Run install once in setup so tests don't depend on ordering
+    const emptyHome = join(scratch, "empty-home");
+    installResult = runInstall(installed, scratch, { HOME: emptyHome, USERPROFILE: emptyHome });
   });
 
   after(async () => {
@@ -68,11 +72,8 @@ describe("install.mjs code-review probe: skill present", () => {
   });
 
   it("detects the skill and confirms in stdout", () => {
-    // Isolate HOME so user-global skills don't interfere
-    const emptyHome = join(scratch, "empty-home");
-    const res = runInstall(installed, scratch, { HOME: emptyHome, USERPROFILE: emptyHome });
-    assert.equal(res.status, 0, `install failed: ${res.stderr || res.stdout}`);
-    assert.match(res.stdout, /code-review provider: ctxr-skill-code-review found at/);
+    assert.equal(installResult.status, 0, `install failed: ${installResult.stderr || installResult.stdout}`);
+    assert.match(installResult.stdout, /code-review provider: ctxr-skill-code-review found at/);
   });
 
   it("leaves ops.config.json provider unchanged", async () => {
@@ -84,6 +85,7 @@ describe("install.mjs code-review probe: skill present", () => {
 describe("install.mjs code-review probe: skill missing, falls back", () => {
   let scratch;
   let installed;
+  let installResult;
 
   before(async () => {
     scratch = await mkdtemp(join(tmpdir(), "cr-probe-missing-"));
@@ -95,6 +97,9 @@ describe("install.mjs code-review probe: skill missing, falls back", () => {
     );
     await seedWikiSkillStub(scratch);
     // Intentionally skip seedCodeReviewStub
+    // Run install once in setup so tests don't depend on ordering
+    const emptyHome = join(scratch, "empty-home");
+    installResult = runInstall(installed, scratch, { HOME: emptyHome, USERPROFILE: emptyHome });
   });
 
   after(async () => {
@@ -102,10 +107,8 @@ describe("install.mjs code-review probe: skill missing, falls back", () => {
   });
 
   it("falls back to internal-template and notes it in stdout", () => {
-    const emptyHome = join(scratch, "empty-home");
-    const res = runInstall(installed, scratch, { HOME: emptyHome, USERPROFILE: emptyHome });
-    assert.equal(res.status, 0, `install should still succeed: ${res.stderr || res.stdout}`);
-    assert.match(res.stdout, /falling back to internal-template/);
+    assert.equal(installResult.status, 0, `install should still succeed: ${installResult.stderr || installResult.stdout}`);
+    assert.match(installResult.stdout, /falling back to internal-template/);
   });
 
   it("updates ops.config.json provider to internal-template", async () => {
