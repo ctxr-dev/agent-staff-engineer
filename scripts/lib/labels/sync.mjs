@@ -87,7 +87,7 @@ export async function syncLabelsToRepo(taxonomyLabels, owner, repo, extensions =
       if (result.code === 0) {
         created.push(label.name);
       } else {
-        skipped.push({ name: label.name, reason: result.stderr.trim() });
+        skipped.push({ name: label.name, reason: (result.stderr || result.stdout || "unknown error").trim() });
       }
     } else {
       const colorNorm = (c) => (c ?? "").replace(/^#/, "").toLowerCase();
