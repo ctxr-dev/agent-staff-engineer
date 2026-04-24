@@ -365,8 +365,9 @@ if (opsConfig.wiki?.required) {
       );
     } else {
       const installHint = opsConfig.workflow?.code_review?.install_hint ?? "npx @ctxr/kit install @ctxr/skill-code-review";
+      const verb = (MODE === "apply" || MODE === "update") ? "falling back to" : "would fall back to";
       process.stdout.write(
-        `code-review provider: ${CODE_REVIEW_SKILL} not installed; falling back to ${CODE_REVIEW_INTERNAL}.\n` +
+        `code-review provider: ${CODE_REVIEW_SKILL} not installed; ${verb} ${CODE_REVIEW_INTERNAL}.\n` +
         `  (install later with: ${installHint})\n`,
       );
       // Update in-memory config; the actual write is deferred until after
