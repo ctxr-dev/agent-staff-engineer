@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import { ghExec } from "../ghExec.mjs";
 
 const require = createRequire(import.meta.url);
-const { safeLoad: yamlLoad } = require("js-yaml");
+const { load: yamlLoad } = require("js-yaml");
 
 /**
  * Parse the taxonomy YAML into a flat array of { name, color, description }
@@ -67,8 +67,8 @@ export async function fetchRepoLabels(owner, repo) {
  * Returns { created, skipped, diffs } where diffs is an array of
  * { name, field, expected, actual } for labels that exist but differ.
  */
-export async function syncLabelsToRepo(taxonomyLabels, owner, repo, extensions = []) {
-  const allLabels = [...taxonomyLabels, ...extensions];
+export async function syncLabelsToRepo(taxonomyLabels, owner, repo, extraLabels = []) {
+  const allLabels = [...taxonomyLabels, ...extraLabels];
   const existing = await fetchRepoLabels(owner, repo);
   const created = [];
   const skipped = [];
