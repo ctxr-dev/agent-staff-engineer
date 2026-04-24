@@ -1,6 +1,6 @@
 ---
 name: pr-iteration
-description: Drives a PR from "just opened" to a green terminal state by requesting an external reviewer, polling for CI and review, triaging threads, fixing, resolving, and iterating until all three exit conditions hold. Never merges. The canonical PR lifecycle codification of the issue-development-automated-loop runbook.
+description: "Drives a PR from 'just opened' to a green terminal state. Team path: requests external reviewer, polls CI and review, triages threads, fixes, resolves, iterates until all three exit conditions hold. Solo path (provider none): polls CI only, prompts merge when localReviewGo + ciSuccess hold. Never merges. The canonical PR lifecycle codification."
 trigger_on:
   - dev-loop hands off after opening a PR (and workflow.external_review.enabled is true).
   - User explicitly runs /pr-iteration <pr-number> on an existing PR.

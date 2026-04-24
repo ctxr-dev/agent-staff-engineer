@@ -39,13 +39,31 @@ function buildCtx(state) {
 }
 
 /**
+ * Normalize a CI state value to the schema-allowed enum.
+ * Folds unknown values to "PENDING" to prevent schema validation
+ * failures on the next readPrState.
+ */
+function normalizeCiState(raw) {
+  if (raw === "SUCCESS" || raw === "FAILURE" || raw === "ERROR" || raw === "PENDING") {
+    return raw;
+  }
+  return "PENDING";
+}
+
+/**
  * Run one tick of the PR iteration loop.
  *
- * @param {object} tracker     tracker object with a .review namespace
+ * @param {object} tracker     tracker object with a .review namespace (unused on solo path)
  * @param {object} state       validated PR iteration state (mutated in place)
  * @param {object} opts
  * @param {string} opts.stateDir           absolute path to the state directory
  * @param {number} [opts.maxConsecutiveWakes=96]  safety cap before auto-pause
+ * @param {boolean} [opts.soloPath=false]  true when workflow.external_review.provider is "none";
+ *                                         skips pollForReview and uses relaxed exit conditions
+ * @param {string} [opts.ciState]          CI status for the solo path; one of "SUCCESS",
+ *                                         "FAILURE", "ERROR", "PENDING". Caller fetches this
+ *                                         independently (e.g. via gh api graphql). Ignored on
+ *                                         the team path where pollForReview provides CI state.
  * @returns {Promise<{done: boolean, action: string, state: object}>}
  *   action is one of:
  *     "complete"        all three exit conditions hold; state file removed
@@ -79,7 +97,7 @@ export async function runTick(tracker, state, opts) {
   // Exit set: localReviewGo + ciSuccessOnHead. No zeroUnresolvedOnHead.
   // Returns "solo-ready" when both hold; the skill layer prompts the user.
   if (soloPath) {
-    const ciNow = soloCiState ?? "PENDING";
+    const ciNow = normalizeCiState(soloCiState);
     state.lastPollResult = {
       ciState: ciNow,
       unresolvedCount: 0,

@@ -33,7 +33,9 @@ When all applicable conditions hold, the agent reports the final state to the hu
 
 ## State machine inside the loop
 
-Each round is the same six steps. The loop repeats until the exit conditions hold.
+### Team path (steps 1 through 6)
+
+Each round is the same six steps. The loop repeats until all three exit conditions hold.
 
 1. **Assert local review GO on HEAD.** Delegate to `rules/review-loop.md`. If the local review is not GO, fix and re-run before pushing. Never push with outstanding Critical or Important findings.
 2. **Push** the feature branch to `origin`. Re-use the existing branch; do not rename between rounds.
@@ -45,9 +47,14 @@ Each round is the same six steps. The loop repeats until the exit conditions hol
    - **Suggestion / style**: take or push back with a reply on the thread.
 6. **Commit + push + resolve threads + re-request**. One commit per round, `fix(review-round-N): <short summary>` with a per-thread bullet list in the body naming `path:line` and what changed. After the push, call `tracker.review.resolveThread(threadId)` for every addressed thread, then `tracker.review.requestReview` again on the new HEAD. Loop back to step 4.
 
+### Solo path (steps 1, 2, CI check, merge prompt)
+
+When `workflow.external_review.provider` is `"none"`, steps 3 and 5 are skipped (no external reviewer). The tick checks CI via the caller-provided `ciState` (fetched independently via `gh api graphql`). When `localReviewGo + ciSuccessOnHead` hold, the tick returns `"solo-ready"` and the skill layer prompts the user for merge confirmation. See the runbook's "Solo dev flow" section.
+
 ## Stop conditions
 
-- All three exit conditions hold: report state, write a final `pr-iteration-report.md` artefact into the wiki (per `rules/llm-wiki.md`), delete the state file, and stop. Never merge.
+- **Team path:** all three exit conditions hold: report state, write a final `pr-iteration-report.md` artefact into the wiki (per `rules/llm-wiki.md`), delete the state file, and stop. Never merge.
+- **Solo path:** `localReviewGo + ciSuccessOnHead` hold and user confirms merge intent: same report and cleanup, then stop. Never merge.
 - Max consecutive wakes reached (default 96, roughly 7.2 hours of elapsed wall time at 270s intervals): the tick writes a `.paused` sidecar next to the state file and stops rescheduling. Surface a "loop paused: manual inspection needed" message with the last-known state. Human deletes the `.paused` file to resume on the next session.
 - User cancels ("stop the PR iteration"): agent writes a `.stopped` sidecar next to the state file (same basename, `.stopped` extension). The next wakeup fire reads the sidecar and exits without rescheduling. The state file remains in place for post-hoc inspection; delete it manually when no longer needed.
 - Provider declines (`NotSupportedError`): the provider is the stub for this tracker kind. Surface a clean "pr-iteration not supported for tracker kind '<kind>'; halting at In review" message to the human and stop. Do not fall back to a silent no-op.
