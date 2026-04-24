@@ -226,12 +226,13 @@ export function classify(intent) {
   if (hasWord("b2b") || hasWord("enterprise")) sigs.push({ kind: "audience:add", value: "enterprise" });
   if (hasWord("consumer")) sigs.push({ kind: "audience:add", value: "consumer" });
 
-  // Code-review provider switch.
+  // Code-review provider switch. Only explicit command phrases to avoid
+  // false positives on prose like "code review none of this".
   for (const target of CODE_REVIEW_PROVIDERS) {
     if (
       hasPhrase(`switch code-review provider to ${target}`) ||
       hasPhrase(`use ${target} for code review`) ||
-      hasPhrase(`code review ${target}`)
+      hasPhrase(`set code-review provider ${target}`)
     ) {
       sigs.push({ kind: "code-review:switch", value: target });
     }
