@@ -368,14 +368,14 @@ if (opsConfig.wiki?.required) {
       process.stdout.write(
         `code-review provider: ${CODE_REVIEW_SKILL} not installed; falling back to ${CODE_REVIEW_INTERNAL}.\n` +
         `  (install later with: ${installHint})\n` +
-        `  (switch provider with: /adapt-system "switch code-review provider to ${CODE_REVIEW_SKILL}")\n`,
+        `  (switch provider with: node scripts/adapt.mjs --target . --intent "switch code-review provider to ${CODE_REVIEW_SKILL}")\n`,
       );
+      // Update in-memory config; the actual write is deferred until after
+      // all preflights pass (workspace member check, etc.) so a later
+      // abort does not leave a partially-applied config on disk.
       if (!opsConfig.workflow) opsConfig.workflow = {};
       if (!opsConfig.workflow.code_review) opsConfig.workflow.code_review = {};
       opsConfig.workflow.code_review.provider = CODE_REVIEW_INTERNAL;
-      if (MODE === "apply" || MODE === "update") {
-        await atomicWriteJson(opsConfigPath, opsConfig);
-      }
     }
   }
 }
@@ -605,6 +605,22 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
       `\nEither (a) clone / create those directories at the listed paths, or (b) remove the affected entries from \`workspace.members\` in ops.config.json. The runtime dispatcher refuses to route through a member whose working tree is absent.\n`,
     );
     process.exit(1);
+  }
+}
+
+// Deferred config write: if the code-review probe changed the provider
+// in memory, persist it now that all preflights have passed. This avoids
+// leaving a partially-applied config on disk if a preflight exits.
+if (
+  (MODE === "apply" || MODE === "update") &&
+  opsConfig.workflow?.code_review?.provider === CODE_REVIEW_INTERNAL
+) {
+  // Only write if we actually changed it (the probe sets it to
+  // CODE_REVIEW_INTERNAL when the external skill was missing).
+  const onDisk = await readJsonOrNull(opsConfigPath);
+  const diskProvider = onDisk?.workflow?.code_review?.provider;
+  if (diskProvider !== CODE_REVIEW_INTERNAL) {
+    await atomicWriteJson(opsConfigPath, opsConfig);
   }
 }
 

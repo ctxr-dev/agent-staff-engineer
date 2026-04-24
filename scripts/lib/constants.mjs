@@ -3,7 +3,7 @@
 // Extract here when a value appears in 2+ code files to prevent
 // silent drift and make renames a single-point change.
 
-/** The external code-review skill package name. */
+/** The external code-review skill provider token (ops.config key and kit skill directory name). */
 export const CODE_REVIEW_SKILL = "ctxr-skill-code-review";
 
 /** The built-in fallback code-review provider. */
