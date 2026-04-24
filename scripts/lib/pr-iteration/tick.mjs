@@ -97,6 +97,11 @@ export async function runTick(tracker, state, opts) {
   // Exit set: localReviewGo + ciSuccessOnHead. No zeroUnresolvedOnHead.
   // Returns "solo-ready" when both hold; the skill layer prompts the user.
   if (soloPath) {
+    if (soloCiState === undefined || soloCiState === null) {
+      throw new TypeError(
+        "runTick: soloPath requires opts.ciState (caller must fetch CI status independently)",
+      );
+    }
     const ciNow = normalizeCiState(soloCiState);
     state.lastPollResult = {
       ciState: ciNow,
@@ -107,6 +112,18 @@ export async function runTick(tracker, state, opts) {
     state.exitConditions.ciSuccessOnHead = ciNow === "SUCCESS";
 
     if (state.exitConditions.localReviewGo && state.exitConditions.ciSuccessOnHead) {
+      // Increment consecutiveWakes even on solo-ready so the safety cap
+      // triggers if the user keeps deferring merge ("Not yet").
+      state.consecutiveWakes = (state.consecutiveWakes ?? 0) + 1;
+      if (state.consecutiveWakes >= maxConsecutiveWakes) {
+        await markPrStatePaused(
+          stateDir,
+          state.prId,
+          `Safety cap reached: ${maxConsecutiveWakes} consecutive wakes without merge`,
+        );
+        await writePrState(stateDir, state);
+        return { done: true, action: "safety-cap", state };
+      }
       await writePrState(stateDir, state);
       return { done: false, action: "solo-ready", state };
     }

@@ -316,7 +316,7 @@ When `workflow.external_review.provider` is `"none"` (typical for solo repos or 
 
 1. **No `requestReview`** call. No external reviewer to request.
 2. **No `fetchUnresolvedThreads`** call. No threads to triage.
-3. **CI check only.** The tick fetches CI status via `gh api graphql` (statusCheckRollup on HEAD). No review polling.
+3. **CI check only.** The caller fetches CI status independently (e.g. via `gh api graphql` statusCheckRollup on HEAD) and passes it to the tick as `opts.ciState`. No review polling.
 4. **Relaxed exit set.** The tick checks `localReviewGo + ciSuccessOnHead` only. The `zeroUnresolvedOnHead` condition is not applicable.
 5. **Merge prompt.** When both conditions hold, the tick returns `"solo-ready"`. The skill layer prompts:
 
@@ -331,4 +331,4 @@ Option 1: the skill writes the final report, deletes the state file, and stops. 
 
 Option 2: the skill reschedules a wakeup tick and re-checks on the next wake.
 
-**Safety cap and cancel** work identically to the team path: `.stopped` sidecar for user cancel, `.paused` sidecar after `max_consecutive_wakes`.
+**Safety cap and cancel** work identically to the team path: `.stopped` sidecar for user cancel, `.paused` sidecar after `max_consecutive_wakes`. The solo-ready path increments `consecutiveWakes` on every tick (including ticks where the user defers merge), so the cap fires even if CI stays green indefinitely.

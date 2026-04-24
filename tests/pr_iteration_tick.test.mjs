@@ -241,7 +241,20 @@ describe("runTick: solo path", () => {
     assert.equal(result.done, false);
     assert.equal(result.action, "solo-ready");
     assert.equal(result.state.exitConditions.ciSuccessOnHead, true);
+    assert.equal(result.state.consecutiveWakes, 1, "increments consecutiveWakes on solo-ready");
     assert.equal(pollCalled, false, "should not call pollForReview on solo path");
+  });
+
+  it("throws TypeError when soloPath is true but ciState is missing", async () => {
+    const dir = join(scratch, "solo-no-cistate");
+    const state = makeState({ botIds: [], botLogins: [] });
+    await writePrState(dir, state);
+
+    const tracker = { review: { pollForReview: async () => ({}) } };
+    await assert.rejects(
+      () => runTick(tracker, state, { stateDir: dir, soloPath: true }),
+      /soloPath requires opts.ciState/,
+    );
   });
 
   it("returns needs-triage when CI FAILURE on solo path", async () => {
