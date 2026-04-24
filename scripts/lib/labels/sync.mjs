@@ -2,13 +2,14 @@
 // Reads the canonical label taxonomy YAML and reconciles labels on one
 // or more GitHub repos via `gh label create --force`. Never deletes.
 // Color/description diffs on existing labels are reported but not
-// overwritten unless force=true.
+// overwritten (the user must run sync with review to apply diffs).
 
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { ghExec } from "../ghExec.mjs";
+
 const require = createRequire(import.meta.url);
 const { load: yamlLoad } = require("js-yaml");
-import { ghExec } from "../ghExec.mjs";
 
 /**
  * Parse the taxonomy YAML into a flat array of { name, color, description }
@@ -47,14 +48,14 @@ export async function loadTaxonomy(taxonomyPath) {
  * Returns a Map<name, { color, description }>.
  */
 export async function fetchRepoLabels(owner, repo) {
-  const result = ghExec(["label", "list", "--repo", `${owner}/${repo}`, "--json", "name,color,description", "--limit", "200"]);
-  if (result.status !== 0) {
+  const result = await ghExec(["label", "list", "--repo", `${owner}/${repo}`, "--json", "name,color,description", "--limit", "200"]);
+  if (result.code !== 0) {
     throw new Error(`gh label list failed for ${owner}/${repo}: ${result.stderr}`);
   }
   const labels = JSON.parse(result.stdout);
   const map = new Map();
   for (const l of labels) {
-    map.set(l.name, { color: l.color?.replace(/^#/, "") ?? "", description: l.description ?? "" });
+    map.set(l.name, { color: (l.color ?? "").replace(/^#/, ""), description: l.description ?? "" });
   }
   return map;
 }
@@ -74,14 +75,14 @@ export async function syncLabelsToRepo(taxonomyLabels, owner, repo, extensions =
   for (const label of allLabels) {
     const current = existing.get(label.name);
     if (!current) {
-      const result = ghExec([
+      const result = await ghExec([
         "label", "create", label.name,
         "--repo", `${owner}/${repo}`,
         "--color", label.color,
         "--description", label.description,
         "--force",
       ]);
-      if (result.status === 0) {
+      if (result.code === 0) {
         created.push(label.name);
       } else {
         skipped.push({ name: label.name, reason: result.stderr.trim() });
@@ -107,21 +108,22 @@ export async function syncLabelsToRepo(taxonomyLabels, owner, repo, extensions =
  */
 export function buildExtensionLabels(extensions, defaultColors) {
   const labels = [];
-  for (const area of extensions?.areas ?? []) {
+  if (!extensions || typeof extensions !== "object") return labels;
+  for (const area of extensions.areas ?? []) {
     labels.push({
       name: `area:${area}`,
       color: defaultColors?.area ?? "8B4FBC",
       description: `Subsystem: ${area}`,
     });
   }
-  for (const release of extensions?.releases ?? []) {
+  for (const release of extensions.releases ?? []) {
     labels.push({
       name: `release:${release}`,
       color: defaultColors?.release ?? "0E8A16",
       description: `Target release: ${release}`,
     });
   }
-  for (const phase of extensions?.phases ?? []) {
+  for (const phase of extensions.phases ?? []) {
     labels.push({
       name: `phase:${phase}`,
       color: defaultColors?.phase ?? "FBCA04",

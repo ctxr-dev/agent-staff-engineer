@@ -255,7 +255,7 @@ export function classify(intent) {
     sigs.push({ kind: "labels:sync-taxonomy", value: "default" });
   }
   // "extend label taxonomy with area:X" — extract the slug after "area:"
-  const areaExtendMatch = intent.match(/(?:extend label taxonomy with|add area label)\s+(?:area:)?(\S+)/i);
+  const areaExtendMatch = intent.match(/(?:extend label taxonomy with|add area label)\s+(?:area:)?([a-z0-9][a-z0-9_-]*)/i);
   if (areaExtendMatch) {
     sigs.push({ kind: "labels:extend:area", value: areaExtendMatch[1].toLowerCase() });
   }
