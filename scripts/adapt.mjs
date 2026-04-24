@@ -426,10 +426,10 @@ export function buildNonConfigPlan(signals, current, proposed) {
   }
 
   if (signals.some((s) => s.kind === "labels:install-taxonomy")) {
-    steps.push("run scripts/lib/labels/sync.mjs to provision canonical labels from templates/labels/default-taxonomy.yaml");
+    steps.push("invoke labels/sync.mjs loadTaxonomy + syncLabelsToRepo to provision canonical labels from templates/labels/default-taxonomy.yaml");
   }
   if (signals.some((s) => s.kind === "labels:sync-taxonomy")) {
-    steps.push("run scripts/lib/labels/sync.mjs to reconcile repo labels against taxonomy + extensions");
+    steps.push("invoke labels/sync.mjs loadTaxonomy + syncLabelsToRepo to reconcile repo labels against taxonomy + extensions");
   }
   const areaExtensions = signals.filter((s) => s.kind === "labels:extend:area");
   if (areaExtensions.length > 0) {

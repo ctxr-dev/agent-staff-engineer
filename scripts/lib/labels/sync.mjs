@@ -46,7 +46,7 @@ export async function loadTaxonomy(taxonomyPath) {
 /**
  * Fetch existing labels from a GitHub repo.
  * Returns a Map<name, { color, description }>.
- * Note: fetches up to 200 labels. Repos with >200 labels may see
+ * Note: requests up to 500 labels. Repos with >500 labels may see
  * false "created" results for labels beyond the limit.
  */
 export async function fetchRepoLabels(owner, repo) {
@@ -82,7 +82,6 @@ export async function syncLabelsToRepo(taxonomyLabels, owner, repo, extensions =
         "--repo", `${owner}/${repo}`,
         "--color", label.color,
         "--description", label.description,
-        "--force",
       ]);
       if (result.code === 0) {
         created.push(label.name);
