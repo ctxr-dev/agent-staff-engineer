@@ -355,7 +355,7 @@ if (opsConfig.wiki?.required) {
 // prompt. The choice is recorded in ops.config.json (apply/update only;
 // dry-run reports the intent without writing).
 {
-  const crProvider = opsConfig.workflow?.code_review?.provider;
+  const crProvider = opsConfig.workflow?.code_review?.provider ?? "ctxr-skill-code-review";
   if (crProvider === "ctxr-skill-code-review") {
     const found = locateKitSkill("ctxr-skill-code-review", TARGET);
     if (found) {
