@@ -365,17 +365,41 @@ if (opsConfig.wiki?.required) {
       );
     } else {
       const installHint = opsConfig.workflow?.code_review?.install_hint ?? "npx @ctxr/kit install @ctxr/skill-code-review";
-      const verb = (MODE === "apply" || MODE === "update") ? "falling back to" : "would fall back to";
-      process.stdout.write(
-        `code-review provider: ${CODE_REVIEW_SKILL} not installed; ${verb} ${CODE_REVIEW_INTERNAL}.\n` +
-        `  (install later with: ${installHint})\n`,
-      );
-      // Update in-memory config; the actual write is deferred until after
-      // all preflights pass (workspace member check, etc.) so a later
-      // abort does not leave a partially-applied config on disk.
+      const isInteractive =
+        Boolean(processStdin.isTTY) &&
+        Boolean(processStdout.isTTY) &&
+        !YES &&
+        !(process.env.CI && process.env.CI !== "" && process.env.CI.toLowerCase() !== "false");
+
+      let chosenProvider = CODE_REVIEW_INTERNAL;
+      if (isInteractive) {
+        const { createInterface } = await import("node:readline/promises");
+        const rl = createInterface({ input: processStdin, output: processStdout });
+        process.stdout.write(
+          `\ncode-review provider: ${CODE_REVIEW_SKILL} is not installed.\n` +
+          `  1. Use ${CODE_REVIEW_INTERNAL} (bundled fallback, works immediately)\n` +
+          `  2. Install ${CODE_REVIEW_SKILL} now (${installHint})\n\n`,
+        );
+        const answer = await rl.question("Choice [1]: ");
+        rl.close();
+        chosenProvider = answer.trim() === "2" ? CODE_REVIEW_SKILL : CODE_REVIEW_INTERNAL;
+        if (chosenProvider === CODE_REVIEW_SKILL) {
+          process.stdout.write(`\nPlease install the skill, then re-run install:\n  ${installHint}\n`);
+          process.exit(1);
+        }
+      } else {
+        process.stdout.write(
+          `code-review provider: ${CODE_REVIEW_SKILL} not installed; ` +
+          `${(MODE === "apply" || MODE === "update") ? "falling back to" : "would fall back to"} ${CODE_REVIEW_INTERNAL}.\n` +
+          `  (install later with: ${installHint})\n`,
+        );
+      }
+      // Update in-memory config; the actual write is deferred to just
+      // before the manifest write so a partial install abort never
+      // leaves a half-applied config on disk.
       if (!opsConfig.workflow) opsConfig.workflow = {};
       if (!opsConfig.workflow.code_review) opsConfig.workflow.code_review = {};
-      opsConfig.workflow.code_review.provider = CODE_REVIEW_INTERNAL;
+      opsConfig.workflow.code_review.provider = chosenProvider;
     }
   }
 }
