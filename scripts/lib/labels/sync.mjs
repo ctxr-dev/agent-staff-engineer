@@ -8,8 +8,6 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { ghExec } from "../ghExec.mjs";
 
-// js-yaml is a transitive dependency of gray-matter (a direct dep).
-// Use createRequire to import it from the CJS module.
 const require = createRequire(import.meta.url);
 const { load: yamlLoad } = require("js-yaml");
 
@@ -48,6 +46,8 @@ export async function loadTaxonomy(taxonomyPath) {
 /**
  * Fetch existing labels from a GitHub repo.
  * Returns a Map<name, { color, description }>.
+ * Note: fetches up to 200 labels. Repos with >200 labels may see
+ * false "created" results for labels beyond the limit.
  */
 export async function fetchRepoLabels(owner, repo) {
   const result = await ghExec(["label", "list", "--repo", `${owner}/${repo}`, "--json", "name,color,description", "--limit", "200"], { format: "json" });
