@@ -13,6 +13,8 @@ writes_to_github: yes, via tracker-sync (reopen, comment with report, or create 
 writes_to_filesystem: writes the regression report to paths.reports
 ---
 
+<!-- cache-control:static -->
+
 # regression-handler
 
 Before acting, read the target project's `.claude/ops.config.json`. Refuse to run if missing or invalid.
@@ -88,3 +90,5 @@ Running `regression-handler` twice on the same input produces the same report an
 - `paths.reports` (where the report lands), `paths.templates` (to render the report).
 - `workflow.pr.e2e_required_on` (informs severity: regressions on e2e-gated areas weigh heavier).
 - `compliance.data_classes`, `compliance.regimes` (severity floor).
+
+<!-- cache-control:dynamic -->

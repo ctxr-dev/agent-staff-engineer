@@ -15,6 +15,8 @@ writes_to_github: yes, via tracker-sync for status updates and via tracker-speci
 writes_to_filesystem: yes, code edits per round plus a per-round pr-iteration report under paths.reports (written via @ctxr/skill-llm-wiki, per rules/llm-wiki.md)
 ---
 
+<!-- cache-control:static -->
+
 # pr-iteration
 
 Before acting, read `.claude/ops.config.json` and `rules/pr-iteration.md`. Refuse to run if either is missing. This skill is the orchestration entry point; the rule is the contract; the runbook at `skills/pr-iteration/runbook.md` (co-located in the bundle) is the canonical how-to with GraphQL recipes.
@@ -189,3 +191,5 @@ Per-round artefact structure: see `templates/pr-iteration-report.md`. Minimum fi
 - `scripts/lib/pr-iteration/tick.mjs`: one-shot tick (poll + exit-condition check).
 - `scripts/lib/pr-iteration/reschedule.mjs`: interval computation + wakeup prompt builder.
 - `skills/pr-iteration/runbook.md`: canonical how-to with full GraphQL recipes.
+
+<!-- cache-control:dynamic -->

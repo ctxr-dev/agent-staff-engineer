@@ -13,6 +13,8 @@ writes_to_github: yes, via tracker-sync only (branch push, PR open, reviewer req
 writes_to_filesystem: yes, code edits plus a self-review report under paths.reports
 ---
 
+<!-- cache-control:static -->
+
 # dev-loop
 
 Before acting, read the target project's `.claude/ops.config.json`. Refuse to run if missing or invalid.
@@ -148,3 +150,5 @@ The ctxr-skill-code-review default is the recommended path. Projects opt out via
 - `workflow.code_review.provider`, `workflow.code_review.invocation`, `workflow.code_review.mode`, `workflow.code_review.output_format`, `workflow.code_review.report_dir`, `workflow.code_review.block_on_verdict`, `workflow.code_review.install_hint`.
 - `paths.plans_root`, `paths.reports`, `paths.templates`.
 - `stack.testing` (to select test runners), `stack.language` (to select lint/format tools).
+
+<!-- cache-control:dynamic -->

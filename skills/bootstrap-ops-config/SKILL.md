@@ -11,6 +11,8 @@ writes_to_github: false
 writes_to_filesystem: writes only ops.config.json, .bootstrap-answers.json, and CLAUDE.md in the target (via install.mjs).
 ---
 
+<!-- cache-control:static -->
+
 # bootstrap-ops-config
 
 Before acting, read the target project's `.claude/ops.config.json` **if present**. If it exists and validates against `schemas/ops.config.schema.json`, do not run; tell the user to use `adapt-system` instead.
@@ -88,3 +90,5 @@ Specific keys the interview asks the user about:
 - `stack.language`, `stack.testing`, `stack.platform`
 - `area_keywords` (seeded from the user's choice of area labels; the user can extend here or via `adapt-system` later)
 - `compliance.regimes`, `compliance.data_classes`
+
+<!-- cache-control:dynamic -->

@@ -15,6 +15,8 @@ writes_to_github: yes, via tracker-sync, only on release umbrellas
 writes_to_filesystem: no
 ---
 
+<!-- cache-control:static -->
+
 # release-tracker
 
 Before acting, read the target project's `.claude/ops.config.json`. Refuse to run if missing or invalid.
@@ -107,3 +109,5 @@ Callers must not call `tracker-sync.create_release_umbrella` directly even once 
 - `workflow.release.umbrella_title`.
 - `workflow.phase_term` (for the pretty-printed intent label in the umbrella title).
 - `paths.templates` (to re-render the umbrella body if placeholders are missing).
+
+<!-- cache-control:dynamic -->

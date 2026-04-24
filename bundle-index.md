@@ -118,6 +118,10 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [memory-seeds/commit-style-conventional.md](memory-seeds/commit-style-conventional.md): conventional-commits convention.
 - [memory-seeds/dash-free-writing.md](memory-seeds/dash-free-writing.md): the no-em/en-dash rule as a memory.
 
+### Cache economy (prompt caching)
+
+- [rules/cache-economy.md](rules/cache-economy.md): the static/dynamic partitioning rule for SKILL.md files.
+
 ### Testing discipline
 
 - [memory-seeds/testing-discipline.md](memory-seeds/testing-discipline.md): test categorisation, no mocks at the integration boundary, results-table reporting.
@@ -137,9 +141,10 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [skills/regression-handler/SKILL.md](skills/regression-handler/SKILL.md): bug triage + linked-issue proposal.
 - [skills/release-tracker/SKILL.md](skills/release-tracker/SKILL.md): Release umbrella status computation.
 
-### Rules (13)
+### Rules (14)
 
 - [rules/adaptation.md](rules/adaptation.md): when to invoke adapt-system.
+- [rules/cache-economy.md](rules/cache-economy.md): static/dynamic partitioning of SKILL.md for prompt cache economics.
 - [rules/agent-boot.md](rules/agent-boot.md): session-start checks; scans for pending PR iteration loops and surfaces a resume prompt.
 - [rules/ambiguity-halt.md](rules/ambiguity-halt.md): halt-and-ask when state is weird.
 - [rules/issue-discovery.md](rules/issue-discovery.md): the three-clause intake rule (never guess; 2-4 options plus custom; delegate writes).

@@ -15,6 +15,8 @@ writes_to_github: yes, delegated only. Issue creation routes through `tracker-sy
 writes_to_filesystem: yes, a session-scratch JSON under .development/local/issue-discovery/<session-id>.json (gitignored; managed via scripts/lib/sessionState.mjs)
 ---
 
+<!-- cache-control:static -->
+
 # issue-discovery
 
 Before acting, read the target project's `.claude/ops.config.json`. Refuse to run if missing or invalid; hand the user back to `bootstrap-ops-config`.
@@ -203,3 +205,5 @@ The session scratch file is ephemeral local state, not a durable artefact. Unlik
 - `workflow.issue_discovery.topic_confirmation` (default true; setting false suppresses Q0, but callers are warned the skill is still expected to infer intent from the user's first message rather than guess).
 - `workflow.pr.update_plan_oneliner` (optional; when true, the skill calls `plan-keeper.createPlanStub` after create).
 - `paths.plans_root` (resolved via plan-keeper).
+
+<!-- cache-control:dynamic -->
