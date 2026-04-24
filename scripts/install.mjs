@@ -363,9 +363,10 @@ if (opsConfig.wiki?.required) {
         `code-review provider: ctxr-skill-code-review found at ${portableRef(found, TARGET)}\n`,
       );
     } else {
+      const installHint = opsConfig.workflow.code_review.install_hint ?? "npx @ctxr/kit install @ctxr/skill-code-review";
       process.stdout.write(
         "code-review provider: ctxr-skill-code-review not installed; falling back to internal-template.\n" +
-        "  (install later with: npx @ctxr/kit install @ctxr/skill-code-review)\n" +
+        `  (install later with: ${installHint})\n` +
         "  (switch provider with: /adapt-system \"switch code-review provider to ctxr-skill-code-review\")\n",
       );
       if (!opsConfig.workflow) opsConfig.workflow = {};
