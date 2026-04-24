@@ -7,7 +7,7 @@
 
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -68,7 +68,9 @@ describe("install.mjs code-review probe: skill present", () => {
   });
 
   it("detects the skill and confirms in stdout", () => {
-    const res = runInstall(installed, scratch);
+    // Isolate HOME so user-global skills don't interfere
+    const emptyHome = join(scratch, "empty-home");
+    const res = runInstall(installed, scratch, { HOME: emptyHome, USERPROFILE: emptyHome });
     assert.equal(res.status, 0, `install failed: ${res.stderr || res.stdout}`);
     assert.match(res.stdout, /code-review provider: ctxr-skill-code-review found at/);
   });
@@ -126,9 +128,9 @@ describe("install.mjs code-review probe: provider already internal-template", ()
     );
     // Patch the config to use internal-template
     const cfgPath = join(scratch, ".claude/ops.config.json");
-    const cfg = JSON.parse((await import("node:fs")).readFileSync(cfgPath, "utf8"));
+    const cfg = JSON.parse(await readFile(cfgPath, "utf8"));
     cfg.workflow.code_review.provider = "internal-template";
-    (await import("node:fs")).writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    await writeFile(cfgPath, JSON.stringify(cfg, null, 2));
     await seedWikiSkillStub(scratch);
   });
 

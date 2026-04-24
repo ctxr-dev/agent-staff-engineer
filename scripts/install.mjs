@@ -352,7 +352,8 @@ if (opsConfig.wiki?.required) {
 // Code-review provider probe: if the config requests the external
 // ctxr-skill-code-review skill, verify it is installed. If missing,
 // fall back to "internal-template" so dev-loop never hits a mid-flow
-// prompt. The choice is recorded in ops.config.json.
+// prompt. The choice is recorded in ops.config.json (apply/update only;
+// dry-run reports the intent without writing).
 {
   const crProvider = opsConfig.workflow?.code_review?.provider;
   if (crProvider === "ctxr-skill-code-review") {
@@ -370,7 +371,9 @@ if (opsConfig.wiki?.required) {
       if (!opsConfig.workflow) opsConfig.workflow = {};
       if (!opsConfig.workflow.code_review) opsConfig.workflow.code_review = {};
       opsConfig.workflow.code_review.provider = "internal-template";
-      await atomicWriteJson(opsConfigPath, opsConfig);
+      if (MODE !== "dry-run") {
+        await atomicWriteJson(opsConfigPath, opsConfig);
+      }
     }
   }
 }
