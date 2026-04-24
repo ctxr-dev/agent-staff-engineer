@@ -15,8 +15,13 @@ import { fileURLToPath } from "node:url";
 import { seedWikiSkillStub } from "./fixtures/wikiSkillStub.mjs";
 import { readJsonOrNull } from "../scripts/lib/fsx.mjs";
 import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL } from "../scripts/lib/constants.mjs";
+import { deriveScopedSlug } from "../scripts/lib/agentName.mjs";
 
 const BUNDLE_SRC = dirname(dirname(fileURLToPath(import.meta.url)));
+const MANIFEST_SLUG = deriveScopedSlug(
+  JSON.parse(await readFile(join(BUNDLE_SRC, "package.json"), "utf8")).name,
+);
+const MANIFEST_FILE = `.${MANIFEST_SLUG}-install-manifest.json`;
 
 async function copyBundle(dest) {
   await cp(BUNDLE_SRC, dest, {
@@ -29,7 +34,7 @@ async function copyBundle(dest) {
     },
   });
   await rm(join(dest, ".install-manifest.json"), { force: true });
-  await rm(join(dest, ".ctxr-agent-staff-engineer-install-manifest.json"), { force: true });
+  await rm(join(dest, MANIFEST_FILE), { force: true });
   await rm(join(dest, ".bootstrap-answers.json"), { force: true });
   await symlink(join(BUNDLE_SRC, "node_modules"), join(dest, "node_modules"));
 }

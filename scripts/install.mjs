@@ -367,8 +367,7 @@ if (opsConfig.wiki?.required) {
       const installHint = opsConfig.workflow?.code_review?.install_hint ?? "npx @ctxr/kit install @ctxr/skill-code-review";
       process.stdout.write(
         `code-review provider: ${CODE_REVIEW_SKILL} not installed; falling back to ${CODE_REVIEW_INTERNAL}.\n` +
-        `  (install later with: ${installHint})\n` +
-        `  (switch provider with: node scripts/adapt.mjs --target . --intent "switch code-review provider to ${CODE_REVIEW_SKILL}")\n`,
+        `  (install later with: ${installHint})\n`,
       );
       // Update in-memory config; the actual write is deferred until after
       // all preflights pass (workspace member check, etc.) so a later
