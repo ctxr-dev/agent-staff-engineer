@@ -3,7 +3,7 @@
 //   A. ctxr-skill-code-review present → detected, config unchanged.
 //   B. ctxr-skill-code-review missing → falls back to internal-template,
 //      config updated, stdout notes the fallback.
-//   C. provider already "internal-template" → no probe, no fallback.
+//   C. provider already CODE_REVIEW_INTERNAL → no probe, no fallback.
 
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { seedWikiSkillStub } from "./fixtures/wikiSkillStub.mjs";
 import { readJsonOrNull } from "../scripts/lib/fsx.mjs";
+import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL } from "../scripts/lib/constants.mjs";
 
 const BUNDLE_SRC = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -42,7 +43,7 @@ function runInstall(installedBundle, target, extraEnv = {}) {
 }
 
 async function seedCodeReviewStub(target) {
-  const dir = join(target, ".claude", "skills", "ctxr-skill-code-review");
+  const dir = join(target, ".claude", "skills", CODE_REVIEW_SKILL);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "SKILL.md"), "---\nname: code-review-stub\n---\n# Stub\n");
 }
@@ -78,7 +79,7 @@ describe("install.mjs code-review probe: skill present", () => {
 
   it("leaves ops.config.json provider unchanged", async () => {
     const cfg = await readJsonOrNull(join(scratch, ".claude/ops.config.json"));
-    assert.equal(cfg.workflow.code_review.provider, "ctxr-skill-code-review");
+    assert.equal(cfg.workflow.code_review.provider, CODE_REVIEW_SKILL);
   });
 });
 
@@ -113,7 +114,7 @@ describe("install.mjs code-review probe: skill missing, falls back", () => {
 
   it("updates ops.config.json provider to internal-template", async () => {
     const cfg = await readJsonOrNull(join(scratch, ".claude/ops.config.json"));
-    assert.equal(cfg.workflow.code_review.provider, "internal-template");
+    assert.equal(cfg.workflow.code_review.provider, CODE_REVIEW_INTERNAL);
   });
 });
 
@@ -132,7 +133,7 @@ describe("install.mjs code-review probe: provider already internal-template", ()
     // Patch the config to use internal-template
     const cfgPath = join(scratch, ".claude/ops.config.json");
     const cfg = JSON.parse(await readFile(cfgPath, "utf8"));
-    cfg.workflow.code_review.provider = "internal-template";
+    cfg.workflow.code_review.provider = CODE_REVIEW_INTERNAL;
     await writeFile(cfgPath, JSON.stringify(cfg, null, 2));
     await seedWikiSkillStub(scratch);
   });

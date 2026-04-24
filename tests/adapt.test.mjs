@@ -7,6 +7,7 @@ import {
   buildNonConfigPlan,
   diffArray,
 } from "../scripts/adapt.mjs";
+import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL } from "../scripts/lib/constants.mjs";
 
 describe("adapt.classify", () => {
   it("detects explicit compliance regimes at word boundaries", () => {
@@ -41,10 +42,10 @@ describe("adapt.classify", () => {
 
   it("detects code-review switch intents", () => {
     assert.ok(classify("switch code-review provider to internal-template").some(
-      (s) => s.kind === "code-review:switch" && s.value === "internal-template",
+      (s) => s.kind === "code-review:switch" && s.value === CODE_REVIEW_INTERNAL,
     ));
     assert.ok(classify("use external code review").some(
-      (s) => s.kind === "code-review:switch" && s.value === "ctxr-skill-code-review",
+      (s) => s.kind === "code-review:switch" && s.value === CODE_REVIEW_SKILL,
     ));
     assert.ok(classify("disable code review").some(
       (s) => s.kind === "code-review:switch" && s.value === "none",
@@ -105,12 +106,12 @@ describe("adapt.applySignalToConfig", () => {
   });
 
   it("code-review:switch updates workflow.code_review.provider", () => {
-    const cfg = { workflow: { code_review: { provider: "ctxr-skill-code-review" } } };
+    const cfg = { workflow: { code_review: { provider: CODE_REVIEW_SKILL } } };
     const log = [];
-    applySignalToConfig(cfg, { kind: "code-review:switch", value: "internal-template" }, log);
-    assert.equal(cfg.workflow.code_review.provider, "internal-template");
+    applySignalToConfig(cfg, { kind: "code-review:switch", value: CODE_REVIEW_INTERNAL }, log);
+    assert.equal(cfg.workflow.code_review.provider, CODE_REVIEW_INTERNAL);
     assert.equal(log.length, 1);
-    assert.match(log[0], /internal-template/);
+    assert.match(log[0], new RegExp(CODE_REVIEW_INTERNAL));
   });
 
   it("cadence:set flips phase_term to 'track' for continuous", () => {

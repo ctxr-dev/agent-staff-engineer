@@ -30,6 +30,7 @@ import {
 } from "./lib/fsx.mjs";
 import { ghExec, ghAuthReady } from "./lib/ghExec.mjs";
 import { normaliseMemberPath } from "./lib/trackers/dispatcher.mjs";
+import { CODE_REVIEW_SKILL } from "./lib/constants.mjs";
 import { validate } from "./lib/schema.mjs";
 import { diffLines } from "./lib/diff.mjs";
 
@@ -1368,7 +1369,7 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
         umbrella_title: "{intent_label_pretty} Release",
       },
       code_review: {
-        provider: "ctxr-skill-code-review",
+        provider: CODE_REVIEW_SKILL,
         provider_url: "https://github.com/ctxr-dev/skill-code-review",
         invocation: "/skill-code-review",
         mode: "diff",

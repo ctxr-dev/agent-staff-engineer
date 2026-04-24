@@ -22,6 +22,7 @@ import { parseArgv, boolFlag, requireStringFlag } from "./lib/argv.mjs";
 import { atomicWriteJson, readJsonOrNull } from "./lib/fsx.mjs";
 import { validate } from "./lib/schema.mjs";
 import { diffLines } from "./lib/diff.mjs";
+import { CODE_REVIEW_SKILL, CODE_REVIEW_PROVIDERS } from "./lib/constants.mjs";
 
 // Guard: when tests import this module to exercise classify/applySignalToConfig,
 // the CLI body must not run.
@@ -226,8 +227,7 @@ export function classify(intent) {
   if (hasWord("consumer")) sigs.push({ kind: "audience:add", value: "consumer" });
 
   // Code-review provider switch.
-  const crTargets = ["ctxr-skill-code-review", "internal-template", "none"];
-  for (const target of crTargets) {
+  for (const target of CODE_REVIEW_PROVIDERS) {
     if (
       hasPhrase(`switch code-review provider to ${target}`) ||
       hasPhrase(`use ${target} for code review`) ||
@@ -237,7 +237,7 @@ export function classify(intent) {
     }
   }
   if (hasPhrase("use external code review") || hasPhrase("switch to external code review")) {
-    sigs.push({ kind: "code-review:switch", value: "ctxr-skill-code-review" });
+    sigs.push({ kind: "code-review:switch", value: CODE_REVIEW_SKILL });
   }
   if (hasPhrase("use internal code review") || hasPhrase("use internal template")) {
     sigs.push({ kind: "code-review:switch", value: "internal-template" });

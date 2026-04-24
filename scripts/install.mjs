@@ -52,6 +52,7 @@ import {
 import { validate } from "./lib/schema.mjs";
 import { mergeWrapper } from "./lib/wrapper.mjs";
 import { ensureGitignore } from "./lib/gitignore.mjs";
+import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL } from "./lib/constants.mjs";
 import { injectManagedBlock, removeManagedBlock } from "./lib/inject.mjs";
 import { getAgentPrefix, prefixed } from "./lib/agentName.mjs";
 import { portableRef, resolvePortable } from "./lib/bundleRef.mjs";
@@ -355,23 +356,23 @@ if (opsConfig.wiki?.required) {
 // prompt. The choice is recorded in ops.config.json (apply/update only;
 // dry-run reports the intent without writing).
 {
-  const crProvider = opsConfig.workflow?.code_review?.provider ?? "ctxr-skill-code-review";
-  if (crProvider === "ctxr-skill-code-review") {
-    const found = locateKitSkill("ctxr-skill-code-review", TARGET);
+  const crProvider = opsConfig.workflow?.code_review?.provider ?? CODE_REVIEW_SKILL;
+  if (crProvider === CODE_REVIEW_SKILL) {
+    const found = locateKitSkill(CODE_REVIEW_SKILL, TARGET);
     if (found) {
       process.stdout.write(
-        `code-review provider: ctxr-skill-code-review found at ${portableRef(found, TARGET)}\n`,
+        `code-review provider: ${CODE_REVIEW_SKILL} found at ${portableRef(found, TARGET)}\n`,
       );
     } else {
-      const installHint = opsConfig.workflow.code_review.install_hint ?? "npx @ctxr/kit install @ctxr/skill-code-review";
+      const installHint = opsConfig.workflow?.code_review?.install_hint ?? "npx @ctxr/kit install @ctxr/skill-code-review";
       process.stdout.write(
-        "code-review provider: ctxr-skill-code-review not installed; falling back to internal-template.\n" +
+        `code-review provider: ${CODE_REVIEW_SKILL} not installed; falling back to ${CODE_REVIEW_INTERNAL}.\n` +
         `  (install later with: ${installHint})\n` +
-        "  (switch provider with: /adapt-system \"switch code-review provider to ctxr-skill-code-review\")\n",
+        `  (switch provider with: /adapt-system "switch code-review provider to ${CODE_REVIEW_SKILL}")\n`,
       );
       if (!opsConfig.workflow) opsConfig.workflow = {};
       if (!opsConfig.workflow.code_review) opsConfig.workflow.code_review = {};
-      opsConfig.workflow.code_review.provider = "internal-template";
+      opsConfig.workflow.code_review.provider = CODE_REVIEW_INTERNAL;
       if (MODE === "apply" || MODE === "update") {
         await atomicWriteJson(opsConfigPath, opsConfig);
       }
