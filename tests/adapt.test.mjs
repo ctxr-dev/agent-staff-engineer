@@ -7,6 +7,7 @@ import {
   buildNonConfigPlan,
   diffArray,
 } from "../scripts/adapt.mjs";
+import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL, CODE_REVIEW_NONE } from "../scripts/lib/constants.mjs";
 
 describe("adapt.classify", () => {
   it("detects explicit compliance regimes at word boundaries", () => {
@@ -37,6 +38,18 @@ describe("adapt.classify", () => {
   it("detects explicit cadence phrases", () => {
     const sigs = classify("we're moving to continuous delivery");
     assert.ok(sigs.some((s) => s.kind === "cadence:set" && s.value === "continuous"));
+  });
+
+  it("detects code-review switch intents", () => {
+    assert.ok(classify("switch code-review provider to internal-template").some(
+      (s) => s.kind === "code-review:switch" && s.value === CODE_REVIEW_INTERNAL,
+    ));
+    assert.ok(classify("use external code review").some(
+      (s) => s.kind === "code-review:switch" && s.value === CODE_REVIEW_SKILL,
+    ));
+    assert.ok(classify("disable code review").some(
+      (s) => s.kind === "code-review:switch" && s.value === CODE_REVIEW_NONE,
+    ));
   });
 
   it("detects drop intent separately from add", () => {
@@ -90,6 +103,15 @@ describe("adapt.applySignalToConfig", () => {
     applySignalToConfig(cfg, { kind: "stack:add:language", value: "swift" }, log);
     assert.deepEqual(cfg.stack.language, ["swift"]);
     assert.equal(log.length, 1);
+  });
+
+  it("code-review:switch updates workflow.code_review.provider", () => {
+    const cfg = { workflow: { code_review: { provider: CODE_REVIEW_SKILL } } };
+    const log = [];
+    applySignalToConfig(cfg, { kind: "code-review:switch", value: CODE_REVIEW_INTERNAL }, log);
+    assert.equal(cfg.workflow.code_review.provider, CODE_REVIEW_INTERNAL);
+    assert.equal(log.length, 1);
+    assert.match(log[0], new RegExp(CODE_REVIEW_INTERNAL));
   });
 
   it("cadence:set flips phase_term to 'track' for continuous", () => {

@@ -22,6 +22,7 @@ import { parseArgv, boolFlag, requireStringFlag } from "./lib/argv.mjs";
 import { atomicWriteJson, readJsonOrNull } from "./lib/fsx.mjs";
 import { validate } from "./lib/schema.mjs";
 import { diffLines } from "./lib/diff.mjs";
+import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL, CODE_REVIEW_NONE, CODE_REVIEW_PROVIDERS } from "./lib/constants.mjs";
 
 // Guard: when tests import this module to exercise classify/applySignalToConfig,
 // the CLI body must not run.
@@ -225,6 +226,27 @@ export function classify(intent) {
   if (hasWord("b2b") || hasWord("enterprise")) sigs.push({ kind: "audience:add", value: "enterprise" });
   if (hasWord("consumer")) sigs.push({ kind: "audience:add", value: "consumer" });
 
+  // Code-review provider switch. Only explicit command phrases to avoid
+  // false positives on prose like "code review none of this".
+  for (const target of CODE_REVIEW_PROVIDERS) {
+    if (
+      hasPhrase(`switch code-review provider to ${target}`) ||
+      hasPhrase(`use ${target} for code review`) ||
+      hasPhrase(`set code-review provider ${target}`)
+    ) {
+      sigs.push({ kind: "code-review:switch", value: target });
+    }
+  }
+  if (hasPhrase("use external code review") || hasPhrase("switch to external code review")) {
+    sigs.push({ kind: "code-review:switch", value: CODE_REVIEW_SKILL });
+  }
+  if (hasPhrase("use internal code review") || hasPhrase("use internal template")) {
+    sigs.push({ kind: "code-review:switch", value: CODE_REVIEW_INTERNAL });
+  }
+  if (hasPhrase("disable code review") || hasPhrase("skip code review") || hasPhrase("no code review")) {
+    sigs.push({ kind: "code-review:switch", value: CODE_REVIEW_NONE });
+  }
+
   // Cadence. Only explicit phrases — a stray `\bv\d+\b` match in unrelated
   // prose ("we upgraded to macOS v14") would otherwise silently mutate the
   // config on --apply.
@@ -312,6 +334,18 @@ export function applySignalToConfig(cfg, signal, changeLog) {
       if (!cfg.labels.area.includes(`audience-${signal.value}`)) {
         cfg.labels.area.push(`audience-${signal.value}`);
         changeLog.push(`add audience label 'area/audience-${signal.value}'`);
+      }
+      return;
+    }
+    case signal.kind === "code-review:switch": {
+      cfg.workflow = cfg.workflow ?? {};
+      cfg.workflow.code_review = cfg.workflow.code_review ?? {};
+      const prev = cfg.workflow.code_review.provider;
+      cfg.workflow.code_review.provider = signal.value;
+      if (prev !== signal.value) {
+        changeLog.push(
+          `switch code-review provider: ${prev ?? "(unset)"} -> ${signal.value}`
+        );
       }
       return;
     }

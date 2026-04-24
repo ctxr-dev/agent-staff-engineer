@@ -52,6 +52,7 @@ import {
 import { validate } from "./lib/schema.mjs";
 import { mergeWrapper } from "./lib/wrapper.mjs";
 import { ensureGitignore } from "./lib/gitignore.mjs";
+import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL } from "./lib/constants.mjs";
 import { injectManagedBlock, removeManagedBlock } from "./lib/inject.mjs";
 import { getAgentPrefix, prefixed } from "./lib/agentName.mjs";
 import { portableRef, resolvePortable } from "./lib/bundleRef.mjs";
@@ -349,6 +350,60 @@ if (opsConfig.wiki?.required) {
   process.stdout.write(`wiki provider: ${provider} found at ${portableRef(found, TARGET)}\n`);
 }
 
+// Code-review provider probe: if the config requests the external
+// ctxr-skill-code-review skill, verify it is installed. If missing,
+// fall back to "internal-template" so dev-loop never hits a mid-flow
+// prompt. The choice is recorded in ops.config.json (apply/update only;
+// dry-run reports the intent without writing).
+{
+  const crProvider = opsConfig.workflow?.code_review?.provider ?? CODE_REVIEW_SKILL;
+  if (crProvider === CODE_REVIEW_SKILL) {
+    const found = locateKitSkill(CODE_REVIEW_SKILL, TARGET);
+    if (found) {
+      process.stdout.write(
+        `code-review provider: ${CODE_REVIEW_SKILL} found at ${portableRef(found, TARGET)}\n`,
+      );
+    } else {
+      const installHint = opsConfig.workflow?.code_review?.install_hint ?? "npx @ctxr/kit install @ctxr/skill-code-review";
+      const isInteractive =
+        Boolean(processStdin.isTTY) &&
+        Boolean(processStdout.isTTY) &&
+        !YES &&
+        !(process.env.CI && process.env.CI !== "" && process.env.CI.toLowerCase() !== "false");
+
+      let chosenProvider = CODE_REVIEW_INTERNAL;
+      if (isInteractive) {
+        const { createInterface } = await import("node:readline/promises");
+        const rl = createInterface({ input: processStdin, output: processStdout });
+        process.stdout.write(
+          `\ncode-review provider: ${CODE_REVIEW_SKILL} is not installed.\n` +
+          `  1. Use ${CODE_REVIEW_INTERNAL} (bundled fallback, works immediately)\n` +
+          `  2. Install ${CODE_REVIEW_SKILL} now (${installHint})\n\n`,
+        );
+        const answer = await rl.question("Choice [1]: ");
+        rl.close();
+        chosenProvider = answer.trim() === "2" ? CODE_REVIEW_SKILL : CODE_REVIEW_INTERNAL;
+        if (chosenProvider === CODE_REVIEW_SKILL) {
+          process.stdout.write(`\nPlease install the skill, then re-run install:\n  ${installHint}\n`);
+          process.exit(1);
+        }
+      } else {
+        process.stdout.write(
+          `code-review provider: ${CODE_REVIEW_SKILL} not installed; ` +
+          `${(MODE === "apply" || MODE === "update") ? "falling back to" : "would fall back to"} ${CODE_REVIEW_INTERNAL}.\n` +
+          `  (install later with: ${installHint})\n`,
+        );
+      }
+      // Update in-memory config; the actual write is deferred to just
+      // before the manifest write so a partial install abort never
+      // leaves a half-applied config on disk.
+      if (!opsConfig.workflow) opsConfig.workflow = {};
+      if (!opsConfig.workflow.code_review) opsConfig.workflow.code_review = {};
+      opsConfig.workflow.code_review.provider = chosenProvider;
+    }
+  }
+}
+
 // Workspace member preflight: when the config declares multi-repo
 // workspace members, every declared path MUST exist on disk before
 // install proceeds. A missing member path almost always means the
@@ -576,6 +631,7 @@ if (Array.isArray(opsConfig.workspace?.members) && opsConfig.workspace.members.l
     process.exit(1);
   }
 }
+
 
 /**
  * Decide interactive vs fail-fast based on TTY state and --yes, then
@@ -916,6 +972,20 @@ for (const w of writes) {
 }
 
 // Manifest.
+// Deferred config write: if the code-review probe changed the provider
+// in memory, persist it now — after all preflights, wrapper writes, and
+// memory-seed installs succeeded. Writing here (just before the manifest)
+// ensures a partial install abort never leaves a half-applied config.
+if (
+  (MODE === "apply" || MODE === "update") &&
+  opsConfig.workflow?.code_review?.provider === CODE_REVIEW_INTERNAL
+) {
+  const onDisk = await readJsonOrNull(opsConfigPath);
+  if (onDisk?.workflow?.code_review?.provider !== CODE_REVIEW_INTERNAL) {
+    await atomicWriteJson(opsConfigPath, opsConfig);
+  }
+}
+
 const manifest = {
   version: "0.1.0",
   bundle_root: BUNDLE_REF,
