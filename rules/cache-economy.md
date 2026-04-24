@@ -9,7 +9,7 @@ scope: every SKILL.md in the bundle and in installed target projects
 
 ## The rule
 
-Every SKILL.md with more than 40 non-blank lines of body content MUST contain two HTML comment markers that partition the body into a static block and a dynamic block:
+Every SKILL.md with more than 40 non-blank lines of body content MUST contain exactly one `<!-- cache-control:static -->` marker and exactly one `<!-- cache-control:dynamic -->` marker, with static appearing before dynamic, partitioning the body into a static block and a dynamic block:
 
 ```markdown
 ---
