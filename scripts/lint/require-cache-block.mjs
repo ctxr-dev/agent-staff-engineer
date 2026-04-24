@@ -1,17 +1,18 @@
 // lint/require-cache-block.mjs
 // Enforces that every SKILL.md with more than 40 non-blank body lines
-// (after frontmatter) contains <!-- cache-control:static --> and
-// <!-- cache-control:dynamic --> markers in the body.
+// (after frontmatter) contains exactly one <!-- cache-control:static -->
+// marker followed by exactly one <!-- cache-control:dynamic --> marker.
 //
 // Usage: node scripts/lint/require-cache-block.mjs
 //   Exit 0 on pass, 1 on failure.
 
 import { readFile, readdir } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
 
-const BUNDLE = join(fileURLToPath(import.meta.url), "..", "..", "..");
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const BUNDLE = join(__dirname, "..", "..");
 const SKILLS_DIR = join(BUNDLE, "skills");
 const STATIC_MARKER = "<!-- cache-control:static -->";
 const DYNAMIC_MARKER = "<!-- cache-control:dynamic -->";
@@ -33,7 +34,7 @@ export async function lintCacheBlocks() {
     try {
       content = await readFile(skillMd, "utf8");
     } catch {
-      results.push({ path: relPath, status: "warn", reason: "SKILL.md missing or unreadable" });
+      results.push({ path: relPath, status: "fail", missing: ["SKILL.md file itself (missing or unreadable)"] });
       continue;
     }
 
@@ -46,16 +47,27 @@ export async function lintCacheBlocks() {
       continue;
     }
 
-    const hasStatic = body.includes(STATIC_MARKER);
-    const hasDynamic = body.includes(DYNAMIC_MARKER);
+    const staticCount = (body.match(new RegExp(STATIC_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length;
+    const dynamicCount = (body.match(new RegExp(DYNAMIC_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length;
 
-    if (hasStatic && hasDynamic) {
+    const problems = [];
+    if (staticCount === 0) problems.push(STATIC_MARKER);
+    if (dynamicCount === 0) problems.push(DYNAMIC_MARKER);
+    if (staticCount > 1) problems.push(`${STATIC_MARKER} appears ${staticCount} times (expected 1)`);
+    if (dynamicCount > 1) problems.push(`${DYNAMIC_MARKER} appears ${dynamicCount} times (expected 1)`);
+
+    if (staticCount === 1 && dynamicCount === 1) {
+      const staticIdx = body.indexOf(STATIC_MARKER);
+      const dynamicIdx = body.indexOf(DYNAMIC_MARKER);
+      if (staticIdx > dynamicIdx) {
+        problems.push("static marker must appear before dynamic marker");
+      }
+    }
+
+    if (problems.length === 0) {
       results.push({ path: relPath, status: "pass" });
     } else {
-      const missing = [];
-      if (!hasStatic) missing.push(STATIC_MARKER);
-      if (!hasDynamic) missing.push(DYNAMIC_MARKER);
-      results.push({ path: relPath, status: "fail", missing });
+      results.push({ path: relPath, status: "fail", missing: problems });
     }
   }
 
@@ -70,10 +82,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.stdout.write(`  PASS  ${r.path}\n`);
     } else if (r.status === "exempt") {
       process.stdout.write(`  SKIP  ${r.path} (${r.reason})\n`);
-    } else if (r.status === "warn") {
-      process.stderr.write(`  WARN  ${r.path} (${r.reason})\n`);
     } else {
-      process.stderr.write(`  FAIL  ${r.path} — missing: ${r.missing.join(", ")}\n`);
+      process.stderr.write(`  FAIL  ${r.path} — ${r.missing.join("; ")}\n`);
     }
   }
   process.exit(ok ? 0 : 1);

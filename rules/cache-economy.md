@@ -26,7 +26,7 @@ description: ...
 <!-- cache-control:dynamic -->
 ```
 
-The **static block** (between `<!-- cache-control:static -->` and `<!-- cache-control:dynamic -->`) contains everything that does not change between invocations: skill identity, purpose, state machine diagrams, invariants ("never merges"), tool-schema references, rule cross-links, project contract keys, and failure mode documentation. This block is wrapped with `cache_control: { "type": "ephemeral" }` at the API level so it stays in Anthropic's prompt cache for the 5-minute TTL.
+The **static block** (between `<!-- cache-control:static -->` and `<!-- cache-control:dynamic -->`) contains everything that does not change between invocations: skill identity, purpose, state machine diagrams, invariants ("never merges"), tool-schema references, rule cross-links, project contract keys, and failure mode documentation. A future skill-loader implementation (P4.3) will wrap this block with `cache_control: { "type": "ephemeral" }` at the API level so it stays in Anthropic's prompt cache for the 5-minute TTL. The markers are the convention; the runtime integration is tracked separately.
 
 The **dynamic block** (after `<!-- cache-control:dynamic -->`) is where the skill loader appends per-invocation context: the current issue body, the current diff, runtime parameters, and any session-specific state. This content is never cached.
 
