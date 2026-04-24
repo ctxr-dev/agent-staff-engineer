@@ -7,7 +7,7 @@
 //   Exit 0 on pass, 1 on failure.
 
 import { readFile, readdir } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
 
@@ -34,7 +34,7 @@ export async function lintCacheBlocks() {
     try {
       content = await readFile(skillMd, "utf8");
     } catch {
-      results.push({ path: relPath, status: "fail", missing: ["SKILL.md file itself (missing or unreadable)"] });
+      results.push({ path: relPath, status: "fail", problems: ["SKILL.md file itself (missing or unreadable)"] });
       continue;
     }
 
@@ -47,12 +47,14 @@ export async function lintCacheBlocks() {
       continue;
     }
 
-    const staticCount = (body.match(new RegExp(STATIC_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length;
-    const dynamicCount = (body.match(new RegExp(DYNAMIC_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length;
+    const escStatic = STATIC_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escDynamic = DYNAMIC_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const staticCount = (body.match(new RegExp(escStatic, "g")) || []).length;
+    const dynamicCount = (body.match(new RegExp(escDynamic, "g")) || []).length;
 
     const problems = [];
-    if (staticCount === 0) problems.push(STATIC_MARKER);
-    if (dynamicCount === 0) problems.push(DYNAMIC_MARKER);
+    if (staticCount === 0) problems.push(`missing ${STATIC_MARKER}`);
+    if (dynamicCount === 0) problems.push(`missing ${DYNAMIC_MARKER}`);
     if (staticCount > 1) problems.push(`${STATIC_MARKER} appears ${staticCount} times (expected 1)`);
     if (dynamicCount > 1) problems.push(`${DYNAMIC_MARKER} appears ${dynamicCount} times (expected 1)`);
 
@@ -67,7 +69,7 @@ export async function lintCacheBlocks() {
     if (problems.length === 0) {
       results.push({ path: relPath, status: "pass" });
     } else {
-      results.push({ path: relPath, status: "fail", missing: problems });
+      results.push({ path: relPath, status: "fail", problems });
     }
   }
 
@@ -75,7 +77,9 @@ export async function lintCacheBlocks() {
 }
 
 // CLI entry point
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+const thisFile = resolve(fileURLToPath(import.meta.url));
+const invoked = resolve(process.argv[1] ?? "");
+if (thisFile === invoked) {
   const { ok, results } = await lintCacheBlocks();
   for (const r of results) {
     if (r.status === "pass") {
@@ -83,7 +87,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     } else if (r.status === "exempt") {
       process.stdout.write(`  SKIP  ${r.path} (${r.reason})\n`);
     } else {
-      process.stderr.write(`  FAIL  ${r.path} — ${r.missing.join("; ")}\n`);
+      process.stderr.write(`  FAIL  ${r.path} — ${r.problems.join("; ")}\n`);
     }
   }
   process.exit(ok ? 0 : 1);

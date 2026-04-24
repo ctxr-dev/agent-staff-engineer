@@ -7,23 +7,23 @@ describe("lint: require-cache-block", () => {
     const { ok, results } = await lintCacheBlocks();
     const failures = results.filter((r) => r.status === "fail");
     if (failures.length > 0) {
-      const msg = failures.map((f) => `${f.path}: missing ${f.missing.join(", ")}`).join("\n");
+      const msg = failures.map((f) => `${f.path}: ${f.problems.join("; ")}`).join("\n");
       assert.fail(`Cache-control lint failed:\n${msg}`);
     }
     assert.ok(ok);
   });
 
-  it("no warnings (every skill directory has a readable SKILL.md)", async () => {
+  it("at least one SKILL.md is above the threshold and checked", async () => {
     const { results } = await lintCacheBlocks();
-    const warnings = results.filter((r) => r.status === "warn");
-    assert.equal(warnings.length, 0, `unexpected warnings: ${JSON.stringify(warnings)}`);
+    const checked = results.filter((r) => r.status === "pass" || r.status === "fail");
+    assert.ok(checked.length > 0, "expected at least one non-exempt SKILL.md");
   });
 
-  it("checked files have both static and dynamic markers", async () => {
+  it("checked files have both static and dynamic markers in correct order", async () => {
     const { results } = await lintCacheBlocks();
     const checked = results.filter((r) => r.status === "pass" || r.status === "fail");
     for (const r of checked) {
-      assert.equal(r.status, "pass", `${r.path} should pass`);
+      assert.equal(r.status, "pass", `${r.path} should pass: ${r.problems?.join("; ")}`);
     }
   });
 });
