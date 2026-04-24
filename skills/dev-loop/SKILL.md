@@ -96,13 +96,13 @@ Hard rule baked in: **the dev-loop never merges a PR and never sets a dev issue 
 
 Before pushing or opening the PR, the self-review step runs per `workflow.code_review`:
 
-1. Look up `workflow.code_review.provider`. Trust the recorded value (validated at install time by `scripts/install.mjs`). Never prompt to switch provider mid-flow.
-2. If the configured provider is `ctxr-skill-code-review` and the skill is not installed at runtime (e.g. manual config edit), halt with a clear error naming the remediation options: (a) run `/adapt-system "switch code-review provider"` to pick a different provider, or (b) install the skill via `npx @ctxr/kit install @ctxr/skill-code-review`.
+1. Look up `workflow.code_review.provider`. Trust the recorded value (detected at install time by `scripts/install.mjs`). Never prompt to switch provider mid-flow.
+2. If the configured provider is `ctxr-skill-code-review` and the skill is not installed at runtime (e.g. manual config edit), halt with a clear error naming the remediation options: (a) run `/adapt-system "switch code-review provider to internal-template"` to pick a different provider, or (b) install the skill via `npx @ctxr/kit install @ctxr/skill-code-review`.
 3. Invoke the provider with `workflow.code_review.invocation`, `mode`, `output_format`, scope = diff-since-default-branch.
 4. Write the artefact to `workflow.code_review.report_dir` (which resolves under `.development/shared/reports/` by default). Per `rules/llm-wiki.md`, this write goes through `@ctxr/skill-llm-wiki` in a **nested, scalable layout**: never as a flat date-prefixed sibling, and never with a hand-rolled versioned filename (no `.v1.md`, `-v2.md`, or any user-visible `.vN` scheme; history lives in the skill's private git). Reports are a dated topic: the wiki must be built in hosted mode with `dynamic_subdirs.template: "{yyyy}/{mm}/{dd}"` so leaves land at `.../reports/{yyyy}/{mm}/{dd}/<slug>.md`. Consult the skill's SKILL.md for the exact leaf path and frontmatter shape, and invoke its validate/fix operation after the write so the wiki's index picks up the new leaf. If the current reports wiki still has flat date-prefixed siblings, run `skill-llm-wiki fix` or `rebuild` to migrate the layout before writing.
 5. Parse the verdict; if in `workflow.code_review.block_on_verdict`, halt with the verdict and reviewer summary.
 
-The ctxr-skill-code-review default is the recommended path. Projects opt out via `workflow.code_review.provider = "internal-template"` (falls back to [../../templates/code-review-report.md](../../templates/code-review-report.md)) or `"none"` when `workflow.pr.self_review_required` is false. Provider switching after install: `/adapt-system "switch code-review provider"`.
+The ctxr-skill-code-review default is the recommended path. Projects opt out via `workflow.code_review.provider = "internal-template"` (falls back to [../../templates/code-review-report.md](../../templates/code-review-report.md)) or `"none"` when `workflow.pr.self_review_required` is false. Provider switching after install: `/adapt-system "switch code-review provider to <target>"` (valid targets: `ctxr-skill-code-review`, `internal-template`, `none`).
 
 ## Commit policy
 
@@ -123,7 +123,7 @@ The ctxr-skill-code-review default is the recommended path. Projects opt out via
 ## Failure modes
 
 - **Tests fail**: halt at the failing stage; do not push.
-- **Code-review provider configured but not installed**: halt; surface error with remediation (`/adapt-system "switch code-review provider"` or install command).
+- **Code-review provider configured but not installed**: halt; surface error with remediation (`/adapt-system "switch code-review provider to internal-template"` or install command).
 - **Code-review verdict in `block_on_verdict`**: halt with the verdict and reasons.
 - **PR template missing required sections**: halt and ask the user to fill them.
 - **gh API failure during open_pr**: rollback any partial state (local commits stay, remote ref remains), halt and surface.

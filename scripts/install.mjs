@@ -366,12 +366,12 @@ if (opsConfig.wiki?.required) {
       process.stdout.write(
         "code-review provider: ctxr-skill-code-review not installed; falling back to internal-template.\n" +
         "  (install later with: npx @ctxr/kit install @ctxr/skill-code-review)\n" +
-        "  (switch provider with: /adapt-system \"switch code-review provider\")\n",
+        "  (switch provider with: /adapt-system \"switch code-review provider to ctxr-skill-code-review\")\n",
       );
       if (!opsConfig.workflow) opsConfig.workflow = {};
       if (!opsConfig.workflow.code_review) opsConfig.workflow.code_review = {};
       opsConfig.workflow.code_review.provider = "internal-template";
-      if (MODE !== "dry-run") {
+      if (MODE === "apply" || MODE === "update") {
         await atomicWriteJson(opsConfigPath, opsConfig);
       }
     }
