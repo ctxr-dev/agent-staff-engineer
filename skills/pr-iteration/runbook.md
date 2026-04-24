@@ -342,4 +342,4 @@ Option 1: the skill writes the final report, deletes the state file, and stops. 
 
 Option 2: the skill reschedules a wakeup tick and re-checks on the next wake.
 
-**Safety cap and cancel** work identically to the team path: `.stopped` sidecar for user cancel, `.paused` sidecar after `max_consecutive_wakes`. The solo-ready path increments `consecutiveWakes` on every tick (including ticks where the user defers merge), so the cap fires even if CI stays green indefinitely.
+**Safety cap and cancel** work identically to the team path: `.stopped` sidecar for user cancel, `.paused` sidecar after `workflow.external_review.autonomous.max_consecutive_wakes` (default 96). The solo-ready path increments `consecutiveWakes` on every tick (including ticks where the user defers merge), so the cap fires even if CI stays green indefinitely.
