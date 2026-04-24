@@ -68,7 +68,11 @@ export async function fetchRepoLabels(owner, repo) {
  * { name, field, expected, actual } for labels that exist but differ.
  */
 export async function syncLabelsToRepo(taxonomyLabels, owner, repo, extraLabels = []) {
-  const allLabels = [...taxonomyLabels, ...extraLabels];
+  // Dedupe by name: extraLabels override taxonomy entries with the same name.
+  const byName = new Map();
+  for (const l of taxonomyLabels) byName.set(l.name, l);
+  for (const l of extraLabels) byName.set(l.name, l);
+  const allLabels = [...byName.values()];
   const existing = await fetchRepoLabels(owner, repo);
   const created = [];
   const skipped = [];
