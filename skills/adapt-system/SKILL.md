@@ -64,6 +64,7 @@ Reshapes a live installation when the project's context changes. Every change is
 | `platform:*` | `stack.platform`, memory seeds, branch patterns if relevant |
 | `cadence:*` | `labels.intent`, release umbrella list (re-derived), `workflow.phase_term` |
 | `tracker:migrate:<from>:<to>` | `ops.config.json -> trackers.dev` (new kind), `trackers.observed[]` (old kind appended as read-only), optional `trackers.release` update, new `migration` sidecar block on the config |
+| `code-review:switch:<target>` | `ops.config.json -> workflow.code_review.provider` set to `<target>`. Valid targets: `ctxr-skill-code-review` (probe for skill, halt if missing), `internal-template` (bundled fallback), `none` (skip review; only valid when `workflow.pr.self_review_required` is false). Triggered by: "switch code-review provider to internal-template", "use external code review", "disable code review". |
 
 ## Tracker migration op
 

@@ -349,6 +349,32 @@ if (opsConfig.wiki?.required) {
   process.stdout.write(`wiki provider: ${provider} found at ${portableRef(found, TARGET)}\n`);
 }
 
+// Code-review provider probe: if the config requests the external
+// ctxr-skill-code-review skill, verify it is installed. If missing,
+// fall back to "internal-template" so dev-loop never hits a mid-flow
+// prompt. The choice is recorded in ops.config.json.
+{
+  const crProvider = opsConfig.workflow?.code_review?.provider;
+  if (crProvider === "ctxr-skill-code-review") {
+    const found = locateKitSkill("ctxr-skill-code-review", TARGET);
+    if (found) {
+      process.stdout.write(
+        `code-review provider: ctxr-skill-code-review found at ${portableRef(found, TARGET)}\n`,
+      );
+    } else {
+      process.stdout.write(
+        "code-review provider: ctxr-skill-code-review not installed; falling back to internal-template.\n" +
+        "  (install later with: npx @ctxr/kit install @ctxr/skill-code-review)\n" +
+        "  (switch provider with: /adapt-system \"switch code-review provider\")\n",
+      );
+      if (!opsConfig.workflow) opsConfig.workflow = {};
+      if (!opsConfig.workflow.code_review) opsConfig.workflow.code_review = {};
+      opsConfig.workflow.code_review.provider = "internal-template";
+      await atomicWriteJson(opsConfigPath, opsConfig);
+    }
+  }
+}
+
 // Workspace member preflight: when the config declares multi-repo
 // workspace members, every declared path MUST exist on disk before
 // install proceeds. A missing member path almost always means the
