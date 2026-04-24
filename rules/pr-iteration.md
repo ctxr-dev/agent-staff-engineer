@@ -1,6 +1,6 @@
 ---
 name: pr-iteration
-description: The post-push PR iteration loop. After dev-loop opens a PR, the agent enters this loop, requests an external reviewer, polls for CI and review, triages unresolved threads, fixes + pushes + resolves, and iterates until all three exit conditions hold. Stops cold at the merge human gate.
+description: "The post-push PR iteration loop. Team path: requests external reviewer, polls CI and review, triages threads, iterates until all three exit conditions hold. Solo path (provider none): checks CI only, prompts merge when localReviewGo + ciSuccess hold. Stops cold at the merge human gate."
 portable: true
 scope: every session that opened a PR via dev-loop and has workflow.external_review.enabled
 ---

@@ -267,6 +267,8 @@ Then go back to step 5.
 
 ## 9. Exit criteria
 
+### Team path (external review enabled)
+
 Stop the loop when **all three** are true:
 
 1. **Local code-review says GO** on the current HEAD. (Re-run after the final Copilot round to catch regressions from fixes.)
@@ -274,6 +276,15 @@ Stop the loop when **all three** are true:
 3. **CI is SUCCESS on the current HEAD** across all required jobs.
 
 When all three hold, report the final state to the human and stop. The merge itself is a human gate; never auto-merge.
+
+### Solo path (provider = "none")
+
+Stop the loop when **both** are true:
+
+1. **Local code-review says GO** on the current HEAD.
+2. **CI is SUCCESS on the current HEAD** across all required jobs.
+
+When both hold, the tick returns `"solo-ready"` and the skill prompts the user for merge confirmation. Condition 2 from the team path (unresolved threads + external review) does not apply. See the "Solo dev flow" section above.
 
 ---
 
