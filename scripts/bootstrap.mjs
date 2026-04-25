@@ -130,9 +130,17 @@ async function main() {
     if (bootstrapMode === "yes") {
       answers = pickDefaults(detection);
     } else if (bootstrapMode === "solo") {
-      answers = await interviewSolo(rl, detection);
+      if (!process.stdin.isTTY) {
+        // Non-TTY solo: use auto-detected defaults, no prompts.
+        const defaults = pickDefaults(detection);
+        defaults.bootstrapMode = "solo";
+        answers = defaults;
+      } else {
+        answers = await interviewSolo(rl, detection);
+      }
     } else {
       answers = await interview(rl, detection, BUNDLE_REF);
+      answers.bootstrapMode = "team";
     }
   } finally {
     rl.close();
@@ -186,6 +194,13 @@ async function main() {
 function printHelp() {
   const text = `
 bootstrap.mjs  interactive cold-start of ops.config.json
+
+Modes:
+  --solo            3 questions (repo, language, test runner). No external review.
+  --team            full 10-question interview. All features enabled.
+  --interactive     alias for --team.
+  (no flag + TTY)   prompts for mode.
+  (no flag + no TTY) defaults to --solo.
 
 Options:
   --target <path>   target project root (default: cwd)
@@ -1458,7 +1473,6 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
       },
       ...((a.bootstrapMode ?? a.teamSize) === "solo" ? {
         external_review: {
-          enabled: true,
           provider: "none",
         },
       } : {}),
@@ -1509,8 +1523,12 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
       required: true,
     },
     stack: {
-      language: d.stack.language.length ? d.stack.language : ["other"],
-      testing: d.stack.testing,
+      language: a.soloOverrides?.language
+        ? [a.soloOverrides.language, ...d.stack.language.filter((l) => l !== a.soloOverrides.language)]
+        : (d.stack.language.length ? d.stack.language : ["other"]),
+      testing: a.soloOverrides?.testRunner && a.soloOverrides.testRunner !== "none"
+        ? [a.soloOverrides.testRunner, ...d.stack.testing.filter((t) => t !== a.soloOverrides.testRunner)]
+        : d.stack.testing,
       platform: d.stack.platform,
     },
     area_keywords: {},

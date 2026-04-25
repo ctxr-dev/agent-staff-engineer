@@ -175,9 +175,9 @@
         },
         "priority": {
           "type": "array",
-          "description": "Scope priority/*. Example values: p0-blocker, p1-high, p2-medium, p3-low.",
+          "description": "Scope priority/*. Example values: p0-blocker, p1-high, p2-medium, p3-low. When empty (solo mode), issue-discovery skips the priority step.",
           "items": { "type": "string", "minLength": 1 },
-          "minItems": 1
+          "minItems": 0
         },
         "intent": {
           "type": "array",
