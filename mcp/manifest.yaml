@@ -9,6 +9,7 @@ servers:
   git:
     tier: core
     package: "@modelcontextprotocol/server-git"
+    version: "latest"
     install: "npx -y @modelcontextprotocol/server-git"
     maintainer: "Anthropic"
     description: "Git operations (log, diff, blame, status) via MCP."
@@ -16,6 +17,7 @@ servers:
   filesystem:
     tier: core
     package: "@modelcontextprotocol/server-filesystem"
+    version: "latest"
     install: "npx -y @modelcontextprotocol/server-filesystem"
     maintainer: "Anthropic"
     description: "Filesystem read/write via MCP."
@@ -23,6 +25,7 @@ servers:
   sqlite:
     tier: core
     package: "@modelcontextprotocol/server-sqlite"
+    version: "latest"
     install: "npx -y @modelcontextprotocol/server-sqlite"
     maintainer: "Anthropic"
     description: "SQLite queries via MCP. Local index for the canonical knowledge store (#35)."
