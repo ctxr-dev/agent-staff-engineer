@@ -120,8 +120,9 @@ async function main() {
   } else if (!process.stdin.isTTY) {
     bootstrapMode = "solo";
   } else {
-    const modeAnswer = await rl.question("Bootstrap mode: solo (3 questions) / team (full interview) [solo]: ");
-    bootstrapMode = modeAnswer.trim().toLowerCase().startsWith("t") ? "team" : "solo";
+    const modeAnswer = await rl.question("Bootstrap mode: solo (3 questions) / team (full interview) / interactive [solo]: ");
+    const m = modeAnswer.trim().toLowerCase();
+    bootstrapMode = (m.startsWith("t") || m.startsWith("i")) ? "team" : "solo";
   }
   process.stdout.write(`mode: ${bootstrapMode}\n\n`);
 
@@ -133,7 +134,17 @@ async function main() {
       if (!process.stdin.isTTY) {
         // Non-TTY solo: use auto-detected defaults, no prompts.
         // Override team-specific defaults for solo semantics.
-        const defaults = pickDefaults(detection);
+        let defaults;
+        try {
+          defaults = pickDefaults(detection);
+        } catch (e) {
+          // pickDefaults error message references --yes; rephrase for solo context.
+          throw new Error(
+            "bootstrap --solo (non-TTY): no git remote with owner/repo was detected. " +
+            "Re-run in a TTY so the solo interview can prompt for repo coordinates, " +
+            "or set up a git remote first.",
+          );
+        }
         defaults.bootstrapMode = "solo";
         defaults.releaseTracker = undefined;
         answers = defaults;
