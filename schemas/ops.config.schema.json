@@ -543,6 +543,25 @@
       }
     },
 
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "MCP integration layer. Controls which official MCP servers are registered. See rules/mcp-usage.md and mcp/manifest.yaml.",
+      "properties": {
+        "tier": {
+          "type": "string",
+          "enum": ["core", "core+observability", "none"],
+          "default": "core",
+          "description": "core: git + filesystem + sqlite. core+observability: adds Datadog when DATADOG_API_KEY is set. none: no MCP servers."
+        },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "enum": ["enabled", "disabled"] },
+          "description": "Per-server overrides. Keys are server names from mcp/manifest.yaml."
+        }
+      }
+    },
+
     "paths": {
       "type": "object",
       "required": ["plans_root", "plan_states", "dev_working_dir", "templates", "agent_bundle_dir", "wrappers"],

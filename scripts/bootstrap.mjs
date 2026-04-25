@@ -1537,6 +1537,9 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
       reports: ".development/shared/reports",
       runbooks: ".development/shared/runbooks",
     },
+    mcp: {
+      tier: (a.bootstrapMode ?? a.teamSize) === "solo" ? "core" : "core",
+    },
     wiki: {
       provider: "@ctxr/skill-llm-wiki",
       mode: "in-place",

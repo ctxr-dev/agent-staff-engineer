@@ -1,0 +1,44 @@
+# Canonical MCP server manifest for agent-staff-engineer.
+# Every server listed here is maintained by Anthropic or a first-party vendor,
+# has active commits, broad adoption, and known-safe auth posture.
+# Community MCPs are out of scope until the ecosystem matures.
+
+$schemaVersion: "0.1.0"
+
+servers:
+  git:
+    tier: core
+    package: "@modelcontextprotocol/server-git"
+    install: "npx -y @modelcontextprotocol/server-git"
+    maintainer: "Anthropic"
+    description: "Git operations (log, diff, blame, status) via MCP."
+
+  filesystem:
+    tier: core
+    package: "@modelcontextprotocol/server-filesystem"
+    install: "npx -y @modelcontextprotocol/server-filesystem"
+    maintainer: "Anthropic"
+    description: "Filesystem read/write via MCP."
+
+  sqlite:
+    tier: core
+    package: "@modelcontextprotocol/server-sqlite"
+    install: "npx -y @modelcontextprotocol/server-sqlite"
+    maintainer: "Anthropic"
+    description: "SQLite queries via MCP. Local index for the canonical knowledge store (#35)."
+
+  datadog:
+    tier: observability
+    package: "datadog-mcp"
+    install: "See https://docs.datadoghq.com/service_management/operations/mcp-server/"
+    maintainer: "Datadog"
+    description: "Live metrics, traces, and logs during incident intake."
+    condition: "DATADOG_API_KEY is set in environment"
+
+rejected:
+  - name: "@modelcontextprotocol/server-memory"
+    reason: "Not team-shareable (JSON blob on one laptop). Replaced by canonical knowledge store (#35)."
+  - name: "@github/mcp-server-github"
+    reason: "All reviewer tools call REST RequestReviewers internally, which silently no-ops for bot reviewers. No GraphQL requestReviews tool. Adopting it regresses Copilot review workflows."
+  - name: "code-graph-mcp, code-pathfinder, mcp-ripgrep, ts-refactoring-mcp"
+    reason: "Fail the widely-supported + famous bar. Skills use Claude Code native Grep/Glob/Bash in isolated subagents instead."

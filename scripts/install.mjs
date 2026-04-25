@@ -974,6 +974,18 @@ for (const w of writes) {
   }
 }
 
+// MCP server registration.
+if (MODE === "apply" || MODE === "update") {
+  const mcpTier = opsConfig.mcp?.tier ?? "core";
+  if (mcpTier !== "none") {
+    const { registerMcpServers } = await import("./lib/mcp/register.mjs");
+    const { tier, servers, mcpJsonPath } = await registerMcpServers(TARGET, mcpTier);
+    if (servers.length > 0) {
+      process.stdout.write(`mcp: registered ${servers.join(", ")} (tier: ${tier})\n`);
+    }
+  }
+}
+
 // Manifest.
 // Deferred config write: if the code-review probe changed the provider
 // in memory, persist it now — after all preflights, wrapper writes, and
