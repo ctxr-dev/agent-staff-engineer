@@ -1395,13 +1395,18 @@ export function defaultTrackerTarget(kind, role, d) {
 }
 
 export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer") {
-  const [owner, repo] = (d.git.ownerRepo ?? "unknown/unknown").split("/");
+  // Prefer the tracker's owner/repo (set by the interview, including solo)
+  // over detection (which may be absent or stale).
+  const repoCoord = (a.devTracker?.owner && a.devTracker?.repo)
+    ? `${a.devTracker.owner}/${a.devTracker.repo}`
+    : (d.git.ownerRepo ?? "unknown/unknown");
+  const [owner, repo] = repoCoord.split("/");
   return {
     $schemaVersion: "0.1.0",
     project: {
       name: repo,
       org: owner,
-      repo: d.git.ownerRepo ?? "unknown/unknown",
+      repo: repoCoord,
       default_branch: d.git.defaultBranch,
       principals: {
         push_allowed: a.pushAllowed.length ? a.pushAllowed : ["claude"],
