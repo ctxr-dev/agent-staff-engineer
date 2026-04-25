@@ -147,6 +147,7 @@ async function main() {
         }
         defaults.bootstrapMode = "solo";
         defaults.releaseTracker = undefined;
+        defaults.reviewers = [d.gh.login].filter(Boolean);
         answers = defaults;
       } else {
         answers = await interviewSolo(rl, detection);
