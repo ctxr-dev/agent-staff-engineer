@@ -1072,6 +1072,9 @@ function printHelp() {
       "  --uninstall       remove wrappers per manifest; preserve user-populated",
       "                    below-marker content",
       "  --yes             accept prompt defaults non-interactively",
+      "  --solo            bootstrap in solo mode (3 questions, no external review)",
+      "  --team            bootstrap in team mode (full 10-question interview)",
+      "  --interactive     alias for --team",
       "",
     ].join("\n")
   );

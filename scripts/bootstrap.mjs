@@ -78,6 +78,16 @@ async function main() {
   process.stdout.write(`target: ${TARGET}\n`);
   process.stdout.write(`mode:   ${DRY_RUN ? "dry-run (no writes)" : "apply"}\n\n`);
 
+  // Check mode flag conflicts before creating readline (early exit without cleanup issues).
+  const MODE_SOLO = boolFlag(flags, "solo", false);
+  const MODE_TEAM = boolFlag(flags, "team", false);
+  const MODE_INTERACTIVE = boolFlag(flags, "interactive", false);
+  const modeCount = [MODE_SOLO, MODE_TEAM, MODE_INTERACTIVE].filter(Boolean).length;
+  if (modeCount > 1) {
+    process.stderr.write("bootstrap: specify at most one of --solo, --team, --interactive\n");
+    process.exit(1);
+  }
+
   const detection = {
     git: detectGit(TARGET),
     gh: await detectGh(),
@@ -98,16 +108,7 @@ async function main() {
   process.on("SIGINT", onSigint);
   rl.on("close", () => {});
 
-  // Resolve bootstrap mode: --solo, --team, --interactive flag, or prompt.
-  const MODE_SOLO = boolFlag(flags, "solo", false);
-  const MODE_TEAM = boolFlag(flags, "team", false);
-  const MODE_INTERACTIVE = boolFlag(flags, "interactive", false);
-  const modeCount = [MODE_SOLO, MODE_TEAM, MODE_INTERACTIVE].filter(Boolean).length;
-  if (modeCount > 1) {
-    process.stderr.write("bootstrap: specify at most one of --solo, --team, --interactive\n");
-    process.exit(1);
-  }
-
+  // Resolve bootstrap mode.
   let bootstrapMode;
   if (AUTO_YES) {
     bootstrapMode = "yes";
