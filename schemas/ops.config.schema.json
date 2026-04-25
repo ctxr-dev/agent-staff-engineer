@@ -557,7 +557,7 @@
         "overrides": {
           "type": "object",
           "additionalProperties": { "type": "string", "enum": ["enabled", "disabled"] },
-          "description": "Per-server overrides. Keys are server names from mcp/manifest.yaml."
+          "description": "Per-server overrides. Keys are server names from mcp/manifest.yaml. Reserved for future use; not enforced by the current registration flow."
         }
       }
     },

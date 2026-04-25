@@ -7,9 +7,9 @@
  * Returns { datadogAvailable: boolean }.
  */
 export function probeEnvironment() {
-  const ddKey = process.env.DATADOG_API_KEY;
+  const ddKey = (process.env.DATADOG_API_KEY ?? "").trim();
   return {
-    datadogAvailable: typeof ddKey === "string" && ddKey.length > 0,
+    datadogAvailable: ddKey.length > 0,
   };
 }
 

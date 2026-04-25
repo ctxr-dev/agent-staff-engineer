@@ -75,10 +75,13 @@ export async function writeMcpJson(targetDir, mcpConfig) {
     // No existing .mcp.json or parse error; start fresh.
   }
 
+  const existingServers = (existing.mcpServers && typeof existing.mcpServers === "object" && !Array.isArray(existing.mcpServers))
+    ? existing.mcpServers
+    : {};
   const merged = {
     ...existing,
     mcpServers: {
-      ...(existing.mcpServers ?? {}),
+      ...existingServers,
       ...mcpConfig.mcpServers,
     },
   };

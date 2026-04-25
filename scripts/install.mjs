@@ -978,13 +978,17 @@ for (const w of writes) {
 if (MODE === "apply" || MODE === "update") {
   const mcpTier = opsConfig.mcp?.tier ?? "core";
   if (mcpTier !== "none") {
-    const { registerMcpServers } = await import("./lib/mcp/register.mjs");
-    const { tier, servers, skipped } = await registerMcpServers(TARGET, mcpTier);
-    if (servers.length > 0) {
-      process.stdout.write(`mcp: registered ${servers.join(", ")} (tier: ${tier})\n`);
-    }
-    if (skipped && skipped.length > 0) {
-      process.stdout.write(`mcp: skipped ${skipped.join(", ")} (requires manual setup)\n`);
+    try {
+      const { registerMcpServers } = await import("./lib/mcp/register.mjs");
+      const { tier, servers, skipped } = await registerMcpServers(TARGET, mcpTier);
+      if (servers.length > 0) {
+        process.stdout.write(`mcp: registered ${servers.join(", ")} (tier: ${tier})\n`);
+      }
+      if (skipped && skipped.length > 0) {
+        process.stdout.write(`mcp: skipped ${skipped.join(", ")} (requires manual setup)\n`);
+      }
+    } catch (e) {
+      process.stderr.write(`mcp: registration failed (non-fatal): ${e.message}\n`);
     }
   }
 }
