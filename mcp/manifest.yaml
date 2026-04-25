@@ -15,6 +15,7 @@ servers:
     tier: core
     package: "@modelcontextprotocol/server-git"
     version: "latest"
+    autoRegistrable: true
     install: "npx -y @modelcontextprotocol/server-git"
     maintainer: "Anthropic"
     description: "Git operations (log, diff, blame, status) via MCP."
@@ -23,6 +24,7 @@ servers:
     tier: core
     package: "@modelcontextprotocol/server-filesystem"
     version: "latest"
+    autoRegistrable: true
     install: "npx -y @modelcontextprotocol/server-filesystem"
     maintainer: "Anthropic"
     description: "Filesystem read/write via MCP."
@@ -31,6 +33,7 @@ servers:
     tier: core
     package: "@modelcontextprotocol/server-sqlite"
     version: "latest"
+    autoRegistrable: true
     install: "npx -y @modelcontextprotocol/server-sqlite"
     maintainer: "Anthropic"
     description: "SQLite queries via MCP. Local index for the canonical knowledge store (#35)."
@@ -38,6 +41,7 @@ servers:
   datadog:
     tier: observability
     package: "datadog-mcp"
+    autoRegistrable: false
     install: "See https://docs.datadoghq.com/service_management/operations/mcp-server/"
     maintainer: "Datadog"
     description: "Live metrics, traces, and logs during incident intake."
