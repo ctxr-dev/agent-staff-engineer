@@ -52,9 +52,11 @@ export function selectServers(manifest, effectiveTier) {
 export function buildMcpConfig(servers, targetDir) {
   const mcpServers = {};
   for (const server of servers) {
-    // Only auto-register servers with scoped npm packages (@org/pkg).
-    // Vendor-specific servers (datadog) require manual setup per their docs
-    // and are reported as "skipped" in the install output.
+    // Only auto-register servers with scoped npm packages (@org/pkg)
+    // that can be launched via npx. Vendor-specific servers (datadog)
+    // require manual setup per their docs and are reported as "skipped"
+    // in the install output. The tier config records the INTENT
+    // (core+observability); actual datadog activation is manual.
     if (!server.package || !server.package.startsWith("@")) continue;
     mcpServers[server.name] = {
       command: "npx",

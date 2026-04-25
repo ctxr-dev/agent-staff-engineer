@@ -29,7 +29,7 @@ Any MCP requiring a secret loads it from the environment (e.g. `DATADOG_API_KEY`
 
 ### Clause 5: freshness policy
 
-Server versions are pinned in `mcp/manifest.yaml`. Bumped via adapt-system cascade (`mcp:bump-versions`). Stale versions are flagged on session start (future: via remote-sync drift detection, #18).
+Server versions are tracked in `mcp/manifest.yaml`. Core servers use "latest" (npx resolves at install time from the GitHub-based registry; these reference servers are not published to npm with semver tags). Pin to a specific commit or tag when a known regression is discovered. Stale versions are flagged on session start (future: via remote-sync drift detection, #18).
 
 ## Rejected servers
 
