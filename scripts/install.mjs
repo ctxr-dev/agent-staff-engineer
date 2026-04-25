@@ -990,6 +990,30 @@ if (MODE === "apply" || MODE === "update") {
     } catch (e) {
       process.stderr.write(`mcp: registration failed (non-fatal): ${e?.message ?? e}\n`);
     }
+  } else {
+    // tier=none: remove managed MCP entries from .mcp.json if present.
+    try {
+      const { loadManifest } = await import("./lib/mcp/register.mjs");
+      const mcpJsonPath = join(TARGET, ".mcp.json");
+      const existing = JSON.parse(await readFile(mcpJsonPath, "utf8").catch(() => "{}"));
+      if (existing.mcpServers && typeof existing.mcpServers === "object") {
+        const manifest = await loadManifest();
+        const managedNames = Object.keys(manifest.servers ?? {});
+        let removed = 0;
+        for (const name of managedNames) {
+          if (name in existing.mcpServers) {
+            delete existing.mcpServers[name];
+            removed++;
+          }
+        }
+        if (removed > 0) {
+          await atomicWriteJson(mcpJsonPath, existing);
+          process.stdout.write(`mcp: removed ${removed} managed server(s) from .mcp.json (tier: none)\n`);
+        }
+      }
+    } catch {
+      // No .mcp.json or parse error; nothing to clean up.
+    }
   }
 }
 

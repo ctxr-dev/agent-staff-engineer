@@ -2,6 +2,11 @@
 # Every server listed here is maintained by Anthropic or a first-party vendor,
 # has active commits, broad adoption, and known-safe auth posture.
 # Community MCPs are out of scope until the ecosystem matures.
+#
+# Version policy: "latest" means npx resolves the current version at install
+# time. These reference servers are not published to npm with semver tags;
+# npx fetches from the GitHub-based registry. Pin to a specific commit/tag
+# when a known regression is discovered.
 
 $schemaVersion: "0.1.0"
 
