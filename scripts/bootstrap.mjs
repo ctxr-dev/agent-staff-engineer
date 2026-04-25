@@ -116,7 +116,7 @@ async function main() {
   } else if (MODE_TEAM) {
     bootstrapMode = "team";
   } else if (MODE_INTERACTIVE) {
-    bootstrapMode = "interactive";
+    bootstrapMode = "team";
   } else if (!process.stdin.isTTY) {
     bootstrapMode = "solo";
   } else {
