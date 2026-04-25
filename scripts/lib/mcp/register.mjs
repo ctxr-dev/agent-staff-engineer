@@ -2,7 +2,8 @@
 // Reads mcp/manifest.yaml and writes a project-level .mcp.json
 // with the servers appropriate for the configured tier.
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { atomicWriteJson } from "../fsx.mjs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -87,7 +88,7 @@ export async function writeMcpJson(targetDir, mcpConfig) {
     },
   };
 
-  await writeFile(mcpJsonPath, JSON.stringify(merged, null, 2) + "\n");
+  await atomicWriteJson(mcpJsonPath, merged);
   return mcpJsonPath;
 }
 
