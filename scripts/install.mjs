@@ -70,7 +70,7 @@ const CLAUDE_MD_END_MARKER =
 // Parse args BEFORE preflight so --help runs even when Node is too old (it
 // otherwise fails silently for a user who cannot yet install Node).
 const { flags } = parseArgv(process.argv.slice(2), {
-  booleans: new Set(["dry-run", "apply", "update", "uninstall", "yes", "help", "auto-install-node"]),
+  booleans: new Set(["dry-run", "apply", "update", "uninstall", "yes", "help", "auto-install-node", "solo", "team", "interactive"]),
 });
 if (flags.help) {
   printHelp();
@@ -183,6 +183,9 @@ if (!opsConfig) {
   if (MODE === "apply" || MODE === "update") args.push("--apply");
   if (YES) args.push("--yes");
   if (boolFlag(flags, "auto-install-node", false)) args.push("--auto-install-node");
+  if (boolFlag(flags, "solo", false)) args.push("--solo");
+  if (boolFlag(flags, "team", false)) args.push("--team");
+  if (boolFlag(flags, "interactive", false)) args.push("--interactive");
   const res = spawnSync(process.execPath, args, {
     stdio: "inherit",
     cwd: TARGET,
@@ -1069,6 +1072,9 @@ function printHelp() {
       "  --uninstall       remove wrappers per manifest; preserve user-populated",
       "                    below-marker content",
       "  --yes             accept prompt defaults non-interactively",
+      "  --solo            bootstrap in solo mode (3 questions, no external review)",
+      "  --team            bootstrap in team mode (full 10-question interview)",
+      "  --interactive     alias for --team",
       "",
     ].join("\n")
   );
