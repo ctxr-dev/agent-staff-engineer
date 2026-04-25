@@ -247,6 +247,19 @@ export function classify(intent) {
     sigs.push({ kind: "code-review:switch", value: CODE_REVIEW_NONE });
   }
 
+  // Label taxonomy operations.
+  if (hasPhrase("install label taxonomy") || hasPhrase("provision labels")) {
+    sigs.push({ kind: "labels:install-taxonomy", value: "default" });
+  }
+  if (hasPhrase("sync label taxonomy") || hasPhrase("reconcile labels")) {
+    sigs.push({ kind: "labels:sync-taxonomy", value: "default" });
+  }
+  // "extend label taxonomy with area:X" — extract the slug after "area:"
+  const areaExtendMatch = intent.match(/(?:extend label taxonomy with|add area label)\s+(?:area:)?([a-z0-9][a-z0-9_-]*)/i);
+  if (areaExtendMatch) {
+    sigs.push({ kind: "labels:extend:area", value: areaExtendMatch[1].toLowerCase() });
+  }
+
   // Cadence. Only explicit phrases — a stray `\bv\d+\b` match in unrelated
   // prose ("we upgraded to macOS v14") would otherwise silently mutate the
   // config on --apply.
@@ -349,6 +362,32 @@ export function applySignalToConfig(cfg, signal, changeLog) {
       }
       return;
     }
+    case signal.kind === "labels:install-taxonomy": {
+      changeLog.push(
+        "install canonical label taxonomy from templates/labels/default-taxonomy.yaml (via gh label create)"
+      );
+      return;
+    }
+    case signal.kind === "labels:sync-taxonomy": {
+      changeLog.push(
+        "sync label taxonomy: compare repo labels against taxonomy + extensions, report diffs"
+      );
+      return;
+    }
+    case signal.kind === "labels:extend:area": {
+      cfg.labels = cfg.labels ?? {};
+      cfg.labels.taxonomy = cfg.labels.taxonomy ?? {};
+      cfg.labels.taxonomy.extensions = cfg.labels.taxonomy.extensions ?? {};
+      const areas = cfg.labels.taxonomy.extensions.areas ?? [];
+      if (!areas.includes(signal.value)) {
+        areas.push(signal.value);
+        cfg.labels.taxonomy.extensions.areas = areas;
+        changeLog.push(
+          `extend label taxonomy: add area:${signal.value} to labels.taxonomy.extensions.areas`
+        );
+      }
+      return;
+    }
     case signal.kind === "cadence:set": {
       const prev = cfg.workflow?.phase_term;
       cfg.workflow = cfg.workflow ?? {};
@@ -385,6 +424,18 @@ export function buildNonConfigPlan(signals, current, proposed) {
   if (signals.some((s) => s.kind === "compliance:add")) {
     steps.push("consider authoring a rules/product-<regime>.md (portable: false) to capture new obligations");
   }
+
+  if (signals.some((s) => s.kind === "labels:install-taxonomy")) {
+    steps.push("invoke labels/sync.mjs loadTaxonomy + syncLabelsToRepo to provision canonical labels from templates/labels/default-taxonomy.yaml");
+  }
+  if (signals.some((s) => s.kind === "labels:sync-taxonomy")) {
+    steps.push("invoke labels/sync.mjs loadTaxonomy + syncLabelsToRepo to reconcile repo labels against taxonomy + extensions");
+  }
+  const areaExtensions = signals.filter((s) => s.kind === "labels:extend:area");
+  if (areaExtensions.length > 0) {
+    steps.push(`via gh label create: provision ${areaExtensions.map((s) => `area:${s.value}`).join(", ")}`);
+  }
+
   return steps;
 }
 

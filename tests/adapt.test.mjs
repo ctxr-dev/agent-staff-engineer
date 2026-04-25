@@ -52,6 +52,26 @@ describe("adapt.classify", () => {
     ));
   });
 
+  it("detects label taxonomy install intent", () => {
+    assert.ok(classify("install label taxonomy").some(
+      (s) => s.kind === "labels:install-taxonomy",
+    ));
+    assert.ok(classify("provision labels").some(
+      (s) => s.kind === "labels:install-taxonomy",
+    ));
+  });
+
+  it("detects label taxonomy area extension", () => {
+    const sigs = classify("extend label taxonomy with area:crypto");
+    assert.ok(sigs.some((s) => s.kind === "labels:extend:area" && s.value === "crypto"));
+  });
+
+  it("detects label taxonomy sync intent", () => {
+    assert.ok(classify("sync label taxonomy").some(
+      (s) => s.kind === "labels:sync-taxonomy",
+    ));
+  });
+
   it("detects drop intent separately from add", () => {
     const sigs = classify("drop gdpr, not applicable");
     assert.ok(sigs.some((s) => s.kind === "compliance:drop" && s.value === "gdpr"));
@@ -112,6 +132,23 @@ describe("adapt.applySignalToConfig", () => {
     assert.equal(cfg.workflow.code_review.provider, CODE_REVIEW_INTERNAL);
     assert.equal(log.length, 1);
     assert.match(log[0], new RegExp(CODE_REVIEW_INTERNAL));
+  });
+
+  it("labels:extend:area adds to labels.taxonomy.extensions.areas", () => {
+    const cfg = { labels: {} };
+    const log = [];
+    applySignalToConfig(cfg, { kind: "labels:extend:area", value: "crypto" }, log);
+    assert.deepEqual(cfg.labels.taxonomy.extensions.areas, ["crypto"]);
+    assert.equal(log.length, 1);
+    assert.match(log[0], /area:crypto/);
+  });
+
+  it("labels:extend:area is idempotent", () => {
+    const cfg = { labels: { taxonomy: { extensions: { areas: ["crypto"] } } } };
+    const log = [];
+    applySignalToConfig(cfg, { kind: "labels:extend:area", value: "crypto" }, log);
+    assert.equal(cfg.labels.taxonomy.extensions.areas.length, 1);
+    assert.equal(log.length, 0);
   });
 
   it("cadence:set flips phase_term to 'track' for continuous", () => {

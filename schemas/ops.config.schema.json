@@ -202,6 +202,40 @@
           "description": "Labels stacked on top of status to express blocked, deferred, cancelled, and similar modifiers.",
           "items": { "type": "string", "minLength": 1 },
           "default": ["blocked", "deferred", "cancelled"]
+        },
+        "taxonomy": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Canonical label taxonomy configuration. The taxonomy file defines the base label set; extensions add project-specific labels on top.",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Path to the taxonomy YAML file, relative to the bundle root.",
+              "default": "templates/labels/default-taxonomy.yaml"
+            },
+            "extensions": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Project-specific labels added on top of the canonical taxonomy.",
+              "properties": {
+                "areas": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "description": "Additional area:<slug> labels for this project."
+                },
+                "releases": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "description": "Additional release:<slug> labels for this project."
+                },
+                "phases": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "description": "Additional phase:<slug> labels for this project."
+                }
+              }
+            }
+          }
         }
       }
     },

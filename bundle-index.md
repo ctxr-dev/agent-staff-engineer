@@ -96,6 +96,11 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [rules/llm-wiki.md](rules/llm-wiki.md): the skill-llm-wiki contract for project-side wikis.
 - [memory-seeds/wiki-scalable-layout.md](memory-seeds/wiki-scalable-layout.md): memory seed on scalable wiki layout.
 
+### Label taxonomy
+
+- [templates/labels/default-taxonomy.yaml](templates/labels/default-taxonomy.yaml): canonical label set (type, area, scope, release, phase families).
+- [scripts/lib/labels/sync.mjs](scripts/lib/labels/sync.mjs): reconciler that provisions labels to GitHub repos via `gh label create`.
+
 ### Filing issues (pick template by kind)
 
 - [templates/issue-feature.md](templates/issue-feature.md)

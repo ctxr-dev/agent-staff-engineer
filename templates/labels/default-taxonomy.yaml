@@ -1,0 +1,44 @@
+# Canonical label taxonomy for agent-managed repos.
+# Every family's labels get a "family:" prefix (e.g. type:feature, area:backend).
+# Families marked locked: true have a fixed label set across repos.
+# Families marked locked: false allow project-specific extensions via adapt-system.
+
+$schemaVersion: "0.1.0"
+
+families:
+  type:
+    locked: true
+    default_color: "0366D6"
+    labels:
+      - { name: epic,        color: "5319E7", description: "Umbrella parent issue with sub-issues" }
+      - { name: feature,     description: "New capability" }
+      - { name: enhancement, color: "0075CA", description: "Improvement to existing capability" }
+      - { name: bug,         color: "D73A4A", description: "Defect" }
+      - { name: refactor,    color: "1D76DB", description: "Internal restructure, no behaviour change" }
+      - { name: docs,        color: "0052CC", description: "Documentation" }
+      - { name: chore,       color: "C5DEF5", description: "Maintenance / infrastructure" }
+
+  area:
+    locked: false
+    default_color: "8B4FBC"
+    labels:
+      - { name: bootstrap,   description: "Subsystem: bootstrap" }
+      - { name: schema,      description: "Subsystem: schema" }
+      - { name: docs,        description: "Subsystem: docs" }
+
+  scope:
+    locked: true
+    default_color: "B60205"
+    labels:
+      - { name: breaking, color: "B60205", description: "Breaks backward compatibility" }
+      - { name: additive, color: "E99695", description: "Additive only; no breaking change" }
+
+  release:
+    locked: true
+    default_color: "0E8A16"
+    labels: []
+
+  phase:
+    locked: true
+    default_color: "FBCA04"
+    labels: []
