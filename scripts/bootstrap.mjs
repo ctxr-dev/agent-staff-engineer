@@ -76,7 +76,7 @@ async function main() {
 
   process.stdout.write(`\nbootstrap-ops-config\n`);
   process.stdout.write(`target: ${TARGET}\n`);
-  process.stdout.write(`mode:   ${DRY_RUN ? "dry-run (no writes)" : "apply"}\n\n`);
+  process.stdout.write(`write:  ${DRY_RUN ? "dry-run (no writes)" : "apply"}\n\n`);
 
   // Check mode flag conflicts before creating readline (early exit without cleanup issues).
   const MODE_SOLO = boolFlag(flags, "solo", false);
