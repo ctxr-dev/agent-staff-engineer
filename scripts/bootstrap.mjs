@@ -46,7 +46,7 @@ async function main() {
   await preflight();
 
   const { flags } = parseArgv(process.argv.slice(2), {
-    booleans: new Set(["dry-run", "apply", "yes", "update", "help", "auto-install-node"]),
+    booleans: new Set(["dry-run", "apply", "yes", "update", "help", "auto-install-node", "solo", "team", "interactive"]),
   });
 
   if (flags.help) {
@@ -98,9 +98,42 @@ async function main() {
   process.on("SIGINT", onSigint);
   rl.on("close", () => {});
 
+  // Resolve bootstrap mode: --solo, --team, --interactive flag, or prompt.
+  const MODE_SOLO = boolFlag(flags, "solo", false);
+  const MODE_TEAM = boolFlag(flags, "team", false);
+  const MODE_INTERACTIVE = boolFlag(flags, "interactive", false);
+  const modeCount = [MODE_SOLO, MODE_TEAM, MODE_INTERACTIVE].filter(Boolean).length;
+  if (modeCount > 1) {
+    process.stderr.write("bootstrap: specify at most one of --solo, --team, --interactive\n");
+    process.exit(1);
+  }
+
+  let bootstrapMode;
+  if (AUTO_YES) {
+    bootstrapMode = "yes";
+  } else if (MODE_SOLO) {
+    bootstrapMode = "solo";
+  } else if (MODE_TEAM) {
+    bootstrapMode = "team";
+  } else if (MODE_INTERACTIVE) {
+    bootstrapMode = "interactive";
+  } else if (!process.stdin.isTTY) {
+    bootstrapMode = "solo";
+  } else {
+    const modeAnswer = await rl.question("Bootstrap mode: solo (3 questions) / team (full interview) [solo]: ");
+    bootstrapMode = modeAnswer.trim().toLowerCase().startsWith("t") ? "team" : "solo";
+  }
+  process.stdout.write(`mode: ${bootstrapMode}\n\n`);
+
   let answers;
   try {
-    answers = AUTO_YES ? pickDefaults(detection) : await interview(rl, detection, BUNDLE_REF);
+    if (bootstrapMode === "yes") {
+      answers = pickDefaults(detection);
+    } else if (bootstrapMode === "solo") {
+      answers = await interviewSolo(rl, detection);
+    } else {
+      answers = await interview(rl, detection, BUNDLE_REF);
+    }
   } finally {
     rl.close();
     process.off("SIGINT", onSigint);
@@ -442,6 +475,66 @@ export function inferTrackerKind(detection) {
   if (t.gitlab?.hasToken || t.gitlab?.glab) credentialed.push("gitlab");
   if (credentialed.length === 1) return credentialed[0];
   return null;
+}
+
+/**
+ * Solo interview: 3 questions maximum. Auto-detects as much as possible.
+ * Sets solo-appropriate defaults (no external review, no release tracker,
+ * empty area labels, no workspace members).
+ */
+async function interviewSolo(rl, d) {
+  const ask = async (q, def = "") => {
+    const s = await rl.question(`${q}${def ? ` [${def}]` : ""}: `);
+    return s.trim() || def;
+  };
+
+  process.stdout.write("solo mode (3 questions). Enter accepts the default shown in brackets.\n\n");
+
+  // Q1: Repo coordinate (auto-detect from git remote)
+  const detectedRepo = d.git.ownerRepo ?? "";
+  const repo = await ask("1. GitHub repo (owner/name)", detectedRepo);
+
+  // Q2: Primary language
+  const detectedLang = d.stack.language[0] ?? "";
+  const language = await ask("2. Primary language", detectedLang);
+
+  // Q3: Test runner
+  const detectedTest = d.stack.testing[0] ?? "none";
+  const testRunner = await ask("3. Test runner", detectedTest);
+
+  // Build answers with solo defaults
+  const kind = "github";
+  const [owner, repoName] = repo.includes("/") ? repo.split("/") : ["unknown", repo];
+  const devTracker = {
+    kind,
+    owner,
+    repo: repoName,
+    depth: "full",
+    projects: [],
+  };
+  const pushAllowed = [d.gh.login, "claude"].filter(Boolean);
+
+  return {
+    cadence: "per-wave",
+    teamSize: "solo",
+    bootstrapMode: "solo",
+    pushAllowed,
+    reviewers: [d.gh.login].filter(Boolean),
+    e2eSetup: testRunner,
+    e2ePath: "",
+    devTracker,
+    releaseTracker: undefined,
+    branchPatterns: { ...DEFAULT_BRANCH_PATTERNS },
+    workspace: undefined,
+    observed: [],
+    regimes: ["none"],
+    dataClasses: ["none"],
+    seedProductRules: false,
+    soloOverrides: {
+      language,
+      testRunner,
+    },
+  };
 }
 
 async function interview(rl, d, _bundleRef) {
@@ -1111,6 +1204,7 @@ export function pickDefaults(d) {
   return {
     cadence: "per-wave",
     teamSize: "solo",
+    bootstrapMode: "team",
     pushAllowed,
     reviewers,
     e2eSetup: d.stack.testing[0] ?? "none",
@@ -1299,25 +1393,19 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
     ...(a.workspace === undefined ? {} : { workspace: a.workspace }),
     labels: {
       type: ["feature", "bug", "task", "refactor", "docs", "chore"],
-      area: [
-        "frontend",
-        "backend",
-        "data",
-        "security",
-        "performance",
-        "compliance",
-        "ux",
-        "devx",
-        "testing",
-        "docs",
-      ],
-      priority: ["p0-blocker", "p1-high", "p2-medium", "p3-low"],
+      area: (a.bootstrapMode ?? a.teamSize) === "solo"
+        ? []
+        : ["frontend", "backend", "data", "security", "performance", "compliance", "ux", "devx", "testing", "docs"],
+      priority: (a.bootstrapMode ?? a.teamSize) === "solo"
+        ? []
+        : ["p0-blocker", "p1-high", "p2-medium", "p3-low"],
       intent: cadenceToIntent(a.cadence),
       size: ["xs", "s", "m", "l", "xl"],
       automation: ["auto-regression", "auto-release-tracked"],
       state_modifiers: ["blocked", "deferred", "cancelled"],
     },
     workflow: {
+      mode: a.bootstrapMode ?? (a.teamSize === "solo" ? "solo" : "team"),
       phase_term: a.cadence === "per-wave" ? "wave" : a.cadence === "per-version" ? "version" : "track",
       // Merge DEFAULT_BRANCH_PATTERNS under a.branchPatterns so:
       //   (a) the composed object is always a fresh mutable copy,
@@ -1368,6 +1456,12 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
       release: {
         umbrella_title: "{intent_label_pretty} Release",
       },
+      ...((a.bootstrapMode ?? a.teamSize) === "solo" ? {
+        external_review: {
+          enabled: true,
+          provider: "none",
+        },
+      } : {}),
       code_review: {
         provider: CODE_REVIEW_SKILL,
         provider_url: "https://github.com/ctxr-dev/skill-code-review",

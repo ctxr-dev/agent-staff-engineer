@@ -245,6 +245,12 @@
       "required": ["phase_term", "branch_patterns", "commits", "pr"],
       "additionalProperties": false,
       "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["solo", "team"],
+          "description": "Bootstrap mode. solo: minimal config, no external review, empty area labels. team: full interview, all features enabled.",
+          "default": "solo"
+        },
         "phase_term": {
           "type": "string",
           "description": "The word used in label scope intent/* and in release umbrella titles. Default: wave.",
