@@ -132,8 +132,10 @@ async function main() {
     } else if (bootstrapMode === "solo") {
       if (!process.stdin.isTTY) {
         // Non-TTY solo: use auto-detected defaults, no prompts.
+        // Override team-specific defaults for solo semantics.
         const defaults = pickDefaults(detection);
         defaults.bootstrapMode = "solo";
+        defaults.releaseTracker = undefined;
         answers = defaults;
       } else {
         answers = await interviewSolo(rl, detection);
@@ -507,7 +509,13 @@ async function interviewSolo(rl, d) {
 
   // Q1: Repo coordinate (auto-detect from git remote)
   const detectedRepo = d.git.ownerRepo ?? "";
-  const repo = await ask("1. GitHub repo (owner/name)", detectedRepo);
+  let repo = "";
+  while (!repo || !repo.includes("/") || repo.split("/").length !== 2 || repo.split("/").some((s) => !s)) {
+    repo = await ask("1. GitHub repo (owner/name)", detectedRepo);
+    if (!repo || !repo.includes("/") || repo.split("/").length !== 2 || repo.split("/").some((s) => !s)) {
+      process.stdout.write("   Expected format: owner/name (e.g. acme/my-app)\n");
+    }
+  }
 
   // Q2: Primary language
   const detectedLang = d.stack.language[0] ?? "";
@@ -519,7 +527,7 @@ async function interviewSolo(rl, d) {
 
   // Build answers with solo defaults
   const kind = "github";
-  const [owner, repoName] = repo.includes("/") ? repo.split("/") : ["unknown", repo];
+  const [owner, repoName] = repo.split("/");
   const devTracker = {
     kind,
     owner,
