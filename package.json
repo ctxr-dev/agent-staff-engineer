@@ -37,7 +37,8 @@
     "schemas/",
     "scripts/",
     "examples/",
-    "design/"
+    "design/",
+    "mcp/"
   ],
   "ctxr": {
     "type": "agent",

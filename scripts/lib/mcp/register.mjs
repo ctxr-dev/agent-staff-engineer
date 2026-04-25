@@ -15,11 +15,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const MANIFEST_PATH = join(__dirname, "..", "..", "..", "mcp", "manifest.yaml");
 
 /**
- * Load and parse the MCP manifest.
+ * Load and parse the MCP manifest. Validates the required top-level keys.
  */
 export async function loadManifest(manifestPath = MANIFEST_PATH) {
   const content = await readFile(manifestPath, "utf8");
-  return yamlLoad(content);
+  const doc = yamlLoad(content);
+  if (!doc || typeof doc.servers !== "object") {
+    throw new TypeError("MCP manifest must have a top-level 'servers' object");
+  }
+  return doc;
 }
 
 /**
@@ -47,6 +51,9 @@ export function selectServers(manifest, effectiveTier) {
 export function buildMcpConfig(servers, targetDir) {
   const mcpServers = {};
   for (const server of servers) {
+    // Only register servers with npx-compatible packages (starts with @).
+    // Vendor-specific servers (datadog) require manual setup per their docs.
+    if (!server.package || !server.package.startsWith("@")) continue;
     mcpServers[server.name] = {
       command: "npx",
       args: ["-y", server.package, ...(server.name === "filesystem" ? [targetDir] : [])],
