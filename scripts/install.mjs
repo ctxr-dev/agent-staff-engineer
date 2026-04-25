@@ -996,7 +996,7 @@ if (MODE === "apply" || MODE === "update") {
       const { loadManifest } = await import("./lib/mcp/register.mjs");
       const mcpJsonPath = join(TARGET, ".mcp.json");
       const existing = JSON.parse(await readFile(mcpJsonPath, "utf8").catch(() => "{}"));
-      if (existing.mcpServers && typeof existing.mcpServers === "object") {
+      if (existing.mcpServers && typeof existing.mcpServers === "object" && !Array.isArray(existing.mcpServers)) {
         const manifest = await loadManifest();
         const managedNames = Object.keys(manifest.servers ?? {});
         let removed = 0;
