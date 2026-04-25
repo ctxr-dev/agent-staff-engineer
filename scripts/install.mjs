@@ -988,7 +988,7 @@ if (MODE === "apply" || MODE === "update") {
         process.stdout.write(`mcp: skipped ${skipped.join(", ")} (requires manual setup)\n`);
       }
     } catch (e) {
-      process.stderr.write(`mcp: registration failed (non-fatal): ${e.message}\n`);
+      process.stderr.write(`mcp: registration failed (non-fatal): ${e?.message ?? e}\n`);
     }
   }
 }

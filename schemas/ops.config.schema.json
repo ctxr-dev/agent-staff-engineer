@@ -552,7 +552,7 @@
           "type": "string",
           "enum": ["core", "core+observability", "none"],
           "default": "core",
-          "description": "core: git + filesystem + sqlite. core+observability: adds Datadog when DATADOG_API_KEY is set. none: no MCP servers."
+          "description": "core: git + filesystem + sqlite (auto-registered via npx). core+observability: core servers + Datadog marker in config (Datadog requires manual setup per vendor docs). none: no MCP servers."
         },
         "overrides": {
           "type": "object",
