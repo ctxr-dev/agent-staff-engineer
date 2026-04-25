@@ -20,7 +20,7 @@ const MANIFEST_PATH = join(__dirname, "..", "..", "..", "mcp", "manifest.yaml");
 export async function loadManifest(manifestPath = MANIFEST_PATH) {
   const content = await readFile(manifestPath, "utf8");
   const doc = yamlLoad(content);
-  if (!doc || typeof doc.servers !== "object") {
+  if (!doc || !doc.servers || typeof doc.servers !== "object" || Array.isArray(doc.servers)) {
     throw new TypeError("MCP manifest must have a top-level 'servers' object");
   }
   return doc;
