@@ -979,9 +979,12 @@ if (MODE === "apply" || MODE === "update") {
   const mcpTier = opsConfig.mcp?.tier ?? "core";
   if (mcpTier !== "none") {
     const { registerMcpServers } = await import("./lib/mcp/register.mjs");
-    const { tier, servers, mcpJsonPath } = await registerMcpServers(TARGET, mcpTier);
+    const { tier, servers, skipped } = await registerMcpServers(TARGET, mcpTier);
     if (servers.length > 0) {
       process.stdout.write(`mcp: registered ${servers.join(", ")} (tier: ${tier})\n`);
+    }
+    if (skipped && skipped.length > 0) {
+      process.stdout.write(`mcp: skipped ${skipped.join(", ")} (requires manual setup)\n`);
     }
   }
 }

@@ -102,7 +102,13 @@ export async function registerMcpServers(targetDir, configuredTier = "core", man
   }
 
   const mcpConfig = buildMcpConfig(servers, targetDir);
-  const mcpJsonPath = await writeMcpJson(targetDir, mcpConfig);
+  const registeredNames = Object.keys(mcpConfig.mcpServers);
+  const skippedNames = servers.filter((s) => !registeredNames.includes(s.name)).map((s) => s.name);
 
-  return { tier, servers: servers.map((s) => s.name), mcpJsonPath };
+  if (registeredNames.length === 0) {
+    return { tier, servers: [], skipped: skippedNames, mcpJsonPath: null };
+  }
+
+  const mcpJsonPath = await writeMcpJson(targetDir, mcpConfig);
+  return { tier, servers: registeredNames, skipped: skippedNames, mcpJsonPath };
 }

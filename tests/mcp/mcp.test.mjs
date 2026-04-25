@@ -67,6 +67,14 @@ describe("mcp/register", () => {
     assert.deepEqual(selectServers(manifest, "none"), []);
   });
 
+  it("buildMcpConfig skips non-scoped packages (datadog)", async () => {
+    const manifest = await loadManifest(MANIFEST_PATH);
+    const servers = selectServers(manifest, "core+observability");
+    const config = buildMcpConfig(servers, "/tmp/test");
+    assert.ok(!config.mcpServers.datadog, "datadog should be skipped (not an @-scoped package)");
+    assert.ok(config.mcpServers.git, "core servers should be present");
+  });
+
   it("buildMcpConfig produces Claude Code MCP format", async () => {
     const manifest = await loadManifest(MANIFEST_PATH);
     const servers = selectServers(manifest, "core");
