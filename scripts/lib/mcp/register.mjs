@@ -51,8 +51,9 @@ export function selectServers(manifest, effectiveTier) {
 export function buildMcpConfig(servers, targetDir) {
   const mcpServers = {};
   for (const server of servers) {
-    // Only register servers with npx-compatible packages (starts with @).
-    // Vendor-specific servers (datadog) require manual setup per their docs.
+    // Only auto-register servers with scoped npm packages (@org/pkg).
+    // Vendor-specific servers (datadog) require manual setup per their docs
+    // and are reported as "skipped" in the install output.
     if (!server.package || !server.package.startsWith("@")) continue;
     mcpServers[server.name] = {
       command: "npx",
