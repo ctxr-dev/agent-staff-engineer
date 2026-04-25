@@ -974,6 +974,49 @@ for (const w of writes) {
   }
 }
 
+// MCP server registration.
+if (MODE === "apply" || MODE === "update") {
+  const mcpTier = opsConfig.mcp?.tier ?? "core";
+  if (mcpTier !== "none") {
+    try {
+      const { registerMcpServers } = await import("./lib/mcp/register.mjs");
+      const { tier, servers, skipped } = await registerMcpServers(TARGET, mcpTier);
+      if (servers.length > 0) {
+        process.stdout.write(`mcp: registered ${servers.join(", ")} (tier: ${tier})\n`);
+      }
+      if (skipped && skipped.length > 0) {
+        process.stdout.write(`mcp: skipped ${skipped.join(", ")} (requires manual setup)\n`);
+      }
+    } catch (e) {
+      process.stderr.write(`mcp: registration failed (non-fatal): ${e?.message ?? e}\n`);
+    }
+  } else {
+    // tier=none: remove managed MCP entries from .mcp.json if present.
+    try {
+      const { loadManifest } = await import("./lib/mcp/register.mjs");
+      const mcpJsonPath = join(TARGET, ".mcp.json");
+      const existing = JSON.parse(await readFile(mcpJsonPath, "utf8").catch(() => "{}"));
+      if (existing.mcpServers && typeof existing.mcpServers === "object" && !Array.isArray(existing.mcpServers)) {
+        const manifest = await loadManifest();
+        const managedNames = Object.keys(manifest.servers ?? {});
+        let removed = 0;
+        for (const name of managedNames) {
+          if (name in existing.mcpServers) {
+            delete existing.mcpServers[name];
+            removed++;
+          }
+        }
+        if (removed > 0) {
+          await atomicWriteJson(mcpJsonPath, existing);
+          process.stdout.write(`mcp: removed ${removed} managed server(s) from .mcp.json (tier: none)\n`);
+        }
+      }
+    } catch {
+      // No .mcp.json or parse error; nothing to clean up.
+    }
+  }
+}
+
 // Manifest.
 // Deferred config write: if the code-review probe changed the provider
 // in memory, persist it now — after all preflights, wrapper writes, and

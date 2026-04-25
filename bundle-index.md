@@ -123,6 +123,11 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [memory-seeds/commit-style-conventional.md](memory-seeds/commit-style-conventional.md): conventional-commits convention.
 - [memory-seeds/dash-free-writing.md](memory-seeds/dash-free-writing.md): the no-em/en-dash rule as a memory.
 
+### MCP integration
+
+- [mcp/manifest.yaml](mcp/manifest.yaml): canonical MCP server list (git, filesystem, sqlite, datadog).
+- [rules/mcp-usage.md](rules/mcp-usage.md): governance rule (lazy registration, graceful degradation, rejected servers).
+
 ### Cache economy (prompt caching)
 
 - [rules/cache-economy.md](rules/cache-economy.md): the static/dynamic partitioning rule for SKILL.md files.
@@ -146,10 +151,11 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [skills/regression-handler/SKILL.md](skills/regression-handler/SKILL.md): bug triage + linked-issue proposal.
 - [skills/release-tracker/SKILL.md](skills/release-tracker/SKILL.md): Release umbrella status computation.
 
-### Rules (14)
+### Rules (15)
 
 - [rules/adaptation.md](rules/adaptation.md): when to invoke adapt-system.
 - [rules/cache-economy.md](rules/cache-economy.md): static/dynamic partitioning of SKILL.md for prompt cache economics.
+- [rules/mcp-usage.md](rules/mcp-usage.md): official-only MCP integration (lazy registration, graceful degradation, rejected servers).
 - [rules/agent-boot.md](rules/agent-boot.md): session-start checks; scans for pending PR iteration loops and surfaces a resume prompt.
 - [rules/ambiguity-halt.md](rules/ambiguity-halt.md): halt-and-ask when state is weird.
 - [rules/issue-discovery.md](rules/issue-discovery.md): the three-clause intake rule (never guess; 2-4 options plus custom; delegate writes).
