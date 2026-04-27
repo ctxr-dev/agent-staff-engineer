@@ -562,6 +562,53 @@
       }
     },
 
+    "knowledge_store": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Canonical team knowledge store. Tier 1 (canonical): markdown leaves under <paths.wiki>/knowledge/<domain>/<slug>.md, validated by skill-llm-wiki. Tier 2 (frontier; follow-up PR): local SQLite materialised view at .claude/state/knowledge-index.db. The atomic 4-step write contract (write -> validate -> index-rebuild -> reindex) is enforced by scripts/lib/knowledge/write.mjs.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Master switch. When false, future knowledge-capture and consumer skills fall back to read-only walks of the wiki without SQLite caching."
+        },
+        "knowledge_dir": {
+          "type": "string",
+          "default": "knowledge",
+          "description": "Subdirectory under <paths.wiki> where the canonical entries live. Relative; combined with paths.wiki at runtime."
+        },
+        "frontier": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Tier 2 frontier (local SQLite). Reserved for the follow-up PR.",
+          "properties": {
+            "sqlite_path": {
+              "type": "string",
+              "default": ".claude/state/knowledge-index.db",
+              "description": "Project-relative path to the SQLite materialised view. Gitignored by the installer."
+            }
+          }
+        },
+        "hooks": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per-issue (#35) git hook controls. Reserved for the hook-install follow-up.",
+          "properties": {
+            "precommit": {
+              "type": "boolean",
+              "default": true,
+              "description": "When true, .claude/githooks/pre-commit runs `skill-llm-wiki validate` on the knowledge subtree before allowing the commit."
+            },
+            "post_merge_reindex": {
+              "type": "boolean",
+              "default": true,
+              "description": "When true, .claude/githooks/post-merge runs the frontier reindex incrementally after `git pull`."
+            }
+          }
+        }
+      }
+    },
+
     "paths": {
       "type": "object",
       "required": ["plans_root", "plan_states", "dev_working_dir", "templates", "agent_bundle_dir", "wrappers"],
