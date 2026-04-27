@@ -911,6 +911,11 @@ if (opsConfig.paths.gitignore_dev_working_dir !== false) {
   await ensureGitignore(TARGET, [
     `${opsConfig.paths.dev_working_dir}/${localSub}`,
     `${opsConfig.paths.dev_working_dir}/${cacheSub}`,
+    // Per-skill metrics records (JSONL, per-day) live under .claude/state/metrics/.
+    // They contain no PII (skill names + counts only) but they are local
+    // artefacts, not code. Aggregator output lands under .development/shared/
+    // and that directory is ALREADY committed by convention.
+    ".claude/state/metrics/",
   ]);
 }
 for (const w of writes) {

@@ -562,6 +562,43 @@
       }
     },
 
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-skill token accounting and weekly metrics report. The recorder writes one JSONL line per invocation under .claude/state/metrics/<yyyy>-<mm>-<dd>.jsonl; aggregate.mjs rolls daily files into ISO-week summaries under .development/shared/reports/metrics/<yyyy>-Www.json. See scripts/lib/metrics/.",
+      "properties": {
+        "metrics_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Master switch for the recorder. When false, callers of scripts/lib/metrics/record.mjs become no-ops."
+        },
+        "weekly_report": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether scripts/report_metrics.mjs --weekly is wired into the project's reminder / cron path."
+        },
+        "alert_thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cache_hit_rate_min": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.7,
+              "description": "Per-skill cache hit rate below this triggers a red flag in the weekly rollup."
+            },
+            "per_skill_token_ceiling": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 50000,
+              "description": "Per-skill avg_tokens above this triggers a red flag in the weekly rollup."
+            }
+          }
+        }
+      }
+    },
+
     "paths": {
       "type": "object",
       "required": ["plans_root", "plan_states", "dev_working_dir", "templates", "agent_bundle_dir", "wrappers"],

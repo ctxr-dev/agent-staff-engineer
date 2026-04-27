@@ -123,6 +123,14 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [memory-seeds/commit-style-conventional.md](memory-seeds/commit-style-conventional.md): conventional-commits convention.
 - [memory-seeds/dash-free-writing.md](memory-seeds/dash-free-writing.md): the no-em/en-dash rule as a memory.
 
+### Per-skill metrics + weekly rollup
+
+- [scripts/lib/metrics/record.mjs](scripts/lib/metrics/record.mjs): per-invocation recorder. Builds + writes one JSONL line per skill invocation under `.claude/state/metrics/<yyyy>-<mm>-<dd>.jsonl`. Cost computed from token counts + a per-model rate table.
+- [scripts/lib/metrics/aggregate.mjs](scripts/lib/metrics/aggregate.mjs): daily JSONL -> ISO-week rollup. Sub-invocations fold into the parent's skill row; thresholds drive red-flag annotations; output is deterministic across re-runs.
+- [scripts/report_metrics.mjs](scripts/report_metrics.mjs): CLI entrypoint (`node scripts/report_metrics.mjs --weekly`). Writes JSON + markdown to `.development/shared/reports/metrics/<yyyy>-Www.{json,md}` and echoes the markdown to stdout.
+- [schemas/metrics-record.schema.json](schemas/metrics-record.schema.json): per-invocation record shape (additionalProperties: false; no PII).
+- [schemas/metrics-weekly.schema.json](schemas/metrics-weekly.schema.json): rollup shape.
+
 ### MCP integration
 
 - [mcp/manifest.yaml](mcp/manifest.yaml): canonical MCP server list (git, filesystem, sqlite, datadog).

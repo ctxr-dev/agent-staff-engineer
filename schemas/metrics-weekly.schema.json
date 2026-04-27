@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ctxr.dev/schemas/metrics-weekly.schema.json",
+  "title": "Weekly metrics rollup",
+  "description": "Aggregator output. One object per ISO week. Written under .development/shared/reports/metrics/<yyyy>-Www.json (the markdown report at <yyyy>-Www.md is rendered from this).",
+  "type": "object",
+  "required": [
+    "iso_week",
+    "totals",
+    "per_skill",
+    "thresholds",
+    "red_flags"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "iso_week": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-W[0-9]{2}$",
+      "description": "ISO 8601 week designation, e.g. 2026-W17."
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "string", "format": "date-time" },
+        "end": { "type": "string", "format": "date-time" }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invocations", "cost_usd", "tokens", "cache_hit_rate"],
+      "properties": {
+        "invocations": { "type": "integer", "minimum": 0 },
+        "cost_usd": { "type": "number", "minimum": 0 },
+        "tokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "output", "cache_read", "cache_write"],
+          "properties": {
+            "input": { "type": "integer", "minimum": 0 },
+            "output": { "type": "integer", "minimum": 0 },
+            "cache_read": { "type": "integer", "minimum": 0 },
+            "cache_write": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "cache_hit_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "cache_read / (input + cache_read). 0 when no inputs were processed."
+        }
+      }
+    },
+    "per_skill": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["skill", "invocations", "avg_tokens", "cache_hit_rate", "avg_cost"],
+        "properties": {
+          "skill": { "type": "string", "minLength": 1 },
+          "invocations": { "type": "integer", "minimum": 0 },
+          "avg_tokens": { "type": "integer", "minimum": 0 },
+          "cache_hit_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "avg_cost": { "type": "number", "minimum": 0 },
+          "delta_vs_prev": {
+            "type": ["number", "null"],
+            "description": "Fractional change in avg_cost vs the previous week's value for the same skill. null for newly seen skills."
+          }
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cache_hit_rate_min": { "type": "number", "minimum": 0, "maximum": 1 },
+        "per_skill_token_ceiling": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "red_flags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["skill", "kind", "message"],
+        "properties": {
+          "skill": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": ["cache_hit_rate_below_min", "avg_tokens_above_ceiling"]
+          },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

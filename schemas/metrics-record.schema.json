@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ctxr.dev/schemas/metrics-record.schema.json",
+  "title": "Per-skill invocation metrics record",
+  "description": "One JSONL line per skill invocation under .claude/state/metrics/<yyyy>-<mm>-<dd>.jsonl. additionalProperties is false at every layer so no PII or unintended fields can leak in.",
+  "type": "object",
+  "required": [
+    "trace_id",
+    "skill",
+    "started_at",
+    "ended_at",
+    "tokens",
+    "cost_usd",
+    "exit"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identifier for this invocation. Sub-invocations carry the parent's trace_id in parent_trace_id."
+    },
+    "parent_trace_id": {
+      "type": ["string", "null"],
+      "description": "Set on sub-invocations (subagent or pre-hydrate); null for top-level invocations.",
+      "default": null
+    },
+    "skill": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Skill name (e.g. dev-loop, pr-iteration, incident-intake)."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp at invocation start."
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp at invocation end."
+    },
+    "model": {
+      "type": "string",
+      "description": "Public model identifier (e.g. claude-opus-4-7); optional but recommended for cost-rate lookups."
+    },
+    "tokens": {
+      "type": "object",
+      "required": ["input", "output", "cache_read", "cache_write"],
+      "additionalProperties": false,
+      "properties": {
+        "input": { "type": "integer", "minimum": 0 },
+        "output": { "type": "integer", "minimum": 0 },
+        "cache_read": { "type": "integer", "minimum": 0 },
+        "cache_write": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cost_usd": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total cost computed from documented per-model rates. 6 decimal places of precision is plenty."
+    },
+    "subagents": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "total_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "mcp_servers_used": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "MCP server names touched during this invocation. Names only; no payloads."
+    },
+    "exit": {
+      "type": "string",
+      "enum": ["success", "halt", "fault", "error", "cancelled"],
+      "description": "Terminal status. 'halt' is a documented soft-stop (e.g. ambiguity-halt); 'fault' is in-flow; 'error' is environment / pre-condition."
+    }
+  }
+}
