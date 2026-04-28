@@ -153,6 +153,22 @@ function validateEntry(entry) {
       throw new Error(`${field} must be a non-empty string when provided; got ${JSON.stringify(entry[field])}`);
     }
   }
+  // Quirk titles render as one-line bullets with an OPTIONAL trailing
+  // `(<linked>)` group: `<title>[ (<linked>)]. Remediation: ...`.
+  // A title that itself ends with `)` (e.g. "Deprecated API (v1)") is
+  // ambiguous — extractQuirkTitle cannot tell the trailing paren from
+  // the linked group without rendering metadata, so an idempotent
+  // upsert would either drop the suffix or duplicate the bullet.
+  // Require quirk authors to phrase the title without a trailing
+  // parenthetical; the linked field is the right place for refs.
+  if (entry.section === "quirk" && /\)\s*$/.test(entry.title)) {
+    throw new Error(
+      `title for section=quirk must not end with \`)\` because the renderer's optional ` +
+        `\` (<linked>)\` group makes a trailing parenthetical ambiguous on idempotent upsert. ` +
+        `Phrase the title without a trailing parenthetical (or move the parenthesis earlier in the title); ` +
+        `use --linked for the reference itself. Got ${JSON.stringify(entry.title)}.`,
+    );
+  }
   // Quirks render only `Last verified: <firstSeen>` and have no Owner
   // bullet. renderEntry silently drops `nextReview` / `owner` for
   // section=quirk; reject them at validation time so a caller mistake
@@ -276,8 +292,13 @@ function normaliseTitle(t) {
  * `<title>[ (<linked>)]. Remediation: <r>. Last verified: <date>.`
  * — the title boundary is the literal ` (` group OR the literal
  * `. Remediation:` tag. We split on those, not on raw `.` or `(`,
- * so titles containing dots (e.g. "v2.0 build") or parens
- * (e.g. "Node (LTS)") survive.
+ * so titles containing dots (e.g. "v2.0 build") or non-trailing
+ * parens (e.g. "Node (LTS) on this repo") survive.
+ *
+ * Trailing-paren ambiguity: a title that itself ends with `)` (e.g.
+ * "Deprecated API (v1)") would be indistinguishable from the
+ * optional `(<linked>)` group. validateEntry rejects that shape at
+ * write time so this extractor never has to disambiguate.
  */
 function extractQuirkTitle(bulletBody) {
   const remIdx = bulletBody.indexOf(". Remediation:");

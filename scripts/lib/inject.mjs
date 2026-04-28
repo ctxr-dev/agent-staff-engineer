@@ -93,6 +93,14 @@ export function removeManagedBlock(existing, markers) {
   }
   if (indices == null) return existing;
   const { beginLineStart, endLineEnd } = indices;
+  // Preserve a leading UTF-8 BOM if the file started with one. The
+  // BOM-tolerant findLineContaining lets the begin marker land at
+  // offset 1 when the file opens with \uFEFF; in that case
+  // beginLineStart is 0 and the naive `slice(0, 0)` would silently
+  // drop the BOM, breaking the byte-for-byte preservation contract
+  // documented at the top of this module. injectManagedBlock makes
+  // the same accommodation; mirror it here.
+  const hadBom = existing.charCodeAt(0) === 0xfeff;
   // Trim trailing / leading runs of blank lines (sequences of `\r?\n`)
   // on each side. The intent is to collapse the gap left by the
   // removed block, NOT to scrub leading/trailing tabs or spaces on
@@ -107,9 +115,10 @@ export function removeManagedBlock(existing, markers) {
   // in the same flavour. The first newline observed wins (matches the
   // detectEol helper convention used by seed.mjs / append-entry.mjs).
   const eol = detectEol(existing);
-  if (before.length === 0) return after;
-  if (after.length === 0) return before + eol;
-  return `${before}${eol}${eol}${after}`;
+  const bomPrefix = hadBom && !before.startsWith("\uFEFF") ? "\uFEFF" : "";
+  if (before.length === 0) return bomPrefix + after;
+  if (after.length === 0) return bomPrefix + before + eol;
+  return `${bomPrefix}${before}${eol}${eol}${after}`;
 }
 
 function detectEol(text) {
