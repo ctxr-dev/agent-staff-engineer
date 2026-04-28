@@ -434,8 +434,13 @@ export function record(input, stateDir) {
 // ---------- internals ----------
 
 function normaliseTokens(t) {
-  if (!t || typeof t !== "object") {
-    throw new Error("metrics: tokens must be an object");
+  // Reject arrays explicitly. `typeof [] === "object"` is true, so
+  // `tokens: []` would silently coerce all four fields to 0 via
+  // int() and produce a schema-valid record with zero token counts
+  // and zero cost. That hides caller mistakes; require a plain
+  // (non-array) object.
+  if (t == null || typeof t !== "object" || Array.isArray(t)) {
+    throw new Error("metrics: tokens must be a plain object with input/output/cache_read/cache_write");
   }
   return {
     input: int(t.input),

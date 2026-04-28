@@ -424,7 +424,15 @@ function newSkillAcc() {
 }
 
 function isPlainRecord(r) {
-  return r && typeof r === "object" && typeof r.skill === "string" && r.tokens && typeof r.tokens === "object";
+  // Reject arrays at every layer. `typeof [] === "object"` is true,
+  // so a corrupted JSONL line shaped as `{"skill":"x","tokens":[]}`
+  // would otherwise pass and count as an invocation with 0 tokens
+  // and 0 cost, skewing the rollup. Require both `r` itself and
+  // `r.tokens` to be plain (non-array) objects.
+  if (r == null || typeof r !== "object" || Array.isArray(r)) return false;
+  if (typeof r.skill !== "string") return false;
+  if (r.tokens == null || typeof r.tokens !== "object" || Array.isArray(r.tokens)) return false;
+  return true;
 }
 
 function num(v) {
