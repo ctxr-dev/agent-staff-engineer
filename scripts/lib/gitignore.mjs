@@ -34,13 +34,31 @@ export async function ensureGitignore(targetDir, relativePaths) {
   let content = originalRaw ?? "";
   const added = [];
 
-  for (const rel of list) {
+  for (const item of list) {
+    // Each entry is either a bare string (legacy form, treated as a
+    // directory pattern with trailing slash) OR an object
+    // `{ pattern, type: "file" | "dir" }` so callers can ignore a
+    // single regenerable file (e.g. .claude/state/knowledge-index.db)
+    // without ending up with a directory-only pattern that does not
+    // match the file. Default stays "dir" so existing call sites
+    // (`.development/local`, `.development/cache`) keep their
+    // original behaviour byte-for-byte.
+    let rel;
+    let type = "dir";
+    if (typeof item === "string") {
+      rel = item;
+    } else if (item && typeof item === "object" && typeof item.pattern === "string") {
+      rel = item.pattern;
+      if (item.type === "file" || item.type === "dir") type = item.type;
+    } else {
+      throw new Error(`ensureGitignore: entry must be a string or { pattern, type } object; got ${JSON.stringify(item)}`);
+    }
     const normalised = normalisePattern(rel);
     if (!normalised) {
       throw new Error(`ensureGitignore: empty gitignore pattern after normalisation: "${rel}"`);
     }
     if (isListed(content, normalised)) continue;
-    const canonical = `/${normalised}/`;
+    const canonical = type === "file" ? `/${normalised}` : `/${normalised}/`;
     const separator = content.length === 0 || content.endsWith("\n") ? "" : "\n";
     content = `${content}${separator}${canonical}\n`;
     added.push(canonical);

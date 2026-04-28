@@ -51,7 +51,17 @@ import { query as queryEntries } from "./query.mjs";
  * @param {string} args.domain         domain slug under knowledge/ (e.g. "patterns", "incidents")
  * @param {string} args.slug           entry slug (matches data.id; written as <slug>.md)
  * @param {object} args.data           frontmatter object; full schema fields required
- * @param {string} args.body           markdown body; written verbatim
+ * @param {string} args.body           markdown body. The serialiser
+ *                                     (frontmatter.mjs::serialiseEntry)
+ *                                     prepends a leading newline if
+ *                                     missing AND ensures a trailing
+ *                                     newline; it does NOT modify any
+ *                                     other byte. Most callers pass
+ *                                     prose that already starts with
+ *                                     content (no leading newline) and
+ *                                     ends with one trailing `\n`, so
+ *                                     the normalisation is a no-op in
+ *                                     practice.
  * @param {string} [args.stateDir]     absolute path to project .claude/state (for the reindex-pending marker)
  * @param {object} [_deps]             test injection seam
  * @returns {{ ok: true, path: string, warnings: string[] } | { ok: false, error: string, step: number }}
@@ -59,8 +69,14 @@ import { query as queryEntries } from "./query.mjs";
 export function writeEntry(args, _deps = {}) {
   const { wikiRoot, domain, slug, data, body } = args;
   if (!isNonEmptyString(wikiRoot)) return fail(0, "writeEntry: wikiRoot is required");
-  if (!isNonEmptyString(domain) || /[\\/]/.test(domain) || domain === ".." || domain.startsWith("."))
-    return fail(0, `writeEntry: invalid domain ${JSON.stringify(domain)}`);
+  // Domain must look like a real slug: lowercase alnum + hyphen +
+  // underscore, starting with a letter. Whitespace, dots, slashes,
+  // and other path-traversal-adjacent shapes all fail. Without the
+  // tighter pattern, values like `" "`, `"my domain"`, or
+  // `"patterns "` would create unexpected directories under
+  // <wikiRoot>/knowledge/ and defeat the "domain slug" assumption.
+  if (typeof domain !== "string" || !/^[a-z][a-z0-9_-]*$/.test(domain))
+    return fail(0, `writeEntry: invalid domain ${JSON.stringify(domain)} (must match /^[a-z][a-z0-9_-]*$/)`);
   if (!isNonEmptyString(slug) || !/^[a-z][a-z0-9-]*$/.test(slug))
     return fail(0, `writeEntry: invalid slug ${JSON.stringify(slug)} (must match /^[a-z][a-z0-9-]*$/)`);
   if (data == null || typeof data !== "object") return fail(0, "writeEntry: data must be an object");
@@ -257,7 +273,12 @@ export function writeEntry(args, _deps = {}) {
 // ---------- internals ----------
 
 function isNonEmptyString(s) {
-  return typeof s === "string" && s.length > 0;
+  // Trim before measuring length: a whitespace-only wikiRoot or
+  // stateDir would otherwise resolve to some unexpected path
+  // (e.g. cwd + "   " collapsing to cwd) and writes would land
+  // outside the intended tree. The full wikiRoot / stateDir
+  // arguments are paths, so trim-then-empty is a clean reject.
+  return typeof s === "string" && s.trim().length > 0;
 }
 
 function fail(step, error) {

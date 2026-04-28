@@ -919,11 +919,13 @@ if (opsConfig.paths.gitignore_dev_working_dir !== false) {
 // produce noisy diffs and merge conflicts. Gitignored unconditionally
 // (NOT gated on gitignore_dev_working_dir, which is specifically about
 // the .development tree). Resolves the schema claim that this path is
-// "Gitignored by the installer".
+// "Gitignored by the installer". `type: "file"` so ensureGitignore
+// emits `/path/to.db` (no trailing slash) — directory-only patterns
+// would not match the SQLite file.
 {
   const sqlitePath = opsConfig.knowledge_store?.frontier?.sqlite_path
     ?? ".claude/state/knowledge-index.db";
-  await ensureGitignore(TARGET, [sqlitePath]);
+  await ensureGitignore(TARGET, [{ pattern: sqlitePath, type: "file" }]);
 }
 for (const w of writes) {
   if (w.content == null) continue;
