@@ -67,10 +67,19 @@ export function computeCostUsd(tokens, model, rates = DEFAULT_RATES) {
   // opus rate. The DEFAULT_RATES.default tail keeps cost non-zero
   // even when the override omits both the model AND `default`, so
   // computeCostUsd never throws on a partial map.
+  // Use Object.hasOwn at every step so model values that match
+  // inherited Object.prototype properties ("toString", "valueOf",
+  // "__proto__", "constructor", ...) never accidentally resolve to
+  // a non-rate function/value, which would coerce to NaN through
+  // the multiplications below and downstream blow up writeRecord's
+  // cost_usd validation. The own-property check ALSO defends against
+  // a malicious input pretending to set `__proto__` to spoof a
+  // pricing entry, which is cheap insurance even though the model
+  // string is normally agent-supplied.
   const rate =
-    (model && rates && rates[model]) ||
-    (model && DEFAULT_RATES[model]) ||
-    (rates && rates.default) ||
+    pickRate(rates, model) ||
+    pickRate(DEFAULT_RATES, model) ||
+    pickRate(rates, "default") ||
     DEFAULT_RATES.default;
   const cost =
     (tokens.input * rate.input) +
@@ -81,6 +90,23 @@ export function computeCostUsd(tokens, model, rates = DEFAULT_RATES) {
   // ECMAScript-spec-stable for finite values, but we round defensively
   // so cross-process JSON diffs stay byte-identical.
   return Number((cost / 1_000_000).toFixed(6));
+}
+
+function pickRate(table, key) {
+  // Own-property + shape check. Returns the rate entry only when the
+  // table has its own (non-inherited) property at `key` AND the value
+  // looks like a rate object (numeric input/output/cache_read/cache_write).
+  // Falsy return signals "not a rate" so the chain in computeCostUsd
+  // can fall through to the next step.
+  if (table == null || typeof table !== "object") return null;
+  if (typeof key !== "string" || key.length === 0) return null;
+  if (!Object.hasOwn(table, key)) return null;
+  const r = table[key];
+  if (r == null || typeof r !== "object") return null;
+  for (const f of ["input", "output", "cache_read", "cache_write"]) {
+    if (typeof r[f] !== "number" || !Number.isFinite(r[f])) return null;
+  }
+  return r;
 }
 
 /**

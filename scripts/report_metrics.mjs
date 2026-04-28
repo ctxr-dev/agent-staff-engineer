@@ -47,6 +47,24 @@ async function main() {
     process.exit(2);
   }
 
+  // Reject bare flags (`--metrics-dir` without a value) explicitly.
+  // parseArgv yields boolean `true` for a bare flag; without this
+  // guard the value would be coerced (`String(true)` -> "true",
+  // `Number(true)` -> 1) and silently produce surprising behaviour
+  // (--metrics-dir=true reading a directory called "true";
+  // --token-ceiling silently setting the threshold to 1; etc.).
+  // Apply the guard to every string-valued AND number-valued flag.
+  for (const f of ["metrics-dir", "out-dir", "prev-week-json", "week", "cache-min", "token-ceiling"]) {
+    if (f in flags && typeof flags[f] !== "string") {
+      process.stderr.write(`error: --${f} requires a value (got bare flag)\n`);
+      process.exit(2);
+    }
+    if (typeof flags[f] === "string" && flags[f].length === 0) {
+      process.stderr.write(`error: --${f} value must be non-empty\n`);
+      process.exit(2);
+    }
+  }
+
   const cwd = process.cwd();
   const metricsDir = flags["metrics-dir"]
     ? resolve(cwd, String(flags["metrics-dir"]))
