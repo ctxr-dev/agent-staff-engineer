@@ -114,6 +114,13 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 - [rules/memory-hygiene.md](rules/memory-hygiene.md): what the agent captures (and doesn't) in project memory.
 - Memory seeds (see the index below); the installer surfaces the stack-filtered subset as wrapper memory entries.
 
+### Authoring CLAUDE.md (compound-learning registry)
+
+- [design/claude-md-authoring.md](design/claude-md-authoring.md): the editorial guide. What belongs in CLAUDE.md vs in the wiki archive; review cadence; anti-examples.
+- [templates/claude-md/compound-learning.md](templates/claude-md/compound-learning.md): registry template (Patterns that worked / failed / Codebase quirks).
+- [scripts/lib/claude-md/seed.mjs](scripts/lib/claude-md/seed.mjs): idempotent registry seeder. Invoked from `scripts/install.mjs` during the CLAUDE.md pass on every install / update; also invokable ad-hoc via `seedRegistryAtPath()`.
+- [scripts/lib/claude-md/append-entry.mjs](scripts/lib/claude-md/append-entry.mjs): runtime upsert API + CLI for appending compound-learning entries.
+
 ### Planning and parallel exploration
 
 - [memory-seeds/planning-parallel-agents.md](memory-seeds/planning-parallel-agents.md): when and how to fan out Explore agents during Phase 1 of a plan.

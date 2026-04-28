@@ -45,18 +45,40 @@
  */
 export function injectManagedBlock(existing, managed, markers) {
   assertValidMarkers(markers);
-  const body = ensureTrailingNewline(managed);
-  const block = `${markers.begin}\n${body}${markers.end}\n`;
+  // Detect the file's prevailing EOL once and re-emit the managed
+  // block + joiners in the same flavour. Without this, a CRLF
+  // CLAUDE.md ended up with mixed-EOL output (CRLF user prose + LF
+  // joiners + LF inside the managed block); the byte-for-byte
+  // preservation contract documented at the top of this module
+  // didn't actually hold for Windows checkouts. New / empty files
+  // default to LF (matches the rest of the bundle).
+  const eol = detectEol(existing);
+  // Normalise the caller-supplied managed body's INTERNAL newlines to
+  // the file's EOL too, not just the joiners + trailing newline.
+  // Callers commonly build `managed` with bare `\n`s; injecting that
+  // verbatim into a CRLF file produced mixed-EOL output INSIDE the
+  // managed block, which contradicts the byte-for-byte preservation
+  // contract for everything around it. normaliseEol first collapses
+  // any pre-existing CRLF in the input (so we don't end up with
+  // `\r\r\n`) then re-emits the chosen EOL at every line boundary.
+  const normalised = normaliseEol(managed, eol);
+  const body = ensureTrailingNewline(normalised, eol);
+  const block = `${markers.begin}${eol}${body}${markers.end}${eol}`;
   if (existing == null || existing === "") {
-    const preamble = markers.preamble ? ensureTrailingNewline(markers.preamble) + "\n" : "";
+    const preamble = markers.preamble ? ensureTrailingNewline(markers.preamble, eol) + eol : "";
     return `${preamble}${block}`;
   }
   const indices = locateMarkers(existing, markers);
   if (indices == null) {
     // No markers: append the block at the end of the file, preserving a
     // single blank-line separator when the existing content does not already
-    // end with a newline.
-    const sep = existing.endsWith("\n\n") ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
+    // end with a newline. CRLF-aware: `\r\n\r\n` must satisfy "already has
+    // blank line", `\r\n` must satisfy "ends with newline".
+    const sep = /(?:\r?\n){2,}$/.test(existing)
+      ? ""
+      : /(?:\r?\n)$/.test(existing)
+        ? eol
+        : eol + eol;
     return `${existing}${sep}${block}`;
   }
   const { beginLineStart, endLineEnd } = indices;
@@ -66,11 +88,11 @@ export function injectManagedBlock(existing, managed, markers) {
   const hadBom = existing.charCodeAt(0) === 0xfeff;
   const before = existing.slice(0, beginLineStart);
   const after = existing.slice(endLineEnd);
-  const beforeTrim = before.replace(/\n+$/, "");
-  const afterTrim = after.replace(/^\n+/, "");
+  const beforeTrim = before.replace(/(?:\r?\n)+$/, "");
+  const afterTrim = after.replace(/^(?:\r?\n)+/, "");
   const bomPrefix = hadBom && !beforeTrim.startsWith("\uFEFF") ? "\uFEFF" : "";
-  const joiner = beforeTrim.length === 0 ? "" : "\n\n";
-  const trailer = afterTrim.length === 0 ? "" : "\n\n";
+  const joiner = beforeTrim.length === 0 ? "" : eol + eol;
+  const trailer = afterTrim.length === 0 ? "" : eol + eol;
   return `${bomPrefix}${beforeTrim}${joiner}${block}${trailer}${afterTrim}`;
 }
 
@@ -93,11 +115,39 @@ export function removeManagedBlock(existing, markers) {
   }
   if (indices == null) return existing;
   const { beginLineStart, endLineEnd } = indices;
-  const before = existing.slice(0, beginLineStart).replace(/\n+$/, "");
-  const after = existing.slice(endLineEnd).replace(/^\n+/, "");
-  if (before.length === 0) return after;
-  if (after.length === 0) return before + "\n";
-  return `${before}\n\n${after}`;
+  // Preserve a leading UTF-8 BOM if the file started with one. The
+  // BOM-tolerant findLineContaining lets the begin marker land at
+  // offset 1 when the file opens with \uFEFF; in that case
+  // beginLineStart is 0 and the naive `slice(0, 0)` would silently
+  // drop the BOM, breaking the byte-for-byte preservation contract
+  // documented at the top of this module. injectManagedBlock makes
+  // the same accommodation; mirror it here.
+  const hadBom = existing.charCodeAt(0) === 0xfeff;
+  // Trim trailing / leading runs of blank lines (sequences of `\r?\n`)
+  // on each side. The intent is to collapse the gap left by the
+  // removed block, NOT to scrub leading/trailing tabs or spaces on
+  // surrounding lines. CRLF files (common on Windows checkouts) end
+  // lines with `\r\n`; the previous `/\n+$/` and `/^\n+/` left a
+  // stray `\r` adjacent to the strip site. The `\r?` matches both
+  // forms so the remaining content is self-consistent regardless of
+  // the file's EOL flavour.
+  const before = existing.slice(0, beginLineStart).replace(/(?:\r?\n)+$/, "");
+  const after = existing.slice(endLineEnd).replace(/^(?:\r?\n)+/, "");
+  // Detect the file's prevailing EOL once so we re-emit the separator
+  // in the same flavour. The first newline observed wins (matches the
+  // detectEol helper convention used by seed.mjs / append-entry.mjs).
+  const eol = detectEol(existing);
+  const bomPrefix = hadBom && !before.startsWith("\uFEFF") ? "\uFEFF" : "";
+  if (before.length === 0) return bomPrefix + after;
+  if (after.length === 0) return bomPrefix + before + eol;
+  return `${bomPrefix}${before}${eol}${eol}${after}`;
+}
+
+function detectEol(text) {
+  if (typeof text !== "string" || text.length === 0) return "\n";
+  const idx = text.indexOf("\n");
+  if (idx === -1) return "\n";
+  return idx > 0 && text[idx - 1] === "\r" ? "\r\n" : "\n";
 }
 
 /** Locate the begin/end line offsets in `existing`. Returns null when missing. */
@@ -151,8 +201,23 @@ function lineEndInclusive(s, pos) {
   return nl === -1 ? s.length : nl + 1;
 }
 
-function ensureTrailingNewline(s) {
-  return s.endsWith("\n") ? s : s + "\n";
+function ensureTrailingNewline(s, eol = "\n") {
+  // Accept either a bare `\n` or a `\r\n` as a satisfied trailing
+  // newline so a CRLF input doesn't pick up an extra `\n` after its
+  // existing `\r\n`. When appending, use the caller-supplied eol so
+  // the appended newline matches the file's prevailing flavour.
+  if (s.endsWith("\r\n") || s.endsWith("\n")) return s;
+  return s + eol;
+}
+
+function normaliseEol(s, eol) {
+  // First collapse any existing CRLF/CR to LF so we don't double-emit
+  // (`\r\n` -> `\n` then -> `eol`). Then re-emit every LF as `eol`.
+  // Idempotent: running this twice with the same eol yields the same
+  // string. Inputs already in the target eol pass through unchanged.
+  if (typeof s !== "string" || s.length === 0) return s;
+  const lf = s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  return eol === "\n" ? lf : lf.replace(/\n/g, eol);
 }
 
 function assertValidMarkers({ begin, end }) {

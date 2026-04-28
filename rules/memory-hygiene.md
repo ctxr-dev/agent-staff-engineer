@@ -58,6 +58,16 @@ On a given project, Claude memory should capture:
 - If a project's memory folder contains entries that contradict this bundle's rules (say, an old entry that said "Claude merges PRs on request"), raise the contradiction with the user. Do not silently override and do not silently follow.
 - The agent never rewrites memory on behalf of the user. It proposes; the user decides.
 
+## CLAUDE.md is institutional registry, not prompt dump
+
+Project memory (the topic of this rule) is per-Claude, ephemeral across machines. The project's `CLAUDE.md` is the cross-team, version-controlled counterpart: a **compound-learning registry** that distils patterns that worked, patterns that failed, and codebase quirks. Convergent 2026 research finds human-curated CLAUDE.md raises agent success ~ 4 %; AI-generated CLAUDE.md slightly lowers it. The difference is editorial, not generative.
+
+- Authoring guide: [`design/claude-md-authoring.md`](../design/claude-md-authoring.md).
+- Registry template: [`templates/claude-md/compound-learning.md`](../templates/claude-md/compound-learning.md).
+- Append API (idempotent upsert + CLI): [`scripts/lib/claude-md/append-entry.mjs`](../scripts/lib/claude-md/append-entry.mjs).
+
+Memory captures session-specific feedback and corrections per Claude's normal hygiene; CLAUDE.md captures distilled, durable patterns that the team votes on via PR review. Do not duplicate one in the other.
+
 ## Related rules
 
 - [tracker-source-of-truth.md](tracker-source-of-truth.md): memory is not source of truth.
