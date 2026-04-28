@@ -168,26 +168,52 @@ export class MalformedRegistryError extends Error {
  */
 export function findRegistryMarkers(content) {
   if (typeof content !== "string") return null;
-  const begin = findLineAnchored(content, REGISTRY_BEGIN_MARKER, false);
-  const end = findLineAnchored(content, REGISTRY_END_MARKER, true);
-  if (begin === -1 && end === -1) return null;
-  if (begin === -1 || end === -1) {
+  // Pair the FIRST begin with the FIRST end AFTER it (not the last end
+  // anywhere). The previous "first begin / last end" approach would
+  // span a huge range across unrelated content if the file ever ended
+  // up with multiple registry blocks (a buggy double-seed in an
+  // earlier version) or a stray copy of the end marker further down.
+  // First begin: the leftmost line-anchored hit. First end: the
+  // leftmost line-anchored hit at or after begin + REGISTRY_BEGIN_MARKER.length.
+  const begin = findLineAnchored(content, REGISTRY_BEGIN_MARKER, 0);
+  if (begin === -1) {
+    const strayEnd = findLineAnchored(content, REGISTRY_END_MARKER, 0);
+    if (strayEnd !== -1) {
+      throw new MalformedRegistryError(
+        `CLAUDE.md contains a registry END marker without a matching BEGIN. ` +
+          "Restore the missing BEGIN marker or remove the orphan END, then re-run.",
+      );
+    }
+    return null;
+  }
+  const searchEndFrom = begin + REGISTRY_BEGIN_MARKER.length;
+  const end = findLineAnchored(content, REGISTRY_END_MARKER, searchEndFrom);
+  if (end === -1) {
     throw new MalformedRegistryError(
-      `CLAUDE.md contains exactly one of the registry markers (begin=${begin !== -1}, end=${end !== -1}). ` +
-        "Restore the missing marker or remove the orphan, then re-run.",
+      `CLAUDE.md contains a registry BEGIN marker without a matching END after it. ` +
+        "Restore the missing END marker (or remove the orphan BEGIN), then re-run.",
     );
   }
-  if (end <= begin) {
+  // Detect a SECOND begin marker after the first end. That means the
+  // file has more than one registry block and quietly accepting the
+  // first pair would let append-entry edit one block while the other
+  // drifts. Fail-fast so the user collapses the blocks by hand.
+  const secondBegin = findLineAnchored(
+    content,
+    REGISTRY_BEGIN_MARKER,
+    end + REGISTRY_END_MARKER.length,
+  );
+  if (secondBegin !== -1) {
     throw new MalformedRegistryError(
-      `CLAUDE.md contains the registry END marker before the BEGIN marker (begin=${begin}, end=${end}). ` +
-        "Reorder the marker pair, then re-run.",
+      `CLAUDE.md contains multiple registry BEGIN markers (offsets ${begin} and ${secondBegin}). ` +
+        "Collapse the file to ONE registry block, then re-run.",
     );
   }
   return { begin, end };
 }
 
-function findLineAnchored(haystack, needle, fromEnd) {
-  let pos = fromEnd ? haystack.lastIndexOf(needle) : haystack.indexOf(needle);
+function findLineAnchored(haystack, needle, fromIndex = 0) {
+  let pos = haystack.indexOf(needle, fromIndex);
   while (pos !== -1) {
     // Valid line-start boundaries: start-of-string (pos === 0), the
     // character right after a `\n`, OR position 1 when the file opens
@@ -208,9 +234,7 @@ function findLineAnchored(haystack, needle, fromEnd) {
       haystack[endPos] === "\n" ||
       haystack[endPos] === "\r";
     if (startOk && endOk) return pos;
-    pos = fromEnd
-      ? haystack.lastIndexOf(needle, pos - 1)
-      : haystack.indexOf(needle, pos + 1);
+    pos = haystack.indexOf(needle, pos + 1);
   }
   return -1;
 }

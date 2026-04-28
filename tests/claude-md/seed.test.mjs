@@ -193,3 +193,30 @@ test("isPristineRegistryBlock: returns false on malformed markers (does not thro
   // on the next mutating run.
   assert.equal(isPristineRegistryBlock(half), false);
 });
+
+test("findRegistryMarkers: pairs first-begin with first-end-AFTER-it (not last-end)", () => {
+  // Earlier "first begin / last end" pairing would span across an
+  // unrelated copy of the end marker further down in the file. Now we
+  // pair with the FIRST line-anchored end after the begin so the
+  // span is bounded to the legitimate block.
+  const block = `body of the real block\n`;
+  const realBlock = `${REGISTRY_BEGIN_MARKER}\n${block}${REGISTRY_END_MARKER}`;
+  // A second copy of the end marker quoted indented so it is NOT line-
+  // anchored — line anchoring is what protects against this case.
+  const trailing = `Some prose mentions    ${REGISTRY_END_MARKER}    indented in passing.\n`;
+  const content = `# top\n\n${realBlock}\n\n${trailing}`;
+  const located = findRegistryMarkers(content);
+  assert.ok(located);
+  const expectedEnd = content.indexOf(REGISTRY_END_MARKER);
+  assert.equal(located.end, expectedEnd);
+});
+
+test("findRegistryMarkers: throws MalformedRegistryError when the file contains TWO registry blocks", () => {
+  // Defensive against an earlier buggy double-seed (or hand-paste)
+  // that left two complete registry blocks in the file. Quietly
+  // editing one block while the other drifts is worse than failing
+  // fast and asking the user to collapse the file.
+  const oneBlock = `${REGISTRY_BEGIN_MARKER}\nbody-1\n${REGISTRY_END_MARKER}`;
+  const twoBlocks = `# top\n\n${oneBlock}\n\nintervening prose\n\n${oneBlock}\n`;
+  assert.throws(() => findRegistryMarkers(twoBlocks), MalformedRegistryError);
+});
