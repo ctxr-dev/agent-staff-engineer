@@ -80,13 +80,29 @@ export function seedRegistryInContent(existing) {
     return { content: existing, changed: false };
   }
 
-  // Markers absent: append the block at the end with a blank-line
-  // separator so the user's existing prose stays intact.
-  const sep = existing.endsWith("\n\n") ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
+  // Markers absent: append the block at the end. Preserve the file's
+  // existing line-ending style so a CRLF checkout doesn't end up with
+  // a mixed-EOL tail (the user's prose stays CRLF; the appended block
+  // matches). Match append-entry.mjs's detectEol contract.
+  const eol = detectEol(existing);
+  const block = renderBlock(STUB_BODY) + "\n";
+  const reEoled = eol === "\r\n" ? block.replace(/\r?\n/g, "\r\n") : block;
+  let sep;
+  if (existing.endsWith(eol + eol)) sep = "";
+  else if (existing.endsWith(eol)) sep = eol;
+  else sep = eol + eol;
   return {
-    content: existing + sep + renderBlock(STUB_BODY) + "\n",
+    content: existing + sep + reEoled,
     changed: true,
   };
+}
+
+function detectEol(text) {
+  // Use the first newline observed; the file is presumed self-consistent.
+  if (typeof text !== "string" || text.length === 0) return "\n";
+  const idx = text.indexOf("\n");
+  if (idx === -1) return "\n";
+  return idx > 0 && text[idx - 1] === "\r" ? "\r\n" : "\n";
 }
 
 /**
