@@ -135,10 +135,14 @@ export function readRecordsInWindow(metricsDir, start, end) {
     for (const rawLine of lines) {
       // Strip a trailing `\r` so a JSONL file produced or edited under
       // CRLF (Windows checkout, certain editors, gitattributes
-      // text=auto) round-trips cleanly. Without the strip, every
-      // valid-looking record from a CRLF file would JSON.parse-throw
-      // (the trailing `\r` is not legal whitespace inside JSON tokens)
-      // and the entire week's data would silently disappear.
+      // text=auto) is normalised before we treat it as a record line.
+      // JSON.parse accepts `\r` as insignificant whitespace, so the
+      // strip is not strictly required for parsing — but `split("\n")`
+      // leaves a bare `\r` as a "line" of its own when a file ends
+      // with `\r\n`, and downstream consumers that re-serialise the
+      // record back are sensitive to the orphan `\r` glued to the
+      // trailing brace. Normalising here keeps the read path
+      // predictable across EOL flavours.
       const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
       if (line.length === 0) continue;
       let parsed;

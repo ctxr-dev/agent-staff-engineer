@@ -35,12 +35,12 @@
     "started_at": {
       "type": "string",
       "format": "date-time",
-      "description": "ISO 8601 UTC timestamp at invocation start."
+      "description": "ISO 8601 timestamp at invocation start. Both Z-form (e.g. `2026-04-28T10:00:00Z`) and explicit-offset form (e.g. `2026-04-28T05:00:00-05:00`) are accepted; the writer normalises offset timestamps to the corresponding UTC calendar day for the per-day JSONL filename."
     },
     "ended_at": {
       "type": "string",
       "format": "date-time",
-      "description": "ISO 8601 UTC timestamp at invocation end."
+      "description": "ISO 8601 timestamp at invocation end. Same shape rules as started_at (Z-form or explicit-offset)."
     },
     "model": {
       "type": "string",

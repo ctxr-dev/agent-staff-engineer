@@ -26,7 +26,7 @@
 // (useful in tests and when a model's rate changes between releases).
 
 import { mkdirSync, appendFileSync, existsSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 
 // Per-million-token rates in USD. Source: documented Anthropic public
@@ -496,16 +496,11 @@ export function metricsDirForProject(projectRoot) {
   return stateDirForProject(projectRoot);
 }
 
-// Build a portable POSIX-style relative path so callers logging
-// `recorded to <path>` get a consistent shape across OSes. Uses
-// path.relative() rather than a raw startsWith strip so unrelated
-// path prefixes (e.g. base "/a/b" vs absPath "/a/bad/file") don't
-// produce a misleading "ad/file"; relative() emits "../bad/file"
-// instead.
-export function toPosixRelative(absPath, base) {
-  const rel = relative(base, absPath);
-  return rel.split(sep).filter(Boolean).join("/");
-}
+// Removed: in-file `toPosixRelative(absPath, base)`. It duplicated
+// scripts/lib/fsx.mjs::relPosix and reversed the argument order vs
+// Node's `path.relative(from, to)`. Callers that need a portable
+// POSIX-style relative path should import `relPosix(from, to)` from
+// scripts/lib/fsx.mjs directly.
 
 // `dirname` is re-exported only because callers using `metricsDirForProject`
 // sometimes want the parent of the metrics dir. Keep this minimal so we
