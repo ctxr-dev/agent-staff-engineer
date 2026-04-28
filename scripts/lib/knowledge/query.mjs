@@ -159,29 +159,37 @@ export function enumerateEntries(wikiRoot, opts = {}) {
 }
 
 function computeTreeFingerprint(dirMtimeMs, leafFiles) {
-  // Combines dir mtime + (count, max-mtime, total-size, path-set hash)
-  // over leaves. O(number of leaves) — cheap relative to YAML parse.
+  // Combines dir mtime + per-leaf (path, mtime, size) hash. O(number
+  // of leaves) — cheap relative to YAML parse.
   // Catches:
   //   * add / remove at the root (dirMtimeMs)
-  //   * in-place edits (max-mtime + total-size)
-  //   * rename / move in any subdirectory (path-set hash)
+  //   * rename / move in any subdirectory (path component of the hash)
+  //   * in-place edits (per-leaf mtime + size — see below)
+  //
+  // Earlier rounds folded just MAX(mtime) + SUM(size) into the
+  // fingerprint. That was vulnerable to a rare collision: a single
+  // leaf edited within the filesystem's mtime resolution that kept
+  // its size unchanged would leave both aggregates stable, and the
+  // cache could serve stale data/body. Switching to a per-leaf hash
+  // makes the fingerprint sensitive to ANY individual leaf
+  // (path, mtimeMs, size) tuple change, eliminating the collision
+  // window without measurably changing CPU cost.
   let maxMtime = 0;
   let totalSize = 0;
-  for (const f of leafFiles) {
+  // Sort by path so the hash is stable across walk ordering.
+  const sorted = [...leafFiles].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const leafHash = createHash("sha256");
+  for (const f of sorted) {
     if (f.mtimeMs > maxMtime) maxMtime = f.mtimeMs;
     totalSize += f.size;
+    leafHash.update(f.path);
+    leafHash.update("\u001f");
+    leafHash.update(String(f.mtimeMs));
+    leafHash.update("\u001f");
+    leafHash.update(String(f.size));
+    leafHash.update("\u001e");
   }
-  // Sort by path so the hash is stable across walk ordering. sha256 is
-  // overkill for a non-adversarial fingerprint but it's a one-shot
-  // expense (one hash per cache miss) and the rest of the bundle
-  // already uses createHash for similar fingerprints.
-  const pathHash = createHash("sha256");
-  const sortedPaths = leafFiles.map((f) => f.path).sort();
-  for (const p of sortedPaths) {
-    pathHash.update(p);
-    pathHash.update("\u001f");
-  }
-  return `${dirMtimeMs}|${leafFiles.length}|${maxMtime}|${totalSize}|${pathHash.digest("hex")}`;
+  return `${dirMtimeMs}|${sorted.length}|${maxMtime}|${totalSize}|${leafHash.digest("hex")}`;
 }
 
 /**
