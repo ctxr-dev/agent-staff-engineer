@@ -28,6 +28,27 @@ describe("gitignore.normalisePattern", () => {
     assert.equal(normalisePattern(null), "");
     assert.equal(normalisePattern(undefined), "");
   });
+
+  it("trims surrounding whitespace before stripping slashes", () => {
+    // Without the trim, an accidental leading/trailing space in a
+    // configured pattern would be written verbatim and gitignore
+    // would never match the intended path.
+    assert.equal(normalisePattern("  .development/local  "), ".development/local");
+    assert.equal(normalisePattern("\t/foo/\n"), "foo");
+  });
+
+  it("converts Windows backslash separators to forward slashes", () => {
+    // Gitignore patterns are slash-based regardless of host OS. A
+    // configured pattern that came from a Windows-style path
+    // (e.g. read from a YAML file authored on Windows) should still
+    // produce a usable gitignore entry.
+    assert.equal(
+      normalisePattern(".claude\\state\\knowledge-index.db"),
+      ".claude/state/knowledge-index.db",
+    );
+    // Mixed separators get normalised too.
+    assert.equal(normalisePattern("a/b\\c/d"), "a/b/c/d");
+  });
 });
 
 describe("gitignore.isListed", () => {

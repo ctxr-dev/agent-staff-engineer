@@ -105,10 +105,24 @@ export async function ensureGitignore(targetDir, relativePaths) {
   return { path: gi, added };
 }
 
-/** Strip leading and trailing slashes from a pattern. Exported for tests. */
+/**
+ * Normalise a pattern for canonical .gitignore form. Trims surrounding
+ * whitespace, converts Windows-style `\\` separators to forward slashes
+ * (gitignore patterns are slash-based regardless of host OS), then
+ * strips leading and trailing slashes so ensureGitignore can re-add
+ * them in the canonical anchored shape. Exported for tests.
+ *
+ * Examples:
+ *   "  .development/local  "          -> ".development/local"
+ *   ".claude\\state\\knowledge-index.db" -> ".claude/state/knowledge-index.db"
+ *   "/.development/local/"            -> ".development/local"
+ */
 export function normalisePattern(p) {
   if (typeof p !== "string") return "";
-  return p.replace(/^\/+|\/+$/g, "");
+  return p
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
 }
 
 /**
