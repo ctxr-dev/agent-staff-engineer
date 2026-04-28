@@ -100,7 +100,7 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 
 - [scripts/lib/knowledge/frontmatter.mjs](scripts/lib/knowledge/frontmatter.mjs): parse + serialise knowledge-entry frontmatter with deterministic field ordering.
 - [scripts/lib/knowledge/validate.mjs](scripts/lib/knowledge/validate.mjs): JSON-Schema + invariant validation (id-vs-filename, last_verified >= first_seen, type=='leaf' under knowledge/, no self-link).
-- [scripts/lib/knowledge/query.mjs](scripts/lib/knowledge/query.mjs): read-side API. Walks the wiki tree; filters by id / kind / entity / parent / status; in-process cache keyed by directory mtime.
+- [scripts/lib/knowledge/query.mjs](scripts/lib/knowledge/query.mjs): read-side API. Walks the wiki tree; filters by id / kind / entity / parent / status; in-process cache invalidated by a multi-field tree fingerprint (dir mtime + leaf count + max leaf mtime + total size + sha256 of sorted leaf paths) so adds, removes, in-place edits, and nested renames all bust the cache.
 - [scripts/lib/knowledge/write.mjs](scripts/lib/knowledge/write.mjs): atomic 4-step write contract (write -> local validate -> skill-llm-wiki validate -> index-rebuild -> frontier reindex marker). Rolls back on any hard failure.
 - [schemas/knowledge-entry.schema.json](schemas/knowledge-entry.schema.json): composite frontmatter contract.
 

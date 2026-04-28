@@ -36,11 +36,16 @@ import { validateEntry } from "./validate.mjs";
 // uses scripts/lib/fsx.mjs::atomicWriteText, which is async (built on
 // fs/promises). writeEntry stays sync because the surrounding work it
 // orchestrates is sync end-to-end (spawnSync into skill-llm-wiki, sync
-// filesystem ops). The semantics are identical: write to a temp file
-// in the same directory, fsync via the rename, best-effort unlink on
-// failure. Centralising into a sync sibling helper inside fsx.mjs is
-// a follow-up; for now keep the parity behaviour inlined and clearly
-// commented.
+// filesystem ops). The semantics are identical: write the bytes to a
+// temp file in the same directory, then atomically replace the target
+// with rename(2); best-effort unlink the temp on failure. rename(2)
+// itself is atomic-replace on POSIX/NTFS but does NOT fsync the file
+// contents or the containing directory — durability against a crash
+// remains "the bytes that hit the disk before the crash"; the contract
+// here is "no half-written leaf is ever visible at <slug>.md", which
+// is exactly what atomic rename guarantees. Centralising into a sync
+// sibling helper inside fsx.mjs is a follow-up; for now keep the
+// parity behaviour inlined and clearly commented.
 
 /**
  * Write one knowledge entry through the atomic 4-step sequence.

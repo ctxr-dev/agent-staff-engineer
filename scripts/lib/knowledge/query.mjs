@@ -14,7 +14,7 @@
 // uniformly want the full result set materialised so they can sort or
 // score it themselves.
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { parseEntry } from "./frontmatter.mjs";
@@ -52,9 +52,11 @@ export function knowledgeDir(wikiRoot) {
  * Enumerate every leaf entry under <wikiRoot>/knowledge.
  *
  * Pure-ish: walks the filesystem, but its result depends only on the
- * tree state at call time. The in-process cache (keyed by realpath) is
- * invalidated when the directory's mtime changes, so post-write callers
- * see fresh results without manual invalidation.
+ * tree state at call time. The in-process cache is keyed by the resolved
+ * `<wikiRoot>/knowledge` path and invalidated by a multi-field tree
+ * fingerprint (dir mtime + leaf count + max leaf mtime + total size +
+ * sha256 of sorted leaf paths) so adds, removes, in-place edits, and
+ * nested renames all bust it without manual invalidation.
  *
  * Returns an array of { id, path, data, body } objects sorted by id.
  *
@@ -63,7 +65,17 @@ export function knowledgeDir(wikiRoot) {
  */
 export function enumerateEntries(wikiRoot, opts = {}) {
   const dir = knowledgeDir(wikiRoot);
-  if (!existsSync(dir)) return [];
+  // Single TOCTOU-safe stat: if the dir is absent, was deleted, or we
+  // can't read it, treat the wiki as empty. The previous existsSync()
+  // pre-check could race with a concurrent rm -r between the test and
+  // the statSync below; one statSync inside try/catch closes the gap.
+  let dirStat;
+  try {
+    dirStat = statSync(dir);
+  } catch {
+    return [];
+  }
+  if (!dirStat.isDirectory()) return [];
   const cacheKey = dir;
 
   // Walk the tree once; collect every leaf's (path, stat) so we can
@@ -101,7 +113,7 @@ export function enumerateEntries(wikiRoot, opts = {}) {
 
   // Fingerprint the tree state. Any add / remove / rename changes the
   // count or path order; any in-place edit changes max-mtime or sum-size.
-  const dirStat = statSync(dir);
+  // dirStat was already obtained above (one stat, no TOCTOU).
   const fingerprint = computeTreeFingerprint(dirStat.mtimeMs, leafFiles);
 
   if (!opts.noCache) {
