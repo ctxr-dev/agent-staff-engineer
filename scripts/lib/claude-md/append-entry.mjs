@@ -12,12 +12,12 @@
 //
 // Public API (camelCase JS shape):
 //   { section: "worked" | "failed" | "quirk",
-//     title: string,                           // required
-//     firstSeen: "YYYY-MM-DD",                 // required (worked/failed)
-//     remediation: string,                     // required
-//     nextReview?: "YYYY-MM-DD",               // worked/failed; defaults to firstSeen + 6 months (end-of-month clamped)
-//     linked?: string,                         // optional issue/PR refs
-//     owner?: string }                         // worked/failed only
+//     title: string,                           // required (every section)
+//     firstSeen: "YYYY-MM-DD",                 // required (every section; quirks render it as "Last verified")
+//     remediation: string,                     // required (every section)
+//     nextReview?: "YYYY-MM-DD",               // worked/failed only; rejected for quirks. Defaults to firstSeen + 6 months (end-of-month clamped)
+//     linked?: string,                         // optional issue/PR refs (every section)
+//     owner?: string }                         // worked/failed only; rejected for quirks
 //
 // Quirks reuse `firstSeen` as the "last verified" date in the rendered
 // output (quirks have no explicit lastVerified field). The renderer

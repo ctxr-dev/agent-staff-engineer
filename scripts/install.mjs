@@ -810,18 +810,33 @@ for (const file of ruleFiles) {
       begin: CLAUDE_MD_BEGIN_MARKER,
       end: CLAUDE_MD_END_MARKER,
     });
-    // Compound-learning registry seed (per design/claude-md-authoring.md).
-    // Idempotent: seedRegistryInContent only writes the stub if the
-    // registry markers are absent. Hand-edited registries are
-    // preserved byte-for-byte across re-installs.
-    const seeded = seedRegistryInContent(content);
-    if (seeded.changed) content = seeded.content;
   } catch (err) {
     process.stderr.write(
       `install: CLAUDE.md injection refused (${err.message}). Skipping.\n` +
         `Fix the marker pair in ${targetPath} and re-run --update, or delete the file.\n`
     );
     content = null;
+  }
+  // Compound-learning registry seed (per design/claude-md-authoring.md).
+  // Idempotent: seedRegistryInContent only writes the stub if the
+  // registry markers are absent. Hand-edited registries are
+  // preserved byte-for-byte across re-installs.
+  // Caught SEPARATELY from the injectManagedBlock call: a malformed
+  // registry marker pair (MalformedRegistryError) is the user's content
+  // to repair; refusing to write CLAUDE.md at all because of registry
+  // damage would also leave the installer-managed block stale, which
+  // is a worse outcome than skipping the registry seed once and
+  // surfacing a clear diagnostic.
+  if (content != null) {
+    try {
+      const seeded = seedRegistryInContent(content);
+      if (seeded.changed) content = seeded.content;
+    } catch (err) {
+      process.stderr.write(
+        `install: CLAUDE.md compound-learning registry seed skipped (${err.message}).\n` +
+          `Fix the registry marker pair in ${targetPath} and re-run --update; the managed block has been refreshed in the meantime.\n`
+      );
+    }
   }
   if (content != null) {
     writes.push({
