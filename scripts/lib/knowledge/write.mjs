@@ -153,8 +153,18 @@ export function writeEntry(args, _deps = {}) {
 
   // Step 2b — skill-llm-wiki validate (full tree). The wiki layer
   // catches dangling parents, id-vs-filename mismatches we already
-  // caught locally, depth-role rules, and slug uniqueness.
-  const wikiResult = runWikiValidate(wikiRoot);
+  // caught locally, depth-role rules, and slug uniqueness. Wrap in
+  // try/catch so a synchronous throw from the runner (default CLI
+  // spawn or an injected stub) is converted into a step-2 failure
+  // and triggers rollback. Without the catch, the throw would
+  // propagate up AFTER step 1 wrote the leaf, violating the atomic
+  // contract.
+  let wikiResult;
+  try {
+    wikiResult = runWikiValidate(wikiRoot);
+  } catch (err) {
+    wikiResult = { ok: false, error: `runner threw: ${err?.message ?? String(err)}` };
+  }
   if (!wikiResult.ok) {
     const rb = rollback(path, priorContent);
     return fail(
@@ -165,8 +175,15 @@ export function writeEntry(args, _deps = {}) {
 
   // Step 3 — index rebuild for the parent chain. Until
   // ctxr-dev/skill-llm-wiki#16 lands `--scope`, the runner falls back
-  // to full-tree rebuild and surfaces a warning.
-  const rebuildResult = runRebuild(wikiRoot, dir);
+  // to full-tree rebuild and surfaces a warning. Same try/catch
+  // guard as step 2b: a synchronous throw must NOT bypass the
+  // rollback path.
+  let rebuildResult;
+  try {
+    rebuildResult = runRebuild(wikiRoot, dir);
+  } catch (err) {
+    rebuildResult = { ok: false, error: `runner threw: ${err?.message ?? String(err)}` };
+  }
   if (!rebuildResult.ok) {
     // Rollback contract: a step-3 failure can occur AFTER the rebuilder
     // has partially updated index.md siblings (cluster / domain
@@ -179,8 +196,16 @@ export function writeEntry(args, _deps = {}) {
     // tree, regardless of which form failed in the original rebuild.
     // If the reconcile rebuild also fails, the wiki really is
     // inconsistent; surface both errors so ops sees the full picture.
+    // The reconcile call gets the same try/catch guard so a
+    // synchronous throw still produces a deterministic
+    // {ok:false, step:3, ...} result.
     const rb = rollback(path, priorContent);
-    const reconcile = runRebuild(wikiRoot, dir, { fullTree: true });
+    let reconcile;
+    try {
+      reconcile = runRebuild(wikiRoot, dir, { fullTree: true });
+    } catch (err) {
+      reconcile = { ok: false, error: `runner threw: ${err?.message ?? String(err)}` };
+    }
     if (!reconcile.ok) {
       return fail(
         3,
