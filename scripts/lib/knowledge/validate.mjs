@@ -10,7 +10,7 @@
 //     wiki tooling; the human authoring path goes through leaves only)
 
 import { readFileSync } from "node:fs";
-import { basename, dirname, resolve, sep } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
@@ -71,7 +71,14 @@ export function validateEntry(data, entryPath) {
   // type must be 'leaf' for entries written into the knowledge/ tree.
   // cluster / domain index.md files are owned by the wiki tooling, not
   // by this writer.
-  if (typeof entryPath === "string" && entryPath.includes(`${sep}knowledge${sep}`)) {
+  //
+  // Path-separator handling: split on /[\\/]+/ rather than `${sep}knowledge${sep}`
+  // so a Windows host that received a POSIX-style path (e.g. an absolute
+  // path passed in from a config) and a POSIX host that received a
+  // backslash-style path both detect the segment correctly. The previous
+  // `sep`-only check missed every cross-style mix, which let a leaf
+  // skip the type-must-be-"leaf" invariant on Windows.
+  if (typeof entryPath === "string" && entryPath.split(/[\\/]+/).includes("knowledge")) {
     if (data?.type !== "leaf") {
       errors.push(`/type must be "leaf" for entries under knowledge/ (got ${JSON.stringify(data?.type)})`);
     }

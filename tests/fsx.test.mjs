@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   atomicWriteText,
   atomicWriteJson,
+  atomicWriteTextSync,
   ensureDir,
   exists,
   readJsonOrNull,
@@ -30,6 +31,22 @@ describe("fsx.atomicWriteText", () => {
     const dir = join(scratch, "clean");
     await ensureDir(dir);
     await atomicWriteText(join(dir, "a.txt"), "ok");
+    const entries = await readdir(dir);
+    assert.ok(entries.every((e) => !e.includes(".tmp-")), `stale tmp in ${entries.join(",")}`);
+  });
+});
+
+describe("fsx.atomicWriteTextSync", () => {
+  it("creates parent directories and writes content synchronously", async () => {
+    const p = join(scratch, "sync/deep/file.txt");
+    const abs = atomicWriteTextSync(p, "sync-hello");
+    assert.equal(await readFile(abs, "utf8"), "sync-hello");
+  });
+
+  it("leaves no .tmp-* file behind after success", async () => {
+    const dir = join(scratch, "sync-clean");
+    await ensureDir(dir);
+    atomicWriteTextSync(join(dir, "b.txt"), "ok");
     const entries = await readdir(dir);
     assert.ok(entries.every((e) => !e.includes(".tmp-")), `stale tmp in ${entries.join(",")}`);
   });

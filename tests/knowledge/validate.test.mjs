@@ -69,6 +69,20 @@ test("validateEntry: type must be 'leaf' for entries under knowledge/", () => {
   assert.ok(r.errors.some((e) => e.includes('/type must be "leaf"')));
 });
 
+test("validateEntry: knowledge/ segment detected on cross-style paths (POSIX + Windows)", () => {
+  // The path-separator check must be platform-agnostic so a Windows host
+  // that received a POSIX path (and vice versa) still applies the
+  // "type must be leaf" invariant. Without segment-splitting, the check
+  // would silently pass on a non-leaf entry depending on slash direction.
+  const winPath = "C:\\repo\\wiki\\knowledge\\patterns\\pr-iteration-bot-id.md";
+  const posixPath = "/abs/wiki/knowledge/patterns/pr-iteration-bot-id.md";
+  for (const p of [winPath, posixPath]) {
+    const r = validateEntry({ ...validData(), type: "cluster" }, p);
+    assert.equal(r.ok, false, `should reject cluster type on path: ${p}`);
+    assert.ok(r.errors.some((e) => e.includes('/type must be "leaf"')));
+  }
+});
+
 test("validateEntry: kind enum enforced", () => {
   const r = validateEntry({ ...validData(), kind: "rumour" }, validPath);
   assert.equal(r.ok, false);

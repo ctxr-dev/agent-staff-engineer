@@ -25,27 +25,22 @@
 // inject `runSkillLlmWiki` and `runIndexRebuild` to drive failure paths
 // without needing the real CLI installed.
 
-import { existsSync, mkdirSync, writeFileSync, unlinkSync, appendFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { atomicWriteTextSync } from "../fsx.mjs";
 import { serialiseEntry } from "./frontmatter.mjs";
 import { validateEntry } from "./validate.mjs";
 
-// Note on the inline atomic-write helper below: the rest of the bundle
-// uses scripts/lib/fsx.mjs::atomicWriteText, which is async (built on
-// fs/promises). writeEntry stays sync because the surrounding work it
-// orchestrates is sync end-to-end (spawnSync into skill-llm-wiki, sync
-// filesystem ops). The semantics are identical: write the bytes to a
-// temp file in the same directory, then atomically replace the target
-// with rename(2); best-effort unlink the temp on failure. rename(2)
-// itself is atomic-replace on POSIX/NTFS but does NOT fsync the file
-// contents or the containing directory — durability against a crash
-// remains "the bytes that hit the disk before the crash"; the contract
-// here is "no half-written leaf is ever visible at <slug>.md", which
-// is exactly what atomic rename guarantees. Centralising into a sync
-// sibling helper inside fsx.mjs is a follow-up; for now keep the
-// parity behaviour inlined and clearly commented.
+// Sync atomic write contract is owned by scripts/lib/fsx.mjs::
+// atomicWriteTextSync — same write-to-temp + rename + cleanup-on-failure
+// shape as the async atomicWriteText, just with sync fs calls. writeEntry
+// stays sync because the surrounding 4-step sequence (spawnSync into
+// skill-llm-wiki, sync filesystem ops, sync frontier marker append) is
+// sync end-to-end. rename(2) is atomic-replace on POSIX/NTFS but does
+// NOT fsync the file contents or the containing directory; the contract
+// is "no half-written leaf is ever visible at <slug>.md", which is
+// exactly what atomic rename guarantees.
 
 /**
  * Write one knowledge entry through the atomic 4-step sequence.
@@ -83,21 +78,11 @@ export function writeEntry(args, _deps = {}) {
   // crash/kill mid-write must NEVER leave a truncated leaf in the wiki
   // tree; if it did, the next skill-llm-wiki validate would either
   // accept the corrupted file (silent rot) or fail and require manual
-  // cleanup. Same-filesystem rename is the standard atomic-replace
-  // primitive on POSIX + ReFS / NTFS.
+  // cleanup. atomicWriteTextSync handles parent-dir creation + temp
+  // file naming + rename + cleanup-on-failure in one place, shared
+  // with the rest of the bundle's writer surface.
   try {
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const tmp = `${path}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-    try {
-      writeFileSync(tmp, serialiseEntry(data, body));
-      renameSync(tmp, path);
-    } catch (err) {
-      // Best-effort cleanup of the temp file; the rename failure is
-      // surfaced through the outer catch so the caller sees one clear
-      // error instead of two.
-      try { unlinkSync(tmp); } catch { /* tmp may be gone already */ }
-      throw err;
-    }
+    atomicWriteTextSync(path, serialiseEntry(data, body));
   } catch (err) {
     return fail(1, `step 1 (write markdown): ${err?.message ?? String(err)}`);
   }
@@ -172,9 +157,15 @@ function rollback(path) {
  * binary as `skill-llm-wiki` on PATH; tests inject a stub via _deps.
  */
 function runSkillLlmWikiCli(wikiRoot) {
+  // shell:true on win32 is the bundle convention (see scripts/update_self.mjs
+  // and scripts/lib/ghExec.mjs): without it, spawnSync cannot resolve
+  // `.cmd` shims that npm-installed CLIs land as on Windows, and the
+  // call fails with ENOENT before reaching the binary. POSIX runs
+  // spawnSync directly without a shell.
   const result = spawnSync("skill-llm-wiki", ["validate", wikiRoot], {
     encoding: "utf8",
     timeout: 30_000,
+    shell: process.platform === "win32",
   });
   if (result.error) return { ok: false, error: `spawn failed: ${result.error.message}` };
   if (result.status !== 0) {
@@ -195,6 +186,7 @@ function runIndexRebuildCli(wikiRoot, leafDir) {
   const scoped = spawnSync("skill-llm-wiki", ["index-rebuild", wikiRoot, "--scope", leafDir], {
     encoding: "utf8",
     timeout: 30_000,
+    shell: process.platform === "win32",
   });
   if (!scoped.error && scoped.status === 0) {
     return { ok: true, scoped: true };
@@ -228,6 +220,7 @@ function runIndexRebuildCli(wikiRoot, leafDir) {
   const full = spawnSync("skill-llm-wiki", ["index-rebuild", wikiRoot], {
     encoding: "utf8",
     timeout: 60_000,
+    shell: process.platform === "win32",
   });
   if (full.error) return { ok: false, error: `spawn failed: ${full.error.message}` };
   if (full.status !== 0) return { ok: false, error: (full.stderr || full.stdout || `exit ${full.status}`).trim() };

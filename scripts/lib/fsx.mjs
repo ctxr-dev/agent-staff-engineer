@@ -2,7 +2,7 @@
 // File-system helpers used by the installer and friends. Zero npm deps.
 // Every write goes through an atomic "write-to-temp then rename" path.
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   mkdir,
   readFile,
@@ -14,7 +14,14 @@ import {
   unlink,
   access,
 } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import {
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
 /** Ensure a directory exists (recursive mkdir). Returns the absolute path. */
@@ -87,6 +94,40 @@ export async function atomicWriteText(p, content) {
 export async function atomicWriteJson(p, obj) {
   const content = JSON.stringify(obj, null, 2) + "\n";
   return atomicWriteText(p, content);
+}
+
+/**
+ * Sync sibling of atomicWriteText. Same write-to-temp + rename contract,
+ * same cleanup-on-failure semantics; differs only in being synchronous.
+ *
+ * Exists because some writers (notably scripts/lib/knowledge/write.mjs)
+ * orchestrate sync-only sequences (spawnSync into skill-llm-wiki, sync
+ * fs ops) and benefit from a single synchronous control flow. Centralising
+ * the temp naming + rename + unlink-on-failure here keeps the two
+ * variants from drifting on tmp suffix shape, encoding, or cleanup
+ * behaviour.
+ *
+ * @param {string} p        absolute or relative path; resolved here
+ * @param {string} content  text payload (utf-8)
+ * @returns {string}        the absolute path that was written
+ */
+export function atomicWriteTextSync(p, content) {
+  const abs = resolve(p);
+  const dir = dirname(abs);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const tmp = `${abs}.tmp-${process.pid}-${createHash("sha256").update(`${abs}|${Date.now()}|${Math.random()}`).digest("hex").slice(0, 8)}`;
+  try {
+    writeFileSync(tmp, content, "utf8");
+    renameSync(tmp, abs);
+    return abs;
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw err;
+  }
 }
 
 /** Walk a directory recursively, yielding absolute file paths. Skips entries whose names start with "." by default.
