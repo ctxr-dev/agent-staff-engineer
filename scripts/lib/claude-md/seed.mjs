@@ -70,9 +70,17 @@ export function seedRegistryInContent(existing) {
   }
 
   // CLAUDE.md exists; check for the marker pair. Marker matches are
-  // line-boundary anchored so a marker quoted inside a code fence or
-  // mid-line prose does not get treated as authoritative. Match-once
-  // semantics: FIRST begin / LAST end pair wins.
+  // line-boundary anchored so a marker copy that is INDENTED inside a
+  // code fence (or quoted mid-line) cannot be treated as authoritative.
+  // Pairing is "first begin / first end AFTER it"; multiple complete
+  // blocks throw via findRegistryMarkers so the user collapses the
+  // file by hand instead of letting append-entry edit one block while
+  // the other drifts. Caveat: an UNINDENTED marker copy at column 0
+  // inside a fenced block will still satisfy the line-anchor check;
+  // the marker strings are deliberately verbose and namespaced so that
+  // collision is vanishingly rare, and parsing markdown fences in the
+  // seeder adds risk out of proportion to the benefit. See the
+  // findRegistryMarkers JSDoc for the full surface.
   const located = findRegistryMarkers(existing);
   if (located) {
     // Already seeded; never overwrite. Future entries flow through
