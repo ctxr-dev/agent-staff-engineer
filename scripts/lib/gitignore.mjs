@@ -42,13 +42,16 @@ import { atomicWriteText, readTextOrNull } from "./fsx.mjs";
  * `.gitignore`. Returns `{ path, added }` where `added` is the list
  * of patterns actually appended (empty when all were already listed).
  *
+ * @typedef {string | { pattern: string, type?: "file" | "dir" }} GitignoreEntry
+ *
  * @param {string} targetDir absolute path of the target project root
- * @param {Array<string | { pattern: string, type?: "file" | "dir" }>
- *        | string
- *        | { pattern: string, type?: "file" | "dir" }} relativePaths
- *   one or more repo-relative paths. Bare strings default to
- *   `type: "dir"`. Use `{ pattern, type: "file" }` to ignore a
- *   single file (no trailing slash in the canonical form).
+ * @param {GitignoreEntry | GitignoreEntry[]} relativePaths
+ *   one or more repo-relative paths. Each entry is either a bare
+ *   string (legacy form, treated as a directory pattern using the
+ *   loose dedup) OR `{ pattern, type: "file" | "dir" }` (typed form
+ *   using strict dedup; default is "dir" when omitted). An object
+ *   without `type` is accepted but behaves identically to a bare
+ *   string for that path: legacy dedup, dir canonical form.
  */
 export async function ensureGitignore(targetDir, relativePaths) {
   const list = Array.isArray(relativePaths) ? relativePaths : [relativePaths];

@@ -12,22 +12,23 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import Ajv from "ajv";
-import addFormats from "ajv-formats";
+import { validate as sharedValidate } from "../schema.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCHEMA_PATH = resolve(__dirname, "..", "..", "..", "schemas", "knowledge-entry.schema.json");
 let _schema = null;
-let _ajv = null;
-let _validator = null;
 
-function ajvValidator() {
-  if (_validator) return _validator;
+// Defer to scripts/lib/schema.mjs's shared Ajv instance + compile
+// cache so the knowledge layer's validation matches the rest of the
+// bundle's options (`useDefaults: false`, `allErrors: true`,
+// `strict: false`, ajv-formats registered) and so error messages
+// surface consistently across the codebase. Loading the schema JSON
+// once and reusing the same object reference lets schema.mjs's
+// WeakMap compile cache hit on subsequent calls.
+function loadSchema() {
+  if (_schema) return _schema;
   _schema = JSON.parse(readFileSync(SCHEMA_PATH, "utf8"));
-  _ajv = new Ajv({ allErrors: true, strict: false });
-  addFormats(_ajv);
-  _validator = _ajv.compile(_schema);
-  return _validator;
+  return _schema;
 }
 
 /**
@@ -42,7 +43,6 @@ function ajvValidator() {
  */
 export function validateEntry(data, entryPath) {
   const errors = [];
-  const validate = ajvValidator();
   // Validate against the SHAPE that will actually be written to disk.
   // serialiseEntry strips undefined values via orderedFrontmatter, so
   // a caller that spreads optionals (e.g. `{...base, owner: maybeOwner}`
@@ -51,10 +51,15 @@ export function validateEntry(data, entryPath) {
   // never reaches the file. Strip undefined here so validation
   // matches the on-disk reality.
   const stripped = stripUndefined(data);
-  const ok = validate(stripped);
-  if (!ok) {
-    for (const e of validate.errors ?? []) {
-      const at = e.instancePath || "/";
+  const result = sharedValidate(loadSchema(), stripped);
+  if (!result.ok) {
+    for (const e of result.errors ?? []) {
+      // schema.mjs returns { path, message } where path is the
+      // dotted form ($.field.subfield); preserve the same surface
+      // shape the previous in-file validator emitted (instancePath
+      // string + space + message) so existing test assertions on
+      // error text continue to match.
+      const at = (e.path || "").replace(/^\$\.?/, "/").replace(/\./g, "/") || "/";
       errors.push(`${at} ${e.message ?? "schema violation"}`);
     }
   }
@@ -121,7 +126,10 @@ function stripUndefined(obj) {
 // Reset the cached validator (test-only seam; production callers never
 // need this since the schema doesn't change at runtime).
 export function _resetForTests() {
+  // Drop the cached schema reference. schema.mjs's compile cache is
+  // a WeakMap keyed by the schema object identity, so a fresh
+  // loadSchema() (after this reset) produces a fresh validator
+  // entry — the test seam still works without poking schema.mjs's
+  // internals.
   _schema = null;
-  _ajv = null;
-  _validator = null;
 }

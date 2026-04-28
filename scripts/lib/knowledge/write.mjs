@@ -80,7 +80,14 @@ import { query as queryEntries } from "./query.mjs";
  * @returns {{ ok: true, path: string, warnings: string[] } | { ok: false, error: string, step: number }}
  */
 export function writeEntry(args, _deps = {}) {
-  const { wikiRoot, domain, slug, data, body } = args;
+  // Trim wikiRoot + stateDir up front. isNonEmptyString rejects pure
+  // whitespace, but a value like " /abs/wiki" passes (length > 0
+  // after the trim check) and would have been used verbatim,
+  // resolving against an unintended path. Normalise once so every
+  // downstream resolve / join sees the same canonical string.
+  const wikiRoot = typeof args.wikiRoot === "string" ? args.wikiRoot.trim() : args.wikiRoot;
+  const stateDir = typeof args.stateDir === "string" ? args.stateDir.trim() : args.stateDir;
+  const { domain, slug, data, body } = args;
   if (!isNonEmptyString(wikiRoot)) return fail(0, "writeEntry: wikiRoot is required");
   // Domain must look like a real slug: lowercase alnum + hyphen +
   // underscore, starting with a letter. Whitespace, dots, slashes,
@@ -268,10 +275,10 @@ export function writeEntry(args, _deps = {}) {
   // dependency or a future implementation throwing synchronously
   // must NOT break the soft-warning contract by propagating up to
   // the caller as a hard failure.
-  if (isNonEmptyString(args.stateDir)) {
+  if (isNonEmptyString(stateDir)) {
     let enq;
     try {
-      enq = enqueueReindex(args.stateDir, path);
+      enq = enqueueReindex(stateDir, path);
     } catch (err) {
       enq = { ok: false, error: `marker write threw: ${err?.message ?? String(err)}` };
     }

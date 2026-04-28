@@ -914,18 +914,24 @@ if (opsConfig.paths.gitignore_dev_working_dir !== false) {
   ]);
 }
 
-// Knowledge-store SQLite frontier (Tier 2). The .db is regenerable
-// from the canonical markdown leaves in the wiki; committing it would
-// produce noisy diffs and merge conflicts. Gitignored unconditionally
-// (NOT gated on gitignore_dev_working_dir, which is specifically about
-// the .development tree). Resolves the schema claim that this path is
-// "Gitignored by the installer". `type: "file"` so ensureGitignore
-// emits `/path/to.db` (no trailing slash) — directory-only patterns
-// would not match the SQLite file.
+// Knowledge-store local state. Both the SQLite frontier (Tier 2,
+// regenerable from the canonical markdown leaves) AND the
+// reindex-pending marker (queue file consumed by the next
+// session-start incremental reindex) are local artefacts that
+// would produce noisy diffs and merge conflicts if committed.
+// Gitignored unconditionally (NOT gated on gitignore_dev_working_dir,
+// which is specifically about the .development tree).
+//
+// `type: "file"` on both so ensureGitignore emits `/path/to.db`
+// (no trailing slash); directory-only patterns would not match
+// these regular files.
 {
   const sqlitePath = opsConfig.knowledge_store?.frontier?.sqlite_path
     ?? ".claude/state/knowledge-index.db";
-  await ensureGitignore(TARGET, [{ pattern: sqlitePath, type: "file" }]);
+  await ensureGitignore(TARGET, [
+    { pattern: sqlitePath, type: "file" },
+    { pattern: ".claude/state/reindex-pending", type: "file" },
+  ]);
 }
 for (const w of writes) {
   if (w.content == null) continue;
