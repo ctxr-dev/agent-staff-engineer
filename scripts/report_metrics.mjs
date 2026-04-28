@@ -17,9 +17,10 @@
 // The JSON rollup is the durable artefact (other tools consume it); the
 // markdown is the human-readable view.
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgv } from "./lib/argv.mjs";
+import { atomicWriteText } from "./lib/fsx.mjs";
 import {
   isoWeekWindow,
   readRecordsInWindow,
@@ -27,7 +28,7 @@ import {
   renderMarkdown,
 } from "./lib/metrics/aggregate.mjs";
 
-function main() {
+async function main() {
   const { flags } = parseArgv(process.argv.slice(2), {
     booleans: new Set(["weekly", "help"]),
   });
@@ -79,8 +80,11 @@ function main() {
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
   const jsonPath = join(outDir, `${window.isoWeek}.json`);
   const mdPath = join(outDir, `${window.isoWeek}.md`);
-  writeFileSync(jsonPath, JSON.stringify(rollup, null, 2) + "\n");
-  writeFileSync(mdPath, md);
+  // Atomic writes (write-to-temp + rename) so a SIGINT mid-run never
+  // leaves a partial JSON or markdown behind. Matches the convention
+  // in scripts/install.mjs and the rest of the writer surface.
+  await atomicWriteText(jsonPath, JSON.stringify(rollup, null, 2) + "\n");
+  await atomicWriteText(mdPath, md);
 
   process.stdout.write(md);
   process.stdout.write(`\n(rollup written to ${jsonPath})\n`);
@@ -97,9 +101,12 @@ function printHelp() {
 
 function mondayFromIsoWeek(isoWeek) {
   // Accept "YYYY-Www" and return the Monday of that ISO week as a Date.
-  const m = /^(\d{4})-W(\d{2})$/.exec(isoWeek);
+  // Accept YYYY-Www with the week digits constrained to 01..53. Reject
+  // W00 and W54..W99 fast — those are impossible ISO weeks. Matches the
+  // pattern in schemas/metrics-weekly.schema.json.
+  const m = /^(\d{4})-W(0[1-9]|[1-4][0-9]|5[0-3])$/.exec(isoWeek);
   if (!m) {
-    process.stderr.write(`error: --week must be YYYY-Www (got ${JSON.stringify(isoWeek)})\n`);
+    process.stderr.write(`error: --week must be YYYY-Www with week 01..53 (got ${JSON.stringify(isoWeek)})\n`);
     process.exit(2);
   }
   const year = Number(m[1]);
@@ -131,4 +138,7 @@ function loadPreviousAvgCost(path) {
   }
 }
 
-main();
+main().catch((err) => {
+  process.stderr.write(`error: ${err?.stack ?? err?.message ?? String(err)}\n`);
+  process.exit(1);
+});

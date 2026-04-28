@@ -67,8 +67,11 @@ export function newTraceId() {
 /**
  * Build a record from the supplied invocation summary. Returns the
  * record object so callers can inspect it before writing (useful in
- * tests). The `tokens` object MUST carry all four fields; pass 0 for
- * any that don't apply.
+ * tests). The `tokens` object SHOULD carry all four fields
+ * (input, output, cache_read, cache_write); missing fields coerce to
+ * 0, so a caller that only knows two of them still produces a valid
+ * record. Negative or non-finite values throw; the schema's "minimum:
+ * 0" constraint is the contract.
  *
  * @param {object} input
  * @param {string} input.skill
@@ -132,25 +135,54 @@ export function writeRecord(record, stateDir) {
   if (typeof stateDir !== "string" || stateDir.length === 0) {
     throw new Error("metrics.writeRecord: stateDir must be a non-empty string");
   }
-  // Reject path-traversal in the skill name as a defence-in-depth
-  // measure: skill is interpolated into NOTHING below, but the schema
-  // additionalProperties:false will reject malformed records on read,
-  // and we'd rather catch it on write.
-  if (typeof record.skill !== "string" || record.skill.includes("/") || record.skill.includes("..")) {
-    throw new Error(`metrics.writeRecord: invalid skill name ${JSON.stringify(record.skill)}`);
+  // Reject path-traversal AND any path-separator in the skill name.
+  // Use an allowlist regex (lowercase alnum + `-` + `_`) — that's a
+  // proper superset of every skill name the bundle ships and rules out
+  // both POSIX `/` and Windows `\\` separators in one check, plus `..`
+  // segments. additionalProperties:false on the read schema is the
+  // second line of defence; this is the first.
+  if (typeof record.skill !== "string" || !/^[a-z0-9][a-z0-9_-]*$/.test(record.skill)) {
+    throw new Error(`metrics.writeRecord: invalid skill name ${JSON.stringify(record.skill)} (expected /^[a-z0-9][a-z0-9_-]*$/)`);
   }
   const date = utcDateFromIso(record.started_at);
   const dir = resolve(stateDir, "metrics");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const file = join(dir, `${date}.jsonl`);
-  // Append exactly one JSON line. JSON.stringify on plain objects is
-  // deterministic for primitive values (the only kind we accept), so
-  // the line bytes don't depend on key insertion order at the schema
-  // level — but to be defensively stable, render through an explicit
-  // key order.
-  const line = JSON.stringify(record) + "\n";
+  // Render the record with an explicit key order so the JSONL bytes
+  // don't depend on caller mutation order. Two callers that pass the
+  // same logical record produce byte-identical lines, which keeps
+  // diffs of the JSONL stable across recorder versions.
+  const line = JSON.stringify(orderedRecord(record)) + "\n";
   appendFileSync(file, line);
   return file;
+}
+
+// Canonical key order for a record on disk. Matches the field order in
+// schemas/metrics-record.schema.json.
+const RECORD_KEY_ORDER = [
+  "trace_id",
+  "parent_trace_id",
+  "skill",
+  "started_at",
+  "ended_at",
+  "model",
+  "tokens",
+  "cost_usd",
+  "subagents",
+  "mcp_servers_used",
+  "exit",
+];
+
+function orderedRecord(record) {
+  const out = {};
+  for (const k of RECORD_KEY_ORDER) {
+    if (k in record && record[k] !== undefined) out[k] = record[k];
+  }
+  // Defensive: any unknown key (the schema forbids it on read but the
+  // recorder is permissive on write) is appended in lex order.
+  const extras = Object.keys(record).filter((k) => !RECORD_KEY_ORDER.includes(k)).sort();
+  for (const k of extras) out[k] = record[k];
+  return out;
 }
 
 /**
@@ -202,12 +234,27 @@ export function utcDateFromIso(iso) {
   return iso.slice(0, 10);
 }
 
-// Resolve the state-metrics directory for a given project root. The
+// Resolve the .claude/state directory for a given project root. The
 // installer (scripts/install.mjs) is the canonical owner of the
 // `.claude/state/` path; centralising it here keeps callers consistent
 // even when ops.config eventually lets a project relocate it.
+//
+// IMPORTANT: writeRecord() expects this exact path (the parent of the
+// metrics/ subdir) and appends `metrics/<date>.jsonl` itself. A caller
+// passing `<root>/.claude/state/metrics` would produce a nested
+// `metrics/metrics/<date>.jsonl` — the helper below returns the
+// correct value. The legacy `metricsDirForProject` alias is kept as a
+// deprecated re-export for any out-of-tree caller that already wired
+// against it; it now points at the same `.claude/state` parent so its
+// output is the right one to feed writeRecord.
+export function stateDirForProject(projectRoot) {
+  return resolve(projectRoot, ".claude", "state");
+}
+
+// @deprecated use stateDirForProject; retained as an alias so existing
+// callers pass the right path to writeRecord (which appends `metrics`).
 export function metricsDirForProject(projectRoot) {
-  return resolve(projectRoot, ".claude", "state", "metrics");
+  return stateDirForProject(projectRoot);
 }
 
 // Build a portable POSIX-style relative path so callers logging

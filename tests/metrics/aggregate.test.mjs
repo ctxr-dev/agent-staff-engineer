@@ -20,7 +20,9 @@ function tmp() {
 }
 
 test("isoWeekWindow: Monday-anchored, half-open interval", () => {
-  // 2026-04-28 is a Tuesday; week 17 starts Mon 2026-04-27.
+  // 2026-04-28 is a Tuesday in ISO week 18 (Monday: 2026-04-27).
+  // ISO 8601 numbering: Jan 4 lives in W01 by definition; counting
+  // Mondays forward, 2026-04-27 starts W18.
   const w = isoWeekWindow(new Date("2026-04-28T10:00:00Z"));
   assert.equal(w.start.toISOString(), "2026-04-27T00:00:00.000Z");
   assert.equal(w.end.toISOString(), "2026-05-04T00:00:00.000Z");

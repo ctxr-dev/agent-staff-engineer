@@ -565,17 +565,17 @@
     "observability": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Per-skill token accounting and weekly metrics report. The recorder writes one JSONL line per invocation under .claude/state/metrics/<yyyy>-<mm>-<dd>.jsonl; aggregate.mjs rolls daily files into ISO-week summaries under .development/shared/reports/metrics/<yyyy>-Www.json. See scripts/lib/metrics/.",
+      "description": "Per-skill token accounting and weekly metrics report. The recorder writes one JSONL line per invocation under .claude/state/metrics/<yyyy>-<mm>-<dd>.jsonl; aggregate.mjs rolls daily files into ISO-week summaries under .development/shared/reports/metrics/<yyyy>-Www.json. See scripts/lib/metrics/. Note: this PR ships the recorder, aggregator, and CLI; the per-skill dispatch sites that read `metrics_enabled` and emit records land in a follow-up wiring PR (the bundle has no centralised dispatch layer today).",
       "properties": {
         "metrics_enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Master switch for the recorder. When false, callers of scripts/lib/metrics/record.mjs become no-ops."
+          "description": "Master switch for the recorder. Reserved field: the dispatch wiring lands in a follow-up. When the per-skill emitters are wired up, callers of scripts/lib/metrics/record.mjs will check this flag and become no-ops when false."
         },
         "weekly_report": {
           "type": "boolean",
           "default": true,
-          "description": "Whether scripts/report_metrics.mjs --weekly is wired into the project's reminder / cron path."
+          "description": "Whether scripts/report_metrics.mjs --weekly is wired into the project's reminder / cron path. Reserved until the cron wiring follow-up; for now the script is invokable manually."
         },
         "alert_thresholds": {
           "type": "object",

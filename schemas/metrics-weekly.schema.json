@@ -15,8 +15,8 @@
   "properties": {
     "iso_week": {
       "type": "string",
-      "pattern": "^[0-9]{4}-W[0-9]{2}$",
-      "description": "ISO 8601 week designation, e.g. 2026-W17."
+      "pattern": "^[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])$",
+      "description": "ISO 8601 week designation, e.g. 2026-W17. Week digits are constrained to the valid 01..53 range so impossible designations (W00, W54..W99) are rejected at schema validation."
     },
     "window": {
       "type": "object",

@@ -155,10 +155,16 @@ export function aggregate(records, opts) {
     acc.tokens_cache_write += num(r.tokens?.cache_write);
     skillStats.set(skill, acc);
 
+    // Cost AND tokens both include sub-invocations: a top-level
+    // dev-loop run that fans out to three Explorer subagents should
+    // surface the full bill in totals.cost_usd, not just the parent's
+    // share. Invocation count, however, is top-level only — sub
+    // entries are folded into the parent's per-skill row above and
+    // would inflate the count if also added here.
     if (!isSub) {
       totals.invocations += 1;
-      totals.cost_usd += num(r.cost_usd);
     }
+    totals.cost_usd += num(r.cost_usd);
     totals.tokens.input += num(r.tokens?.input);
     totals.tokens.output += num(r.tokens?.output);
     totals.tokens.cache_read += num(r.tokens?.cache_read);
