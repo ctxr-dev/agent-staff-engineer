@@ -305,12 +305,19 @@ function extractRegistryBlock(content) {
   const located = findRegistryMarkers(content);
   if (!located) return null;
   const { begin, end } = located;
-  // Body lives between the marker lines (exclusive of both). The newline
-  // after the marker may be `\n` (POSIX) or `\r\n` (Windows / a CRLF
-  // checkout); skip whichever is there so the body slice doesn't begin
-  // with a stray `\r`.
+  // Body lives between the marker lines (exclusive of both). The
+  // marker may be followed by horizontal whitespace (spaces / tabs)
+  // before the EOL — findRegistryMarkers tolerates trailing-WS
+  // anchoring so an editor that retained a stray space after the
+  // marker still parses correctly. Skip those bytes too, then skip
+  // the EOL itself (`\n` or `\r\n`), so the body slice does not
+  // begin with whitespace from the marker line and does not include
+  // a stray `\r` from a CRLF terminator.
   const afterMarker = begin + REGISTRY_BEGIN_MARKER.length;
   let innerStart = afterMarker;
+  while (content[innerStart] === " " || content[innerStart] === "\t") {
+    innerStart += 1;
+  }
   if (content[innerStart] === "\r" && content[innerStart + 1] === "\n") {
     innerStart += 2;
   } else if (content[innerStart] === "\n") {
