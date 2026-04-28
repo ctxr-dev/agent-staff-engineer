@@ -128,6 +128,38 @@ test("writeEntry: step 0 collision detection refuses to create a duplicate id un
   }
 });
 
+test("writeEntry: step 0 collision detection catches archived collisions too", () => {
+  // The default query semantics exclude status:"archived" — but for
+  // collision detection, archived entries MUST be visible. Otherwise
+  // an entry kept under one domain for history would silently allow a
+  // duplicate id under a different domain, and getEntryById would
+  // throw DuplicateEntryIdError on every subsequent lookup. Surface
+  // the collision at write time when it is still cheap to fix.
+  const wiki = makeWiki();
+  try {
+    const r1 = writeEntry({
+      wikiRoot: wiki,
+      domain: "patterns",
+      slug: "ghost",
+      data: { ...validData("ghost"), status: "archived" },
+      body: "Old.\n",
+    }, happyDeps());
+    assert.equal(r1.ok, true, `seed write should succeed: ${r1.error || ""}`);
+    const r2 = writeEntry({
+      wikiRoot: wiki,
+      domain: "incidents",
+      slug: "ghost",
+      data: validData("ghost"),
+      body: "New.\n",
+    }, happyDeps());
+    assert.equal(r2.ok, false, "should refuse duplicate against archived entry");
+    assert.equal(r2.step, 0);
+    assert.match(r2.error, /already exists/);
+  } finally {
+    rmSync(wiki, { recursive: true, force: true });
+  }
+});
+
 test("writeEntry: step 2 (local schema) failure rolls back the file", () => {
   const wiki = makeWiki();
   try {

@@ -234,7 +234,15 @@ export function query(wikiRoot, filter = {}) {
  *   or a cross-domain copy)
  */
 export function getEntryById(wikiRoot, id) {
-  const matches = query(wikiRoot, { id });
+  // Pass includeArchived: true so an exact-id lookup ALWAYS resolves
+  // the entry even when it is status:"archived". The default query
+  // semantics (archived excluded) make sense for routing, but for an
+  // explicit by-id lookup the user is asking "where does this id
+  // live?" and an unexpected null would mask a real archived entry.
+  // Including archived here is also load-bearing for duplicate-id
+  // detection: a duplicate where one copy was archived would
+  // otherwise slip past unnoticed.
+  const matches = query(wikiRoot, { id, includeArchived: true });
   if (matches.length > 1) {
     throw new DuplicateEntryIdError(id, matches.map((m) => m.path));
   }

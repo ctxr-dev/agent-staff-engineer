@@ -141,6 +141,39 @@ test("getEntryById: returns matching entry or null", () => {
   }
 });
 
+test("getEntryById: returns archived entries (does NOT inherit query's archived-exclude default)", () => {
+  // For an exact-id lookup, returning null on archived would mask
+  // legitimate state ("archived" is a real lifecycle phase, not
+  // deletion). getEntryById passes includeArchived:true so the
+  // archived entry resolves the same way an active one does.
+  const wiki = makeWiki();
+  try {
+    seed(wiki, "patterns", "old-thing", { status: "archived" });
+    _clearCache();
+    const hit = getEntryById(wiki, "old-thing");
+    assert.ok(hit && hit.id === "old-thing");
+    assert.equal(hit.data.status, "archived");
+  } finally {
+    rmSync(wiki, { recursive: true, force: true });
+  }
+});
+
+test("getEntryById: detects duplicate id even when one copy is archived", () => {
+  // The default query semantics exclude archived; without
+  // includeArchived:true, a duplicate where one copy was archived
+  // would slip past the duplicate detector and getEntryById would
+  // silently return the active winner.
+  const wiki = makeWiki();
+  try {
+    seed(wiki, "patterns", "shared-id", { status: "active" });
+    seed(wiki, "incidents", "shared-id", { status: "archived" });
+    _clearCache();
+    assert.throws(() => getEntryById(wiki, "shared-id"), DuplicateEntryIdError);
+  } finally {
+    rmSync(wiki, { recursive: true, force: true });
+  }
+});
+
 test("getEntryById: throws DuplicateEntryIdError when the same id exists in two domains", () => {
   // Schema enforces single-segment kebab-case ids (no `/`); the on-disk
   // path encodes the domain but the id field does not. So two entries

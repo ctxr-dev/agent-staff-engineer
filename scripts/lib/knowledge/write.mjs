@@ -199,7 +199,15 @@ function rollback(path) {
  * can inject a stub via _deps.findExistingById.
  */
 function findExistingById(wikiRoot, id) {
-  return queryEntries(wikiRoot, { id }).map((m) => m.path);
+  // includeArchived: true is load-bearing for the step-0 collision
+  // gate. The default query semantics exclude status:"archived" so
+  // archived entries do not pollute routing — but for collision
+  // detection we MUST see them. Otherwise an entry archived under one
+  // domain (kept for history) would silently allow a duplicate id
+  // under a different domain, and getEntryById would then throw
+  // DuplicateEntryIdError on every subsequent lookup. Surface the
+  // collision at write time when it is still cheap to fix.
+  return queryEntries(wikiRoot, { id, includeArchived: true }).map((m) => m.path);
 }
 
 /**
