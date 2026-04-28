@@ -912,9 +912,14 @@ if (opsConfig.paths.gitignore_dev_working_dir !== false) {
     `${opsConfig.paths.dev_working_dir}/${localSub}`,
     `${opsConfig.paths.dev_working_dir}/${cacheSub}`,
     // Per-skill metrics records (JSONL, per-day) live under .claude/state/metrics/.
-    // They contain no PII (skill names + counts only) but they are local
-    // artefacts, not code. Aggregator output lands under .development/shared/
-    // and that directory is ALREADY committed by convention.
+    // The recorder writes: trace_id (random hex), parent_trace_id, skill name,
+    // started_at / ended_at (ISO timestamps), model id, token counts
+    // (input/output/cache_read/cache_write), cost_usd, subagent counts,
+    // mcp_servers_used (server names only), and the exit status.
+    // No PII; no payloads; no diffs. They are local artefacts (not code),
+    // so they stay out of git. Aggregator output lands under
+    // .development/shared/reports/metrics/ and that directory is ALREADY
+    // committed by convention.
     ".claude/state/metrics/",
   ]);
 }

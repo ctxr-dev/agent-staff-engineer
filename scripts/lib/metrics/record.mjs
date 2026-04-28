@@ -10,6 +10,13 @@
 // validation is the consumer's job (record-time validation would
 // add latency to every skill invocation for marginal value).
 //
+// Top-level keys are rendered through orderedRecord() with an
+// explicit RECORD_KEY_ORDER so two callers passing the same logical
+// record write byte-identical JSONL lines. Nested objects (`tokens`,
+// `subagents`) are constructed inside this module with deterministic
+// key insertion (see normaliseTokens / buildRecord); they are not
+// re-sorted on write because callers cannot reach in to mutate them.
+//
 // Cost computation: cost_usd is derived from the four token fields and
 // a model rate table. The table covers the rates documented at the
 // time of writing; callers may pass `rates` explicitly to override
