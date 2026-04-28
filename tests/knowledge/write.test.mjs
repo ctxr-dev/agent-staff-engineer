@@ -56,7 +56,7 @@ test("writeEntry: happy path lands the markdown + returns ok", () => {
       body: "Body content.\n",
     }, happyDeps());
     assert.equal(r.ok, true);
-    assert.ok(r.path.endsWith("knowledge/patterns/pr-iteration-bot-id.md"));
+    assert.ok(r.path.endsWith(join("knowledge", "patterns", "pr-iteration-bot-id.md")));
     const text = readFileSync(r.path, "utf8");
     assert.match(text, /^---\n/);
     assert.match(text, /^id: pr-iteration-bot-id$/m);
@@ -159,7 +159,11 @@ test("writeEntry: step 0 collision detection refuses to create a duplicate id un
     assert.equal(r2.ok, false);
     assert.equal(r2.step, 0);
     assert.match(r2.error, /already exists/);
-    assert.match(r2.error, /knowledge\/patterns\/shared-id\.md/);
+    // Normalise Windows backslashes to `/` before matching the path
+    // shape so the assertion is platform-agnostic. The error message
+    // surfaces the on-disk path, which uses `\` on Windows.
+    const normalised = r2.error.replace(/\\/g, "/");
+    assert.match(normalised, /knowledge\/patterns\/shared-id\.md/);
     // Same id, SAME domain: that's an UPDATE, must be allowed.
     const r3 = writeEntry({
       wikiRoot: wiki,

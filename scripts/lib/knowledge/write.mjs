@@ -126,8 +126,11 @@ export function writeEntry(args, _deps = {}) {
   // Step 2a — local frontmatter schema check.
   const local = validateFn(data, path);
   if (!local.ok) {
-    rollback(path, priorContent);
-    return fail(2, `step 2 (local frontmatter validation): ${local.errors.join("; ")}`);
+    const rb = rollback(path, priorContent);
+    return fail(
+      2,
+      appendRollbackError(`step 2 (local frontmatter validation): ${local.errors.join("; ")}`, rb, path),
+    );
   }
 
   // Step 2b — skill-llm-wiki validate (full tree). The wiki layer
@@ -135,8 +138,11 @@ export function writeEntry(args, _deps = {}) {
   // caught locally, depth-role rules, and slug uniqueness.
   const wikiResult = runWikiValidate(wikiRoot);
   if (!wikiResult.ok) {
-    rollback(path, priorContent);
-    return fail(2, `step 2 (skill-llm-wiki validate): ${wikiResult.error}`);
+    const rb = rollback(path, priorContent);
+    return fail(
+      2,
+      appendRollbackError(`step 2 (skill-llm-wiki validate): ${wikiResult.error}`, rb, path),
+    );
   }
 
   // Step 3 — index rebuild for the parent chain. Until
@@ -155,15 +161,26 @@ export function writeEntry(args, _deps = {}) {
     // tree, regardless of which form failed in the original rebuild.
     // If the reconcile rebuild also fails, the wiki really is
     // inconsistent; surface both errors so ops sees the full picture.
-    rollback(path, priorContent);
+    const rb = rollback(path, priorContent);
     const reconcile = runRebuild(wikiRoot, dir, { fullTree: true });
     if (!reconcile.ok) {
       return fail(
         3,
-        `step 3 (index-rebuild): ${rebuildResult.error}; reconcile after leaf rollback also failed: ${reconcile.error}. Wiki indexes may be inconsistent; run \`skill-llm-wiki index-rebuild ${wikiRoot}\` manually.`,
+        appendRollbackError(
+          `step 3 (index-rebuild): ${rebuildResult.error}; reconcile after leaf rollback also failed: ${reconcile.error}. Wiki indexes may be inconsistent; run \`skill-llm-wiki index-rebuild ${wikiRoot}\` manually.`,
+          rb,
+          path,
+        ),
       );
     }
-    return fail(3, `step 3 (index-rebuild): ${rebuildResult.error} (leaf removed; indexes reconciled)`);
+    return fail(
+      3,
+      appendRollbackError(
+        `step 3 (index-rebuild): ${rebuildResult.error} (leaf removed; indexes reconciled)`,
+        rb,
+        path,
+      ),
+    );
   }
   if (rebuildResult.scoped === false) {
     warnings.push(
@@ -208,19 +225,28 @@ function rollback(path, priorContent) {
   //                            the snapshot via atomicWriteTextSync
   //                            so a step-2/3 failure does not turn
   //                            into silent data loss.
-  // Both branches are best-effort: if the rollback itself fails we
-  // do not throw (the caller is already returning a fail() with the
-  // step-2/3 error; surfacing a second one here would obscure it).
+  // Returns { ok: true } when the rollback succeeded, or
+  // { ok: false, error: <message> } when it failed (e.g. Windows file
+  // lock, permission denied). The caller is expected to append the
+  // rollback error to the step-failure message so an admin sees the
+  // wiki-may-be-inconsistent warning instead of a silent half-state.
   try {
     if (priorContent == null) {
       if (existsSync(path)) unlinkSync(path);
     } else {
       atomicWriteTextSync(path, priorContent);
     }
-  } catch {
-    // best-effort; the next session-start incremental reindex will
-    // notice the mismatch on the next run.
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err?.message ?? String(err) };
   }
+}
+
+// Helper: append a rollback failure note to a step-failure error so
+// callers do not have to copy the same boilerplate at every site.
+function appendRollbackError(stepError, rollbackResult, path) {
+  if (!rollbackResult || rollbackResult.ok) return stepError;
+  return `${stepError}; rollback ALSO failed (${rollbackResult.error}) — leaf at ${path} may be inconsistent. Inspect by hand.`;
 }
 
 /**
