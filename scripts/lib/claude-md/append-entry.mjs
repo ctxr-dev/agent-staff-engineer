@@ -74,8 +74,14 @@ export function appendEntryToContent(existing, entry) {
 
   // Preserve the file's existing line-ending style. A CLAUDE.md saved
   // with CRLF (Windows checkout, core.autocrlf=true) should re-emit as
-  // CRLF; an LF file should stay LF. Detect the EOL by sampling the
-  // ORIGINAL content (not the renderer output, which always emits LF).
+  // CRLF; an LF file should stay LF. Sample `content` (already
+  // potentially modified by seedRegistryInContent above) rather than
+  // the rendered entry, which always emits LF. seedRegistryInContent
+  // is a no-op when markers exist, and when it appends a stub on a
+  // prior-existing file it re-emits the stub in the existing EOL
+  // flavour, so the first newline in `content` consistently reflects
+  // the file's original style regardless of whether the seed step
+  // mutated it.
   const eol = detectEol(content);
   const blockBody = ensureTrailingNewline(next.body);
   const newBlock = `${REGISTRY_BEGIN_MARKER}\n${blockBody}${REGISTRY_END_MARKER}`;
