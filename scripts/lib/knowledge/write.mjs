@@ -38,13 +38,13 @@
 // inject `runSkillLlmWiki` and `runIndexRebuild` to drive failure paths
 // without needing the real CLI installed.
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { atomicWriteTextSync } from "../fsx.mjs";
 import { serialiseEntry } from "./frontmatter.mjs";
 import { validateEntry } from "./validate.mjs";
-import { query as queryEntries } from "./query.mjs";
+import { query as queryEntries, knowledgeDir } from "./query.mjs";
 
 // Sync atomic write contract is owned by scripts/lib/fsx.mjs::
 // atomicWriteTextSync — same write-to-temp + rename + cleanup-on-failure
@@ -359,7 +359,50 @@ function findExistingById(wikiRoot, id) {
   // under a different domain, and getEntryById would then throw
   // DuplicateEntryIdError on every subsequent lookup. Surface the
   // collision at write time when it is still cheap to fix.
-  return queryEntries(wikiRoot, { id, includeArchived: true }).map((m) => m.path);
+  const byId = queryEntries(wikiRoot, { id, includeArchived: true }).map((m) => m.path);
+  // Also detect basename collisions: a hand-edited / corrupted entry
+  // whose frontmatter `id` does NOT match its filename basename
+  // would slip past the by-id query above (the entry has a
+  // different id). The basename invariant fires later, but the
+  // duplicate path on disk is itself the problem — a fresh write to
+  // the same `<slug>.md` under a different domain would still produce
+  // an ambiguous lookup target. Walk the knowledge subtree once,
+  // return every path whose basename equals `<id>.md`, and union
+  // with the by-id result so step-0 catches both kinds of collision.
+  const knowledgeRoot = knowledgeDir(wikiRoot);
+  const byBasename = walkLeavesForBasename(knowledgeRoot, `${id}.md`);
+  return [...new Set([...byId, ...byBasename])];
+}
+
+function walkLeavesForBasename(root, targetBasename) {
+  const out = [];
+  let dirStat;
+  try {
+    dirStat = statSync(root);
+  } catch {
+    return out;
+  }
+  if (!dirStat.isDirectory()) return out;
+  const stack = [root];
+  while (stack.length > 0) {
+    const cur = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(cur, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      if (ent.name.startsWith(".")) continue;
+      const full = join(cur, ent.name);
+      if (ent.isDirectory()) {
+        stack.push(full);
+        continue;
+      }
+      if (ent.name === targetBasename) out.push(full);
+    }
+  }
+  return out;
 }
 
 /**
@@ -424,23 +467,29 @@ function runIndexRebuildCli(wikiRoot, leafDir, opts = {}) {
   if (scoped.error && scoped.error.code === "ENOENT") {
     return { ok: false, error: `spawn failed: ${scoped.error.message}` };
   }
-  const stderrLower = (scoped.stderr || "").toLowerCase();
-  // Tightened: only treat the failure as "unknown flag" when stderr
-  // explicitly mentions BOTH that the flag is unknown / unrecognised
-  // AND that it's the --scope flag specifically. The previous
-  // "usage:" / bare "scope" matches were too broad and would
-  // misclassify a real scoped-rebuild failure (e.g. a partial-tree
-  // assertion that mentions "scope" in its message) as a flag-unknown
-  // case, silently falling back to a full-tree rebuild and masking
-  // the genuine error. After skill-llm-wiki#16 lands the scoped
-  // form, this whole branch becomes dead code; we keep it tight in
-  // the meantime.
+  // Inspect BOTH stderr AND stdout. Some argument parsers (yargs in
+  // certain configurations, some hand-rolled CLIs) print "unknown
+  // option" diagnostics to stdout instead of stderr, and the
+  // unknown-flag fallback would otherwise treat that as a hard
+  // failure. Concatenate the two streams and lowercase the
+  // combined text once.
+  const combined = `${scoped.stderr || ""}\n${scoped.stdout || ""}`.toLowerCase();
+  // Tightened: only treat the failure as "unknown flag" when the
+  // diagnostic explicitly mentions BOTH that the flag is unknown /
+  // unrecognised AND that it's the --scope flag specifically. The
+  // previous "usage:" / bare "scope" matches were too broad and
+  // would misclassify a real scoped-rebuild failure (e.g. a
+  // partial-tree assertion that mentions "scope" in its message)
+  // as a flag-unknown case, silently falling back to a full-tree
+  // rebuild and masking the genuine error. After skill-llm-wiki#16
+  // lands the scoped form, this whole branch becomes dead code; we
+  // keep it tight in the meantime.
   const looksUnknown =
-    stderrLower.includes("unknown") ||
-    stderrLower.includes("unrecognised") ||
-    stderrLower.includes("unrecognized");
+    combined.includes("unknown") ||
+    combined.includes("unrecognised") ||
+    combined.includes("unrecognized");
   const mentionsScope =
-    stderrLower.includes("--scope") || stderrLower.includes("'scope'") || stderrLower.includes("`scope`");
+    combined.includes("--scope") || combined.includes("'scope'") || combined.includes("`scope`");
   const flagUnknown = looksUnknown && mentionsScope;
   if (!flagUnknown) {
     if (scoped.error) {

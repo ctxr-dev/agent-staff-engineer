@@ -15,7 +15,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -173,6 +173,44 @@ test("writeEntry: step 0 collision detection refuses to create a duplicate id un
       body: "Updated.\n",
     }, happyDeps());
     assert.equal(r3.ok, true, `same-path update should succeed: ${r3.error || ""}`);
+  } finally {
+    rmSync(wiki, { recursive: true, force: true });
+  }
+});
+
+test("writeEntry: step 0 collision detection catches basename-only collisions (id mismatch)", () => {
+  // A hand-edited / corrupted entry whose frontmatter `id` is OUT OF
+  // SYNC with its filename basename would slip past the by-id query
+  // (the entry has a different id). But the duplicate path on disk
+  // is itself the problem — a fresh write to the same `<slug>.md`
+  // under another domain would still produce ambiguous lookup
+  // targets. Step 0 walks the knowledge subtree for basename matches
+  // too, and refuses the new write so the user repairs the corrupted
+  // entry first.
+  const wiki = makeWiki();
+  try {
+    // Hand-place a corrupted entry: filename is `mismatched.md` but
+    // frontmatter id is "different-id". writeEntry would never
+    // produce this shape; we synthesise it to mimic damage.
+    const corruptDir = join(wiki, "knowledge", "patterns");
+    mkdirSync(corruptDir, { recursive: true });
+    writeFileSync(
+      join(corruptDir, "mismatched.md"),
+      "---\nid: different-id\ntype: leaf\ndepth_role: leaf\nfocus: x\ncovers: [x]\nparents: []\nkind: pattern\nfirst_seen: 2026-04-10\nlast_verified: 2026-04-28\nsource: test\nstatus: active\n---\nbody\n",
+    );
+    // Fresh write under a different domain that happens to use the
+    // same filename slug. Step 0 catches it via basename match even
+    // though the by-id query returns nothing.
+    const r = writeEntry({
+      wikiRoot: wiki,
+      domain: "incidents",
+      slug: "mismatched",
+      data: validData("mismatched"),
+      body: "Body.\n",
+    }, happyDeps());
+    assert.equal(r.ok, false);
+    assert.equal(r.step, 0);
+    assert.match(r.error, /already exists/);
   } finally {
     rmSync(wiki, { recursive: true, force: true });
   }
