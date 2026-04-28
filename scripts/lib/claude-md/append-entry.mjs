@@ -68,7 +68,13 @@ export function appendEntryToContent(existing, entry) {
   const rendered = renderEntry(entry);
   const next = upsertEntry(block.body, entry, rendered);
 
-  if (next.body === block.body) {
+  // EOL-agnostic noop check. upsertEntry compares pre/post bodies
+  // directly, but `block.body` carries the file's existing EOLs
+  // (CRLF on a Windows checkout) while `rendered` always uses LF.
+  // Without this normalisation step a re-run on a CRLF file would
+  // report `changed: true` even when the LF-normalised text was
+  // identical, producing unnecessary disk writes.
+  if (toLfNewlines(next.body) === toLfNewlines(block.body)) {
     return { content, changed: false, action: "noop" };
   }
 
@@ -88,6 +94,17 @@ export function appendEntryToContent(existing, entry) {
   const reEoled = eol === "\r\n" ? newBlock.replace(/\r?\n/g, "\r\n") : newBlock;
   content = content.slice(0, block.start) + reEoled + content.slice(block.end);
   return { content, changed: true, action: next.action };
+}
+
+function toLfNewlines(s) {
+  // Collapse CRLF (and bare CR) to LF for content equality checks
+  // that should not differ purely on newline encoding. The
+  // serialised output still uses the file's prevailing EOL flavour
+  // (see detectEol below + the re-EOL pass in appendEntryToContent
+  // and appendEntryAtPath); this helper is only for "is the content
+  // semantically the same?" comparisons.
+  if (typeof s !== "string" || s.length === 0) return s;
+  return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
 function detectEol(text) {
@@ -376,7 +393,11 @@ function upsertEntry(body, entry, rendered) {
     const before = body.slice(0, sectionRange.start + matchRange.start);
     const after = body.slice(sectionRange.start + matchRange.end);
     const newBody = before + rendered + after;
-    if (newBody === body) return { body, action: "noop" };
+    // EOL-agnostic noop. `body` carries the file's existing EOLs
+    // (CRLF on Windows checkouts) while `rendered` always uses LF.
+    // Compare LF-normalised forms so a re-run on a CRLF registry
+    // does not report "updated" purely because of newline encoding.
+    if (toLfNewlines(newBody) === toLfNewlines(body)) return { body, action: "noop" };
     return { body: newBody, action: "updated" };
   }
   // Append within the section. We splice at the section boundary
