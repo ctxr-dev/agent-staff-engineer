@@ -54,6 +54,7 @@ import { mergeWrapper } from "./lib/wrapper.mjs";
 import { ensureGitignore } from "./lib/gitignore.mjs";
 import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL } from "./lib/constants.mjs";
 import { injectManagedBlock, removeManagedBlock } from "./lib/inject.mjs";
+import { seedRegistryInContent } from "./lib/claude-md/seed.mjs";
 import { getAgentPrefix, prefixed } from "./lib/agentName.mjs";
 import { portableRef, resolvePortable } from "./lib/bundleRef.mjs";
 import { normaliseMemberPath } from "./lib/trackers/dispatcher.mjs";
@@ -816,6 +817,27 @@ for (const file of ruleFiles) {
     );
     content = null;
   }
+  // Compound-learning registry seed (per design/claude-md-authoring.md).
+  // Idempotent: seedRegistryInContent only writes the stub if the
+  // registry markers are absent. Hand-edited registries are
+  // preserved byte-for-byte across re-installs.
+  // Caught SEPARATELY from the injectManagedBlock call: a malformed
+  // registry marker pair (MalformedRegistryError) is the user's content
+  // to repair; refusing to write CLAUDE.md at all because of registry
+  // damage would also leave the installer-managed block stale, which
+  // is a worse outcome than skipping the registry seed once and
+  // surfacing a clear diagnostic.
+  if (content != null) {
+    try {
+      const seeded = seedRegistryInContent(content);
+      if (seeded.changed) content = seeded.content;
+    } catch (err) {
+      process.stderr.write(
+        `install: CLAUDE.md compound-learning registry seed skipped (${err?.message ?? String(err)}).\n` +
+          `Fix the registry marker pair in ${targetPath} and re-run --update; the managed block has been refreshed in the meantime.\n`
+      );
+    }
+  }
   if (content != null) {
     writes.push({
       action: existing == null ? "create" : "inject-managed-block",
@@ -913,6 +935,36 @@ if (opsConfig.paths.gitignore_dev_working_dir !== false) {
     `${opsConfig.paths.dev_working_dir}/${cacheSub}`,
   ]);
 }
+
+// Metrics state ALWAYS gets gitignored, regardless of the
+// gitignore_dev_working_dir flag: that flag is specifically about whether
+// `${dev_working_dir}/local` and `${dev_working_dir}/cache` should be
+// ignored. The metrics state lives under `.claude/state/`, an entirely
+// different surface that nobody wants in git: the JSONL records contain
+// trace_ids, started_at / ended_at timestamps, token counts, and
+// cost_usd; the weekly rollup files contain the same data aggregated.
+// Both are local artefacts (not code), and would clutter the diff if
+// committed accidentally. Keeping the gitignore here outside the
+// dev_working_dir flag means a project that turns off the .development
+// gitignore (e.g. because it wants to commit shared/) does not silently
+// lose the metrics-state ignore at the same time.
+await ensureGitignore(TARGET, [
+  // Per-skill metrics records (JSONL, per-day) under .claude/state/metrics/.
+  // The recorder writes: trace_id (random hex), parent_trace_id, skill name,
+  // started_at / ended_at (ISO timestamps), model id, token counts
+  // (input/output/cache_read/cache_write), cost_usd, subagent counts,
+  // mcp_servers_used (server names only), and the exit status. No PII;
+  // no payloads; no diffs.
+  ".claude/state/metrics/",
+  // Weekly rollup output from scripts/report_metrics.mjs. Lands under
+  // .claude/state/metrics-weekly/, NOT under .development/**, because
+  // the .development/* roots are wiki-governed (rules/llm-wiki.md) and
+  // demand a nested-scalable layout that flat <yyyy>-Www.json per-week
+  // leaves do not fit. A project that wants a curated rollup published
+  // to its team wiki can copy from here and route the publish through
+  // the wiki skill manually.
+  ".claude/state/metrics-weekly/",
+]);
 
 // Knowledge-store local state. Both the SQLite frontier (Tier 2,
 // regenerable from the canonical markdown leaves) AND the
@@ -1282,26 +1334,52 @@ async function runUninstall({ dryRun = false } = {}) {
     }
 
     // The project-level CLAUDE.md is a managed-block injection, not a wrapper
-    // file. Strip the block, preserve user content outside it. If nothing is
-    // left (i.e. we created the file), delete it. Otherwise keep the file.
+    // file. Always strip the installer-owned managed block. Strip the
+    // compound-learning registry block ONLY when its body matches the
+    // seed stub after CRLF-to-LF normalisation and outer-whitespace
+    // trimming (this is what isPristineRegistryBlock checks; internal
+    // whitespace differences are NOT normalised, so any user edit
+    // beyond reflowing the surrounding blank lines makes the block
+    // non-pristine). Once a human or append-entry.mjs has added real
+    // content, that content belongs to the project and survives
+    // uninstall. Anything outside both blocks is preserved either way.
     if (entry.kind === "project-claude-md") {
-      const stripped = removeManagedBlock(content, {
+      const {
+        REGISTRY_BEGIN_MARKER,
+        REGISTRY_END_MARKER,
+        isPristineRegistryBlock,
+      } = await import("./lib/claude-md/seed.mjs");
+      const afterManaged = removeManagedBlock(content, {
         begin: CLAUDE_MD_BEGIN_MARKER,
         end: CLAUDE_MD_END_MARKER,
       });
+      const stripped = isPristineRegistryBlock(afterManaged)
+        ? removeManagedBlock(afterManaged, {
+            begin: REGISTRY_BEGIN_MARKER,
+            end: REGISTRY_END_MARKER,
+          })
+        : afterManaged;
       if (stripped === content) {
         process.stdout.write(
           `skip: ${relative(TARGET, absPath)} (managed block already absent)\n`
         );
         continue;
       }
-      const remaining = stripped.replace(/\s+/g, "");
+      // Strip a leading UTF-8 BOM before the emptiness check.
+      // removeManagedBlock now preserves a leading BOM (round 17), so
+      // a CLAUDE.md whose only content was the managed block + BOM
+      // would otherwise leave `stripped` containing just \uFEFF and
+      // any whitespace. The /\s+/g regex does NOT match \uFEFF, so the
+      // file would be kept on disk despite having no user-authored
+      // bytes. Remove the BOM before the whitespace strip so the
+      // "remove the file we created" path fires correctly.
+      const remaining = stripped.replace(/^\uFEFF/, "").replace(/\s+/g, "");
       if (remaining.length === 0) {
         await rm(absPath, { force: true });
-        process.stdout.write(`removed: ${relative(TARGET, absPath)} (no user content outside managed block)\n`);
+        process.stdout.write(`removed: ${relative(TARGET, absPath)} (no user content outside managed blocks)\n`);
       } else {
         await atomicWriteText(absPath, stripped);
-        process.stdout.write(`stripped managed block from: ${relative(TARGET, absPath)} (user content preserved)\n`);
+        process.stdout.write(`stripped managed blocks from: ${relative(TARGET, absPath)} (user content preserved)\n`);
       }
       continue;
     }

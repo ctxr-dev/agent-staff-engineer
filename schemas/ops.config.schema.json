@@ -562,6 +562,43 @@
       }
     },
 
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-skill token accounting and weekly metrics report. The recorder writes one JSONL line per invocation under .claude/state/metrics/<yyyy>-<mm>-<dd>.jsonl; report_metrics.mjs --weekly rolls daily files into ISO-week summaries under .claude/state/metrics-weekly/<yyyy>-Www.json. Both live under .claude/state/, NOT under .development/**: the .development/* roots are wiki-governed (rules/llm-wiki.md) and require a nested-scalable layout that flat per-week leaves do not fit. See scripts/lib/metrics/. Note: this PR ships the recorder, aggregator, and CLI; the per-skill dispatch sites that read `metrics_enabled` and emit records land in a follow-up wiring PR (the bundle has no centralised dispatch layer today).",
+      "properties": {
+        "metrics_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Master switch for the recorder. Reserved field: the dispatch wiring lands in a follow-up. When the per-skill emitters are wired up, callers of scripts/lib/metrics/record.mjs will check this flag and become no-ops when false."
+        },
+        "weekly_report": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether scripts/report_metrics.mjs --weekly is wired into the project's reminder / cron path. Reserved until the cron wiring follow-up; for now the script is invokable manually."
+        },
+        "alert_thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cache_hit_rate_min": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.7,
+              "description": "Per-skill cache hit rate below this triggers a red flag in the weekly rollup."
+            },
+            "per_skill_token_ceiling": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 50000,
+              "description": "Per-skill avg_tokens above this triggers a red flag in the weekly rollup."
+            }
+          }
+        }
+      }
+    },
+
     "knowledge_store": {
       "type": "object",
       "additionalProperties": false,

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ctxr.dev/schemas/metrics-record.schema.json",
+  "title": "Per-skill invocation metrics record",
+  "description": "One JSONL line per skill invocation under .claude/state/metrics/<yyyy>-<mm>-<dd>.jsonl. additionalProperties is false at every layer so no PII or unintended fields can leak in.",
+  "type": "object",
+  "required": [
+    "trace_id",
+    "skill",
+    "started_at",
+    "ended_at",
+    "tokens",
+    "cost_usd",
+    "exit"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "trace_id": {
+      "type": "string",
+      "pattern": "^t-[0-9a-f]{16}$",
+      "description": "Stable identifier for this invocation. Format: `t-` prefix + 16 lowercase hex chars (matches scripts/lib/metrics/record.mjs::newTraceId). Sub-invocations carry the parent's trace_id in parent_trace_id; the writer enforces the same pattern at write time."
+    },
+    "parent_trace_id": {
+      "type": ["string", "null"],
+      "pattern": "^t-[0-9a-f]{16}$",
+      "description": "Set on sub-invocations (subagent or pre-hydrate); null for top-level invocations. Same shape as trace_id when present.",
+      "default": null
+    },
+    "skill": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "description": "Skill name (e.g. dev-loop, pr-iteration, incident-intake). Lowercase alphanumeric + underscore + dash only; the writer (scripts/lib/metrics/record.mjs::writeRecord) enforces the same pattern at write time. The pattern is also a path-traversal guard since the per-day JSONL filename is derived from the started_at date, not the skill, but the skill name still appears in error messages and aggregator output where we want a stable shape."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp at invocation start. Both Z-form (e.g. `2026-04-28T10:00:00Z`) and explicit-offset form (e.g. `2026-04-28T05:00:00-05:00`) are accepted; the writer normalises offset timestamps to the corresponding UTC calendar day for the per-day JSONL filename."
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp at invocation end. Same shape rules as started_at (Z-form or explicit-offset)."
+    },
+    "model": {
+      "type": "string",
+      "description": "Public model identifier (e.g. claude-opus-4-7); optional but recommended for cost-rate lookups."
+    },
+    "tokens": {
+      "type": "object",
+      "required": ["input", "output", "cache_read", "cache_write"],
+      "additionalProperties": false,
+      "properties": {
+        "input": { "type": "integer", "minimum": 0 },
+        "output": { "type": "integer", "minimum": 0 },
+        "cache_read": { "type": "integer", "minimum": 0 },
+        "cache_write": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cost_usd": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total cost computed from documented per-model rates. 6 decimal places of precision is plenty."
+    },
+    "subagents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "total_tokens"],
+      "description": "When present, BOTH count and total_tokens are required. The writer (scripts/lib/metrics/record.mjs::writeRecord) enforces the same rule at write time.",
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "total_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "mcp_servers_used": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "MCP server names touched during this invocation. Names only; no payloads."
+    },
+    "exit": {
+      "type": "string",
+      "enum": ["success", "halt", "fault", "error", "cancelled"],
+      "description": "Terminal status. 'halt' is a documented soft-stop (e.g. ambiguity-halt); 'fault' is in-flow; 'error' is environment / pre-condition."
+    }
+  }
+}
