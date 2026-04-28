@@ -17,6 +17,7 @@ import {
   seedRegistryInContent,
   findRegistryMarkers,
   isPristineRegistryBlock,
+  MalformedRegistryError,
 } from "../../scripts/lib/claude-md/seed.mjs";
 
 test("seed: absent CLAUDE.md gets a fresh registry block", () => {
@@ -143,4 +144,52 @@ test("isPristineRegistryBlock: tolerates CRLF newlines from a Windows checkout",
 test("isPristineRegistryBlock: false when no markers present", () => {
   assert.equal(isPristineRegistryBlock("# unrelated content\n"), false);
   assert.equal(isPristineRegistryBlock(""), false);
+});
+
+test("seed: BOM-prefixed CLAUDE.md is detected as already seeded (no double-block)", () => {
+  // A Windows editor that auto-prefixes \uFEFF would push the begin
+  // marker to index 1. Without BOM tolerance, the seeder concluded
+  // "no markers present" and appended a second block on every re-seed.
+  const { content: seeded } = seedRegistryInContent(null);
+  const bomFile = "\uFEFF" + seeded;
+  const { content: after, changed } = seedRegistryInContent(bomFile);
+  assert.equal(changed, false, "BOM-prefixed seeded file must be a no-op");
+  assert.equal(after, bomFile, "byte-stable on re-seed");
+  // Sanity: only one begin marker after re-seed.
+  const markerCount = after.split(REGISTRY_BEGIN_MARKER).length - 1;
+  assert.equal(markerCount, 1);
+});
+
+test("findRegistryMarkers: throws MalformedRegistryError on half-pair (begin without end)", () => {
+  const half = `# top\n\n${REGISTRY_BEGIN_MARKER}\nbody only\n`;
+  assert.throws(() => findRegistryMarkers(half), MalformedRegistryError);
+});
+
+test("findRegistryMarkers: throws MalformedRegistryError on half-pair (end without begin)", () => {
+  const half = `# top\n\nbody only\n${REGISTRY_END_MARKER}\n`;
+  assert.throws(() => findRegistryMarkers(half), MalformedRegistryError);
+});
+
+test("findRegistryMarkers: throws MalformedRegistryError when end appears before begin", () => {
+  const inverted = `# top\n${REGISTRY_END_MARKER}\nbody\n${REGISTRY_BEGIN_MARKER}\n`;
+  assert.throws(() => findRegistryMarkers(inverted), MalformedRegistryError);
+});
+
+test("seed: malformed marker pair throws (fail-fast, no silent double block)", () => {
+  // The previous behaviour was "treat half-broken as no markers" which
+  // produced a dangling marker AND a fresh block. Now the seeder fails
+  // fast so install / append-entry can surface the diagnostic and the
+  // user repairs the file by hand.
+  const half = `# user prose\n\n${REGISTRY_BEGIN_MARKER}\nuser-edited body but missing end\n`;
+  assert.throws(() => seedRegistryInContent(half), MalformedRegistryError);
+});
+
+test("isPristineRegistryBlock: returns false on malformed markers (does not throw)", () => {
+  const half = `# top\n\n${REGISTRY_BEGIN_MARKER}\nbody only\n`;
+  // Uninstall calls this to decide whether to strip; throwing here
+  // would block uninstall on a damaged CLAUDE.md the user can no
+  // longer fix from inside the bundle. Returning false preserves the
+  // half-broken block; install / append-entry still surface the error
+  // on the next mutating run.
+  assert.equal(isPristineRegistryBlock(half), false);
 });

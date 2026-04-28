@@ -129,12 +129,39 @@ function renderBlock(body) {
 }
 
 /**
+ * Error thrown when CLAUDE.md contains a malformed registry marker pair
+ * (exactly one of begin/end present, or end appearing before begin).
+ * Both cases mean the file's registry state is unusable: silently
+ * appending a fresh block would leave a dangling sibling marker pair
+ * and produce two separate registry blocks. Callers (install.mjs, the
+ * append-entry CLI) catch this and surface a clear diagnostic so the
+ * user can fix the file by hand before re-running.
+ */
+export class MalformedRegistryError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "MalformedRegistryError";
+  }
+}
+
+/**
  * Locate the registry markers with line-boundary anchoring. A marker is
  * considered authoritative only when it starts at the beginning of a line
- * (preceded by `\n` or start-of-string) AND terminates at the end of a
- * line (followed by `\n` / `\r` or end-of-string). This prevents a marker
- * that appears verbatim inside a code fence or as quoted prose from being
- * treated as the real installer-owned block.
+ * (preceded by `\n`, start-of-string, or a UTF-8 BOM at offset 0) AND
+ * terminates at the end of a line (followed by `\n` / `\r` or end-of-
+ * string). Returns `null` when neither marker is present. Throws
+ * MalformedRegistryError when exactly one marker is found, or when the
+ * end marker appears before the begin marker.
+ *
+ * Known limitation: a marker copy that sits at column 0 inside a fenced
+ * code block (e.g. a CLAUDE.md author who pasted the marker text into a
+ * ```...``` example without indenting it) WILL satisfy the line-anchor
+ * check and be treated as authoritative. This is the same compromise
+ * inject.mjs makes for the wider managed-block markers; the marker
+ * strings are deliberately verbose and namespaced so the chance of a
+ * benign collision is vanishingly low. Documented here rather than
+ * worked around because parsing markdown code fences in this seeder
+ * adds risk out of proportion to the benefit.
  *
  * @param {string} content
  * @returns {{ begin: number, end: number } | null}
@@ -143,14 +170,38 @@ export function findRegistryMarkers(content) {
   if (typeof content !== "string") return null;
   const begin = findLineAnchored(content, REGISTRY_BEGIN_MARKER, false);
   const end = findLineAnchored(content, REGISTRY_END_MARKER, true);
-  if (begin === -1 || end === -1 || end <= begin) return null;
+  if (begin === -1 && end === -1) return null;
+  if (begin === -1 || end === -1) {
+    throw new MalformedRegistryError(
+      `CLAUDE.md contains exactly one of the registry markers (begin=${begin !== -1}, end=${end !== -1}). ` +
+        "Restore the missing marker or remove the orphan, then re-run.",
+    );
+  }
+  if (end <= begin) {
+    throw new MalformedRegistryError(
+      `CLAUDE.md contains the registry END marker before the BEGIN marker (begin=${begin}, end=${end}). ` +
+        "Reorder the marker pair, then re-run.",
+    );
+  }
   return { begin, end };
 }
 
 function findLineAnchored(haystack, needle, fromEnd) {
   let pos = fromEnd ? haystack.lastIndexOf(needle) : haystack.indexOf(needle);
   while (pos !== -1) {
-    const startOk = pos === 0 || haystack[pos - 1] === "\n";
+    // Valid line-start boundaries: start-of-string (pos === 0), the
+    // character right after a `\n`, OR position 1 when the file opens
+    // with a UTF-8 BOM at offset 0. Without the BOM allowance, a
+    // CLAUDE.md saved by a Windows editor that auto-prefixes \uFEFF
+    // would push the marker to index 1 and the seeder would treat the
+    // file as if no markers were present, doubling the block on every
+    // re-seed. inject.mjs::findLineContaining handles BOMs the same
+    // way; this helper mirrors that contract.
+    const prev = haystack[pos - 1];
+    const startOk =
+      pos === 0 ||
+      prev === "\n" ||
+      (pos === 1 && haystack.charCodeAt(0) === 0xfeff);
     const endPos = pos + needle.length;
     const endOk =
       endPos === haystack.length ||
@@ -176,7 +227,19 @@ function findLineAnchored(haystack, needle, fromEnd) {
  * @returns {boolean}
  */
 export function isPristineRegistryBlock(content) {
-  const located = findRegistryMarkers(content);
+  // Pristine-vs-edited is consulted by uninstall as a strip safety
+  // gate: when in doubt (markers absent, malformed, body diverges
+  // even slightly), return false so the block is preserved. Any throw
+  // from findRegistryMarkers (a malformed marker pair) is swallowed
+  // here for the same reason — uninstall is not the right surface to
+  // raise that error; install / append-entry will surface it on the
+  // next mutating run.
+  let located;
+  try {
+    located = findRegistryMarkers(content);
+  } catch {
+    return false;
+  }
   if (!located) return false;
   const innerStart = located.begin + REGISTRY_BEGIN_MARKER.length;
   const body = content.slice(innerStart, located.end);
