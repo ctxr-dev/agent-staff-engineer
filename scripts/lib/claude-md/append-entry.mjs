@@ -175,6 +175,22 @@ function validateEntry(entry) {
         `use --linked for the reference itself. Got ${JSON.stringify(entry.title)}.`,
     );
   }
+  // Quirk-specific: linked CANNOT contain parentheses. The renderer
+  // wraps the linked string in `(<linked>)` to fit a one-line bullet,
+  // and extractQuirkTitle locates the group via the balanced
+  // `[^()]*` regex. A linked value that itself contains `(` or `)`
+  // (e.g. "PR (draft) #1") either truncates at the inner paren on
+  // round-trip or fails the trailing-group match entirely, breaking
+  // idempotent upsert. Worked / failed entries render `linked` on
+  // its own bullet line and are immune; the constraint only fires
+  // for quirks.
+  if (entry.section === "quirk" && entry.linked != null && /[()]/.test(entry.linked)) {
+    throw new Error(
+      `linked for section=quirk must not contain parentheses (the renderer wraps it as ` +
+        "`(<linked>)` on a one-line bullet, and parens inside the value defeat idempotent upsert). " +
+        `Use a paren-free reference (e.g. "#123" instead of "PR (draft) #123"). Got ${JSON.stringify(entry.linked)}.`,
+    );
+  }
   // Quirks render only `Last verified: <firstSeen>` and have no Owner
   // bullet. renderEntry silently drops `nextReview` / `owner` for
   // section=quirk; reject them at validation time so a caller mistake
