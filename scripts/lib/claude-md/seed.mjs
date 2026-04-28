@@ -16,7 +16,7 @@
 // markers so the two can coexist without colliding. Authoring guidance:
 // see design/claude-md-authoring.md.
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readTextOrNull, atomicWriteText } from "../fsx.mjs";
 
 export const REGISTRY_BEGIN_MARKER =
   "<!-- agent-staff-engineer:begin compound-learning registry (managed by claude-md/seed.mjs and append-entry.mjs; edits inside are preserved across re-seeds) -->";
@@ -47,8 +47,9 @@ const STUB_BODY = [
   "",
   "### Codebase quirks",
   "",
-  "<!-- One-liners describing non-obvious facts an agent could not derive",
-  "     by reading the code. -->",
+  "<!-- Append via scripts/lib/claude-md/append-entry.mjs --section quirk.",
+  "     Each quirk renders as a single bullet line containing the title,",
+  "     the remediation pointer, and the last-verified date. -->",
   "",
 ].join("\n");
 
@@ -89,18 +90,18 @@ export function seedRegistryInContent(existing) {
 }
 
 /**
- * Disk-side wrapper around seedRegistryInContent. Returns the change shape
- * so install.mjs can include it in its summary.
+ * Disk-side wrapper around seedRegistryInContent. Uses the bundle's
+ * atomicWriteText helper (write-to-temp + rename) so a partially-
+ * written CLAUDE.md never lands on disk; this matches the convention
+ * established by scripts/install.mjs and the rest of the writer surface.
  *
  * @param {string} claudeMdPath - absolute path to the project's CLAUDE.md
- * @returns {{ path: string, changed: boolean }}
+ * @returns {Promise<{ path: string, changed: boolean }>}
  */
-export function seedRegistryAtPath(claudeMdPath) {
-  const existing = existsSync(claudeMdPath)
-    ? readFileSync(claudeMdPath, "utf8")
-    : null;
+export async function seedRegistryAtPath(claudeMdPath) {
+  const existing = await readTextOrNull(claudeMdPath);
   const { content, changed } = seedRegistryInContent(existing);
-  if (changed) writeFileSync(claudeMdPath, content);
+  if (changed) await atomicWriteText(claudeMdPath, content);
   return { path: claudeMdPath, changed };
 }
 

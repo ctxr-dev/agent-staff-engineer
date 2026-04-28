@@ -37,11 +37,16 @@ Remediation, Next review. The Title is the H3.
 <!--
 ### Pattern: <one-line title>
 - Status: worked
-- First seen: YYYY-MM-DD in <issue / PR ref> (<one-line trigger>).
-- Linked: <issue or PR numbers, optional>
+- First seen: YYYY-MM-DD.
+- Linked: <issue or PR refs, optional>
 - Remediation: <pointer to rule, doc, or commit; one line>.
 - Owner: <name or team, optional>
 - Next review: YYYY-MM-DD
+
+The append helper at scripts/lib/claude-md/append-entry.mjs renders
+this exact shape. `Linked` and `Owner` are emitted only when
+supplied. `Next review` defaults to first-seen + 6 months
+(end-of-month clamped, not rolled over) when omitted.
 -->
 
 ### Patterns that failed
@@ -55,9 +60,18 @@ do not retry the same dead-end.
 ### Codebase quirks
 
 <!--
-One-liners. Non-obvious facts an agent could not derive by reading
-the code:
-- Legacy branch policies (e.g. "main is the deploy branch; release/* is for hotfixes only").
-- Build-system invariants (e.g. "the postinstall hook expects $REPO_ROOT to be writable").
-- "If you touch X, also update Y" couplings.
+One-liner bullets describing non-obvious facts an agent could not
+derive by reading the code. The append helper at
+scripts/lib/claude-md/append-entry.mjs --section quirk renders
+each quirk as:
+
+  - <title>[ (<linked>)]. Remediation: <pointer>. Last verified: YYYY-MM-DD.
+
+Examples:
+- "main is the deploy branch; release/* is for hotfixes only"
+  (Remediation: "branch from main for new features").
+- "the postinstall hook expects $REPO_ROOT to be writable"
+  (Remediation: "see scripts/postinstall.sh").
+- "if you touch src/auth.ts, also update tests/auth-e2e.test.ts"
+  (Remediation: "covered by the auth-coupling rule").
 -->

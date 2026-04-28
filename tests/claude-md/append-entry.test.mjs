@@ -40,7 +40,7 @@ test("append: validation rejects missing required fields", () => {
   );
 });
 
-test("append: worked entry lands under 'Patterns that worked' with default next-review", () => {
+test("append: worked entry lands under 'Patterns that worked' with default next-review and a Linked bullet", () => {
   const seeded = freshlySeeded();
   const { content, changed, action } = appendEntryToContent(seeded, {
     section: "worked",
@@ -51,7 +51,6 @@ test("append: worked entry lands under 'Patterns that worked' with default next-
   });
   assert.equal(changed, true);
   assert.equal(action, "added");
-  // Section heading still present, entry appended within that section.
   const idxSection = content.indexOf("### Patterns that worked");
   const idxEntry = content.indexOf("### Pattern: PR iteration must cache bot node IDs per repo");
   const idxFailedSection = content.indexOf("### Patterns that failed");
@@ -59,10 +58,65 @@ test("append: worked entry lands under 'Patterns that worked' with default next-
   assert.ok(idxEntry > idxSection, "entry must appear AFTER the section heading");
   assert.ok(idxEntry < idxFailedSection, "entry must appear BEFORE the next section");
   assert.ok(content.includes("- Status: worked"));
-  assert.ok(content.includes("- First seen: 2026-04-10 in PR #123."));
+  assert.ok(content.includes("- First seen: 2026-04-10."));
+  // Linked is now a dedicated bullet (matches templates/claude-md/compound-learning.md).
+  assert.ok(content.includes("- Linked: PR #123"));
   assert.ok(content.includes("- Remediation: capture bot ID once; see rules/pr-iteration.md"));
   // Default next-review = first-seen + 6 months.
   assert.ok(content.includes("- Next review: 2026-10-10"));
+});
+
+test("append: defaultNextReview clamps end-of-month dates instead of rolling forward", () => {
+  // 2026-08-31 + 6 months has no Feb 31; setUTCMonth would roll into
+  // March. The clamp logic produces 2027-02-28 (the last day of the
+  // target month).
+  const seeded = freshlySeeded();
+  const { content } = appendEntryToContent(seeded, {
+    section: "worked",
+    title: "End-of-month clamp",
+    firstSeen: "2026-08-31",
+    remediation: "X",
+  });
+  assert.ok(content.includes("- Next review: 2027-02-28"));
+});
+
+test("append: quirk title with dots and parentheses survives idempotent upsert", () => {
+  // Titles like "v2.0 build" or "Node (LTS) is required" must not be
+  // truncated by the quirk-line title extraction.
+  const seeded = freshlySeeded();
+  const a = appendEntryToContent(seeded, {
+    section: "quirk",
+    title: "Node (LTS) is required for the postinstall hook",
+    firstSeen: "2026-04-28",
+    remediation: "see scripts/postinstall.sh",
+  });
+  assert.equal(a.action, "added");
+  // Re-running with the same title hits the existing entry, NOT a duplicate.
+  const b = appendEntryToContent(a.content, {
+    section: "quirk",
+    title: "Node (LTS) is required for the postinstall hook",
+    firstSeen: "2026-04-28",
+    remediation: "see scripts/postinstall.sh",
+  });
+  assert.notEqual(b.action, "added");
+  const matches = b.content.match(/^- Node \(LTS\) is required/gm) ?? [];
+  assert.equal(matches.length, 1);
+});
+
+test("append: tolerates CRLF newline after the registry begin marker", () => {
+  // A CLAUDE.md from a CRLF checkout has \r\n line endings. The block
+  // extractor must skip the \r\n after the begin marker so the body
+  // slice doesn't start with a stray \r.
+  const lf = freshlySeeded();
+  const crlf = lf.replace(/\n/g, "\r\n");
+  const { content, action } = appendEntryToContent(crlf, {
+    section: "worked",
+    title: "CRLF round-trip",
+    firstSeen: "2026-04-28",
+    remediation: "X",
+  });
+  assert.equal(action, "added");
+  assert.ok(content.includes("### Pattern: CRLF round-trip"));
 });
 
 test("append: idempotent for same {section, title}", () => {

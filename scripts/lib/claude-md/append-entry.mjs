@@ -16,7 +16,7 @@
 // matches design/claude-md-authoring.md's "older than 6 months requires
 // re-confirmation" rule.
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readTextOrNull, atomicWriteText } from "../fsx.mjs";
 import { REGISTRY_BEGIN_MARKER, REGISTRY_END_MARKER, seedRegistryInContent } from "./seed.mjs";
 
 /**
@@ -61,17 +61,18 @@ export function appendEntryToContent(existing, entry) {
 }
 
 /**
- * Disk wrapper. Returns the change report so callers can log it.
+ * Disk wrapper. Uses the bundle's atomicWriteText helper (write-to-temp
+ * + rename) so the on-disk CLAUDE.md is never partially overwritten.
+ * Matches the convention in seed.mjs and scripts/install.mjs.
  *
  * @param {string} claudeMdPath - absolute CLAUDE.md path
  * @param {Parameters<typeof appendEntryToContent>[1]} entry
+ * @returns {Promise<{ path: string, changed: boolean, action: "added" | "updated" | "noop" }>}
  */
-export function appendEntryAtPath(claudeMdPath, entry) {
-  const existing = existsSync(claudeMdPath)
-    ? readFileSync(claudeMdPath, "utf8")
-    : null;
+export async function appendEntryAtPath(claudeMdPath, entry) {
+  const existing = await readTextOrNull(claudeMdPath);
   const { content, changed, action } = appendEntryToContent(existing, entry);
-  if (changed) writeFileSync(claudeMdPath, content);
+  if (changed) await atomicWriteText(claudeMdPath, content);
   return { path: claudeMdPath, changed, action };
 }
 
@@ -107,16 +108,26 @@ function validateEntry(entry) {
 }
 
 function defaultNextReview(firstSeen) {
-  // firstSeen + 6 months. UTC math, normalised so 2026-08-31 + 6m = 2027-02-28.
+  // firstSeen + 6 months, with end-of-month CLAMPING (not rollover).
+  // Plain `setUTCMonth(m + 6)` rolls 2026-08-31 forward to 2027-03-03
+  // because it lands on 2027-02-31 and JS normalises into the next
+  // month. We want the last day of the target month instead so the
+  // review-cadence semantics match design/claude-md-authoring.md
+  // ("older than 6 months requires re-confirmation").
   const [y, m, d] = firstSeen.split("-").map((s) => Number.parseInt(s, 10));
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCMonth(dt.getUTCMonth() + 6);
-  // Re-normalise: if the original day-of-month overflowed (e.g. 31 + 6m
-  // landed in a 30-day month), Date pulls it back automatically — but we
-  // want a defensive sanity check that the year hasn't gone negative.
-  const yy = dt.getUTCFullYear();
-  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  // Compute target year/month additively. JS months are 0-indexed.
+  const startMonthIndex = m - 1;
+  const targetMonthIndex = startMonthIndex + 6;
+  const targetYear = y + Math.floor(targetMonthIndex / 12);
+  const targetMonth = ((targetMonthIndex % 12) + 12) % 12; // 0-11
+  // Days in the target month (UTC). Date(year, month+1, 0) gives the
+  // last day of `month` because day=0 means "the last day of the prior
+  // month".
+  const lastDayOfTarget = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+  const targetDay = Math.min(d, lastDayOfTarget);
+  const yy = targetYear;
+  const mm = String(targetMonth + 1).padStart(2, "0");
+  const dd = String(targetDay).padStart(2, "0");
   return `${yy}-${mm}-${dd}`;
 }
 
@@ -128,12 +139,18 @@ function renderEntry(entry) {
     const linked = entry.linked ? ` (${entry.linked})` : "";
     return `- ${entry.title}${linked}. Remediation: ${entry.remediation}. Last verified: ${entry.firstSeen}.`;
   }
+  // Worked / failed entries follow the registry template's exact shape:
+  // Status, First seen, optional Linked, Remediation, optional Owner,
+  // Next review. Linked is rendered as its own bullet (matching
+  // templates/claude-md/compound-learning.md) so consumers reading the
+  // registry get a dedicated, easy-to-grep field.
   const lines = [
     `### Pattern: ${entry.title}`,
     `- Status: ${status}`,
-    `- First seen: ${entry.firstSeen}${entry.linked ? ` in ${entry.linked}` : ""}.`,
-    `- Remediation: ${entry.remediation}`,
+    `- First seen: ${entry.firstSeen}.`,
   ];
+  if (entry.linked) lines.push(`- Linked: ${entry.linked}`);
+  lines.push(`- Remediation: ${entry.remediation}`);
   if (entry.owner) lines.push(`- Owner: ${entry.owner}`);
   lines.push(`- Next review: ${nextReview}`);
   return lines.join("\n");
@@ -143,8 +160,17 @@ function extractRegistryBlock(content) {
   const begin = content.indexOf(REGISTRY_BEGIN_MARKER);
   const end = content.lastIndexOf(REGISTRY_END_MARKER);
   if (begin === -1 || end === -1 || end <= begin) return null;
-  // Body lives between the marker lines (exclusive of both).
-  const innerStart = begin + REGISTRY_BEGIN_MARKER.length + 1; // +1 for the newline after the marker
+  // Body lives between the marker lines (exclusive of both). The newline
+  // after the marker may be `\n` (POSIX) or `\r\n` (Windows / a CRLF
+  // checkout); skip whichever is there so the body slice doesn't begin
+  // with a stray `\r`.
+  const afterMarker = begin + REGISTRY_BEGIN_MARKER.length;
+  let innerStart = afterMarker;
+  if (content[innerStart] === "\r" && content[innerStart + 1] === "\n") {
+    innerStart += 2;
+  } else if (content[innerStart] === "\n") {
+    innerStart += 1;
+  }
   return {
     start: begin,
     end: end + REGISTRY_END_MARKER.length,
@@ -158,6 +184,24 @@ function ensureTrailingNewline(s) {
 
 function normaliseTitle(t) {
   return t.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Extract the title portion from a quirk bullet. The renderer emits
+ * `<title>[ (<linked>)]. Remediation: <r>. Last verified: <date>.`
+ * — the title boundary is the literal ` (` group OR the literal
+ * `. Remediation:` tag. We split on those, not on raw `.` or `(`,
+ * so titles containing dots (e.g. "v2.0 build") or parens
+ * (e.g. "Node (LTS)") survive.
+ */
+function extractQuirkTitle(bulletBody) {
+  const remIdx = bulletBody.indexOf(". Remediation:");
+  let upToTitle = remIdx >= 0 ? bulletBody.slice(0, remIdx) : bulletBody;
+  // Strip a trailing ` (...)` linked group if present. Match the LAST
+  // occurrence so titles containing parentheses remain intact.
+  const linkedMatch = / \([^()]*\)$/.exec(upToTitle);
+  if (linkedMatch) upToTitle = upToTitle.slice(0, linkedMatch.index);
+  return upToTitle;
 }
 
 /**
@@ -200,15 +244,17 @@ function upsertEntry(body, entry, rendered) {
     if (newBody === body) return { body, action: "noop" };
     return { body: newBody, action: "updated" };
   }
-  // Append within the section. Use the section's end as the insert point;
-  // trim leading blank lines from the trailing text so we keep one blank
-  // line of separation.
-  const before = body.slice(0, sectionRange.end).replace(/\n+$/, "\n");
-  const after = body.slice(sectionRange.end).replace(/^\n+/, "");
-  const joiner = before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
-  const sectionEnd = "\n\n";
+  // Append within the section. We splice at the section boundary
+  // WITHOUT trimming the user's whitespace on either side; whatever
+  // newlines they kept stay intact. The only thing we add is enough
+  // separation in front of and after the new entry to keep markdown
+  // valid (one blank line either side, no more, no less).
+  const before = body.slice(0, sectionRange.end);
+  const after = body.slice(sectionRange.end);
+  const leadingSep = before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+  const trailingSep = after.startsWith("\n\n") || after.length === 0 ? "" : after.startsWith("\n") ? "\n" : "\n\n";
   return {
-    body: before + joiner + rendered + sectionEnd + after,
+    body: before + leadingSep + rendered + trailingSep + after,
     action: "added",
   };
 }
@@ -247,11 +293,16 @@ function locateSection(body, heading) {
 function locateExistingEntry(sectionBody, entry) {
   const wanted = normaliseTitle(entry.title);
   if (entry.section === "quirk") {
-    // Quirks are one-liner bullets keyed on title (case-insensitive).
+    // Quirks are one-liner bullets `- <title>[ (<linked>)]. Remediation: ...`.
+    // Match on the title prefix without splitting on `.` or `(` (titles
+    // legitimately contain dots like "v2.0 build" or parens like
+    // "Node (LTS) on this repo"); the title boundary is either the
+    // optional ` (linked)` group or the literal `. Remediation:` tag.
     const re = /^- (.+)$/gm;
     let m;
     while ((m = re.exec(sectionBody)) !== null) {
-      const lineTitle = m[1].split(/[.(]/)[0];
+      const line = m[1];
+      const lineTitle = extractQuirkTitle(line);
       if (normaliseTitle(lineTitle) === wanted) {
         return { start: m.index, end: m.index + m[0].length };
       }
