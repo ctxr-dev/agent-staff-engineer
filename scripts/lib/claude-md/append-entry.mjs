@@ -323,8 +323,15 @@ function normaliseTitle(t) {
  * write time so this extractor never has to disambiguate.
  */
 function extractQuirkTitle(bulletBody) {
-  const remIdx = bulletBody.indexOf(". Remediation:");
-  let upToTitle = remIdx >= 0 ? bulletBody.slice(0, remIdx) : bulletBody;
+  // CRLF-safe: locateExistingEntry's `/^- (.+)$/gm` capture strips the
+  // \n but keeps any trailing `\r` on Windows / CRLF files. Strip it
+  // here so the linked-group regex can anchor on $ correctly. Without
+  // this, an idempotent upsert on a CRLF file with linked present
+  // failed the trailing-group match, fell through to append, and
+  // produced a duplicate quirk on every re-run.
+  const cleaned = bulletBody.replace(/\r$/, "");
+  const remIdx = cleaned.indexOf(". Remediation:");
+  let upToTitle = remIdx >= 0 ? cleaned.slice(0, remIdx) : cleaned;
   // Strip a trailing ` (...)` linked group if present. Match the LAST
   // occurrence so titles containing parentheses remain intact.
   const linkedMatch = / \([^()]*\)$/.exec(upToTitle);

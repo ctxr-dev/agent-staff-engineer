@@ -1315,7 +1315,15 @@ async function runUninstall({ dryRun = false } = {}) {
         );
         continue;
       }
-      const remaining = stripped.replace(/\s+/g, "");
+      // Strip a leading UTF-8 BOM before the emptiness check.
+      // removeManagedBlock now preserves a leading BOM (round 17), so
+      // a CLAUDE.md whose only content was the managed block + BOM
+      // would otherwise leave `stripped` containing just \uFEFF and
+      // any whitespace. The /\s+/g regex does NOT match \uFEFF, so the
+      // file would be kept on disk despite having no user-authored
+      // bytes. Remove the BOM before the whitespace strip so the
+      // "remove the file we created" path fires correctly.
+      const remaining = stripped.replace(/^\uFEFF/, "").replace(/\s+/g, "");
       if (remaining.length === 0) {
         await rm(absPath, { force: true });
         process.stdout.write(`removed: ${relative(TARGET, absPath)} (no user content outside managed blocks)\n`);
