@@ -356,13 +356,13 @@ export function renderMarkdown(weekly) {
     const delta = row.delta_vs_prev == null
       ? "n/a"
       : `${row.delta_vs_prev >= 0 ? "+" : ""}${(row.delta_vs_prev * 100).toFixed(0)} %`;
-    lines.push(`| ${row.skill} | ${row.invocations} | ${row.avg_tokens} | ${pct(row.cache_hit_rate)} | $${row.avg_cost.toFixed(2)} | ${delta} |`);
+    lines.push(`| ${escapeCell(row.skill)} | ${row.invocations} | ${row.avg_tokens} | ${pct(row.cache_hit_rate)} | $${row.avg_cost.toFixed(2)} | ${delta} |`);
   }
   if (weekly.red_flags.length > 0) {
     lines.push("");
     lines.push("Red flags:");
     for (const flag of weekly.red_flags) {
-      lines.push(`- ${flag.skill}: ${flag.message}`);
+      lines.push(`- ${escapeCell(flag.skill)}: ${escapeCell(flag.message)}`);
     }
   }
   lines.push("");
@@ -464,6 +464,24 @@ function round4(n) {
 
 function round6(n) {
   return Number(n.toFixed(6));
+}
+
+function escapeCell(s) {
+  // The aggregator's read path is intentionally loose (no ajv on
+  // every JSONL line; see readRecordsInWindow JSDoc). A corrupted /
+  // hand-edited record could land a skill name containing markdown-
+  // table-breaking characters like `|`, a CR/LF, or a backslash, and
+  // the rendered weekly report would either break the table layout
+  // or inject unintended markdown into the output. Escape the four
+  // characters that actually break a markdown row: `|` becomes `\|`
+  // (escaped pipe), CR/LF become an HTML line break (the markdown
+  // table cell can't carry a real newline), and `\` is escaped so
+  // the escapes themselves cannot collide. Other characters pass
+  // through verbatim.
+  return String(s)
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/[\r\n]+/g, "<br>");
 }
 
 function pct(n) {

@@ -479,11 +479,21 @@ export function utcDateFromIso(iso, fieldName = "timestamp") {
   // Both branches now go through the same Date parse + UTC extract;
   // the regex pre-filter still rejects shapes the spec disallows
   // (e.g. naive timestamps with no zone designator).
-  if (/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(iso) ||
-      /^\d{4}-\d{2}-\d{2}T[\d:.]+(?:[+-]\d{2}:?\d{2})$/.test(iso)) {
+  // Tighten to the RFC3339 / `format: date-time` shape that
+  // ajv-formats validates the schema against. The schemas use
+  // `format: date-time`; without these stricter regexes a buildRecord
+  // / writeRecord caller could accept timestamps (e.g. "T10:00Z" with
+  // no seconds, or "-0500" with no colon in the offset) that pass our
+  // accept-then-Date-parse path here AND then fail the read schema
+  // on the next aggregator pass. Required shape:
+  //   YYYY-MM-DDTHH:MM:SS(.fraction)?(Z | +HH:MM | -HH:MM)
+  // — seconds always required, offset must include the colon.
+  const rfc3339Z = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+  const rfc3339Offset = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?[+-]\d{2}:\d{2}$/;
+  if (rfc3339Z.test(iso) || rfc3339Offset.test(iso)) {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) {
-      throw new Error(`metrics: ${fieldName} unparseable as ISO 8601; got ${JSON.stringify(iso)}`);
+      throw new Error(`metrics: ${fieldName} unparseable as RFC3339 / ISO 8601 date-time; got ${JSON.stringify(iso)}`);
     }
     const yyyy = d.getUTCFullYear();
     const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -491,7 +501,7 @@ export function utcDateFromIso(iso, fieldName = "timestamp") {
     return `${yyyy}-${mm}-${dd}`;
   }
   throw new Error(
-    `metrics: ${fieldName} must be ISO 8601 with Z or +/-HH:MM offset; got ${JSON.stringify(iso)}`,
+    `metrics: ${fieldName} must be RFC3339 date-time (YYYY-MM-DDTHH:MM:SS(.fraction)? followed by Z or +/-HH:MM); got ${JSON.stringify(iso)}`,
   );
 }
 
