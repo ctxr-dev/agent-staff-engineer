@@ -102,16 +102,21 @@ export function computeCostUsd(tokens, model, rates = DEFAULT_RATES) {
 function pickRate(table, key) {
   // Own-property + shape check. Returns the rate entry only when the
   // table has its own (non-inherited) property at `key` AND the value
-  // looks like a rate object (numeric input/output/cache_read/cache_write).
-  // Falsy return signals "not a rate" so the chain in computeCostUsd
-  // can fall through to the next step.
+  // looks like a rate object: numeric, finite, AND non-negative
+  // input/output/cache_read/cache_write fields. A negative rate
+  // would propagate through computeCostUsd as a negative cost_usd
+  // and trip writeRecord's `cost_usd >= 0` validation later; reject
+  // the entry here so the fallback chain falls through to a saner
+  // table instead of producing the bad value at all.
+  // Falsy return signals "not a rate".
   if (table == null || typeof table !== "object") return null;
   if (typeof key !== "string" || key.length === 0) return null;
   if (!Object.hasOwn(table, key)) return null;
   const r = table[key];
   if (r == null || typeof r !== "object") return null;
   for (const f of ["input", "output", "cache_read", "cache_write"]) {
-    if (typeof r[f] !== "number" || !Number.isFinite(r[f])) return null;
+    const v = r[f];
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
   }
   return r;
 }
@@ -217,8 +222,8 @@ export function buildRecord(input) {
       throw new Error(`metrics.buildRecord: subagents.count and subagents.total_tokens are required numeric fields; got ${JSON.stringify(input.subagents)}`);
     }
     record.subagents = {
-      count: int(input.subagents.count),
-      total_tokens: int(input.subagents.total_tokens),
+      count: int(input.subagents.count, "subagents.count"),
+      total_tokens: int(input.subagents.total_tokens, "subagents.total_tokens"),
     };
   }
   if (input.mcp_servers_used != null) {
@@ -443,17 +448,21 @@ function normaliseTokens(t) {
     throw new Error("metrics: tokens must be a plain object with input/output/cache_read/cache_write");
   }
   return {
-    input: int(t.input),
-    output: int(t.output),
-    cache_read: int(t.cache_read),
-    cache_write: int(t.cache_write),
+    input: int(t.input, "tokens.input"),
+    output: int(t.output, "tokens.output"),
+    cache_read: int(t.cache_read, "tokens.cache_read"),
+    cache_write: int(t.cache_write, "tokens.cache_write"),
   };
 }
 
-function int(v) {
+function int(v, label = "value") {
+  // `label` lets callers identify the offending field in the error
+  // message. Used for both tokens.* and subagents.{count,total_tokens};
+  // the previous hard-coded "token counts" wording was misleading
+  // when subagents validation tripped here.
   const n = Number(v ?? 0);
   if (!Number.isFinite(n) || n < 0) {
-    throw new Error(`metrics: token counts must be non-negative finite numbers; got ${v}`);
+    throw new Error(`metrics: ${label} must be a non-negative finite number; got ${v}`);
   }
   return Math.trunc(n);
 }
