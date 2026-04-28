@@ -129,6 +129,19 @@ export function buildRecord(input) {
   for (const k of required) {
     if (input[k] == null) throw new Error(`metrics.buildRecord: ${k} is required`);
   }
+  // Schema-conformance invariants. buildRecord is documented as
+  // producing schema-valid records; surface invariant violations
+  // here instead of relying on writeRecord to discover them at JSONL
+  // append time. Same patterns the schema enforces.
+  if (typeof input.skill !== "string" || !/^[a-z0-9][a-z0-9_-]*$/.test(input.skill)) {
+    throw new Error(`metrics.buildRecord: skill must match /^[a-z0-9][a-z0-9_-]*$/; got ${JSON.stringify(input.skill)}`);
+  }
+  if (input.parent_trace_id != null && (typeof input.parent_trace_id !== "string" || !/^t-[0-9a-f]{16}$/.test(input.parent_trace_id))) {
+    throw new Error(`metrics.buildRecord: parent_trace_id must match /^t-[0-9a-f]{16}$/ when present; got ${JSON.stringify(input.parent_trace_id)}`);
+  }
+  if (input.trace_id != null && (typeof input.trace_id !== "string" || !/^t-[0-9a-f]{16}$/.test(input.trace_id))) {
+    throw new Error(`metrics.buildRecord: trace_id must match /^t-[0-9a-f]{16}$/ when supplied; got ${JSON.stringify(input.trace_id)}`);
+  }
   const tokens = normaliseTokens(input.tokens);
   const record = {
     trace_id: input.trace_id ?? newTraceId(),
@@ -242,10 +255,15 @@ export function writeRecord(record, stateDir) {
     if (!Array.isArray(record.mcp_servers_used)) {
       throw new Error(`metrics.writeRecord: record.mcp_servers_used must be an array of strings when present; got ${JSON.stringify(record.mcp_servers_used)}`);
     }
+    const seen = new Set();
     for (const item of record.mcp_servers_used) {
       if (typeof item !== "string" || item.length === 0) {
         throw new Error(`metrics.writeRecord: record.mcp_servers_used items must be non-empty strings; got ${JSON.stringify(item)}`);
       }
+      if (seen.has(item)) {
+        throw new Error(`metrics.writeRecord: record.mcp_servers_used must contain unique items (schema uniqueItems:true); got duplicate ${JSON.stringify(item)}`);
+      }
+      seen.add(item);
     }
   }
   if (record.subagents !== undefined) {

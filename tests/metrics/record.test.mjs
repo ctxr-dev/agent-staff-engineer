@@ -105,8 +105,12 @@ test("buildRecord: produces a schema-conformant object with all required fields"
 });
 
 test("buildRecord: sub-invocation carries parent_trace_id", () => {
-  const r = buildRecord({ ...validInput(), parent_trace_id: "t-parent-123" });
-  assert.equal(r.parent_trace_id, "t-parent-123");
+  // Use a real trace-id-shaped value (matches schema pattern
+  // ^t-[0-9a-f]{16}$) so the test does not encode an invalid shape
+  // that buildRecord's pattern check would reject.
+  const parentTraceId = newTraceId();
+  const r = buildRecord({ ...validInput(), parent_trace_id: parentTraceId });
+  assert.equal(r.parent_trace_id, parentTraceId);
 });
 
 test("buildRecord: mcp_servers_used is deduped + sorted", () => {

@@ -154,7 +154,22 @@ function mondayFromIsoWeek(isoWeek) {
   const jan4 = new Date(Date.UTC(year, 0, 4));
   const jan4Dow = jan4.getUTCDay() || 7;
   const week1Monday = new Date(jan4.getTime() - (jan4Dow - 1) * 86400000);
-  return new Date(week1Monday.getTime() + (week - 1) * 7 * 86400000);
+  const monday = new Date(week1Monday.getTime() + (week - 1) * 7 * 86400000);
+  // Round-trip validation: ISO week 53 only exists for "long" years
+  // (where Jan 1 is a Thursday, or a leap year where Jan 1 is a
+  // Wednesday). For a year without a W53, computing
+  // monday-of-W53 above silently rolls into the next ISO year's W01,
+  // and a later report would target the wrong window without warning.
+  // Re-derive the ISO week designation from the computed Monday and
+  // bail if it differs from the user-supplied input.
+  const roundTrip = isoWeekWindow(monday).isoWeek;
+  if (roundTrip !== isoWeek) {
+    process.stderr.write(
+      `error: --week ${JSON.stringify(isoWeek)} is not a valid ISO 8601 week (re-derived as ${JSON.stringify(roundTrip)}; W53 does not exist for every ISO year)\n`,
+    );
+    process.exit(2);
+  }
+  return monday;
 }
 
 function loadPreviousAvgCost(path) {
