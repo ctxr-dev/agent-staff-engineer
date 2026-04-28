@@ -48,10 +48,12 @@ export function parseEntry(text) {
 }
 
 /**
- * Serialise a knowledge entry to markdown. Frontmatter is rendered with
- * fields in FIELD_ORDER (extras allowed by the schema are appended in
- * insertion order). Body content is preserved verbatim. The output is
- * deterministic for the same {data, content} input.
+ * Serialise a knowledge entry to markdown. Frontmatter is rendered
+ * with fields in FIELD_ORDER (extras allowed by the schema are
+ * appended in alphabetical order via orderedFrontmatter, so two
+ * writers composing the same logical object emit byte-identical
+ * frontmatter regardless of key insertion order). Body content is
+ * preserved verbatim.
  *
  * @param {object} data
  * @param {string} content

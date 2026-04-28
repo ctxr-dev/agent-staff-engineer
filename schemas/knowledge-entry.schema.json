@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://ctxr.dev/schemas/knowledge-entry.schema.json",
   "title": "Canonical knowledge entry frontmatter",
-  "description": "Composite frontmatter shape for one entry under <paths.wiki>/knowledge/<domain>/<slug>.md. Covers the wiki-required fields (id, type, depth_role, focus, covers, parents) plus the indexing fields (kind, entities, related, first_seen, last_verified, source, status). Per the issue spec, every write into the knowledge store goes through the atomic 4-step sequence in scripts/lib/knowledge/write.mjs; this schema is the gate.",
+  "description": "Composite frontmatter shape for one entry under <paths.wiki>/knowledge/<domain>/<slug>.md. Covers the wiki-required fields (id, type, depth_role, focus, covers, parents) plus the indexing fields (kind, entities, related, first_seen, last_verified, source, status). Per the issue spec, every write into the knowledge store goes through the atomic 4-step sequence in scripts/lib/knowledge/write.mjs; this schema is the gate. Scope note: this v1 schema deliberately models entities and source as plain string forms (string array and single string). The issue's PR description sketches richer shapes (e.g. entities as {type, login} objects, source as an array, status including 'superseded'); those are deferred follow-ups so the v1 frontmatter stays narrow and reviewable. Authors who need the richer fields today can include them in the markdown body and link via the source string.",
   "type": "object",
   "required": [
     "id",

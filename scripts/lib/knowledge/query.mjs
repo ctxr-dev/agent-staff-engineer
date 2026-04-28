@@ -16,20 +16,27 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { parseEntry } from "./frontmatter.mjs";
 
 // Cache invalidation. The knowledge-dir mtime alone isn't enough:
-// directory mtime changes when entries are added / removed / renamed,
-// but NOT when an existing leaf's contents change in place. To detect
-// in-place edits without re-walking + re-parsing the tree on every
-// call, we cache a fingerprint that combines:
-//   - the dir mtime (cheap; catches add / remove / rename)
-//   - the running max(leaf.mtimeMs) + sum(leaf.size) across all
-//     `.md` files in the tree (catches in-place edits via one
-//     statSync per leaf, an order of magnitude cheaper than parsing
-//     the YAML frontmatter).
-// Any drift across the fingerprint invalidates the cache.
-const _treeCache = new Map(); // realRoot -> { fingerprint, entries }
+//   - directory mtime changes when entries are added / removed at the
+//     ROOT, but a rename or move inside a nested subdirectory can
+//     leave the root mtime intact;
+//   - mtime never changes for an in-place edit either.
+// To catch all three (add/remove, in-place edit, nested rename) we
+// cache a fingerprint composed of:
+//   - the root dir mtime (catches add/remove at the top level cheaply)
+//   - the leaf count
+//   - max(leaf.mtimeMs) — catches in-place edits
+//   - sum(leaf.size) — defence-in-depth against same-mtime edits
+//   - sha256 of the sorted-leaf-path list — catches rename / move in
+//     any subdirectory without statSync-ing every parent dir.
+// Any drift across the fingerprint invalidates the cache. The cache
+// is keyed by the absolute knowledge-dir path passed in (NOT a
+// realpath resolution); two callers passing different symlink paths
+// to the same underlying tree get distinct cache entries.
+const _treeCache = new Map(); // dir absolute path -> { fingerprint, entries }
 
 /**
  * Locate the canonical knowledge directory under a wiki root.
@@ -129,17 +136,29 @@ export function enumerateEntries(wikiRoot, opts = {}) {
 }
 
 function computeTreeFingerprint(dirMtimeMs, leafFiles) {
-  // Concatenate dir mtime + (count, max-mtime, total-size) over leaves.
-  // This is `O(number of leaves)` — cheap relative to YAML parse — and
-  // catches add / remove / rename via dirMtimeMs and count, plus
-  // in-place edits via max-mtime + total-size.
+  // Combines dir mtime + (count, max-mtime, total-size, path-set hash)
+  // over leaves. O(number of leaves) — cheap relative to YAML parse.
+  // Catches:
+  //   * add / remove at the root (dirMtimeMs)
+  //   * in-place edits (max-mtime + total-size)
+  //   * rename / move in any subdirectory (path-set hash)
   let maxMtime = 0;
   let totalSize = 0;
   for (const f of leafFiles) {
     if (f.mtimeMs > maxMtime) maxMtime = f.mtimeMs;
     totalSize += f.size;
   }
-  return `${dirMtimeMs}|${leafFiles.length}|${maxMtime}|${totalSize}`;
+  // Sort by path so the hash is stable across walk ordering. sha256 is
+  // overkill for a non-adversarial fingerprint but it's a one-shot
+  // expense (one hash per cache miss) and the rest of the bundle
+  // already uses createHash for similar fingerprints.
+  const pathHash = createHash("sha256");
+  const sortedPaths = leafFiles.map((f) => f.path).sort();
+  for (const p of sortedPaths) {
+    pathHash.update(p);
+    pathHash.update("\u001f");
+  }
+  return `${dirMtimeMs}|${leafFiles.length}|${maxMtime}|${totalSize}|${pathHash.digest("hex")}`;
 }
 
 /**

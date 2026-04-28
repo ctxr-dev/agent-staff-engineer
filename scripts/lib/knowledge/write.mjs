@@ -26,11 +26,21 @@
 // without needing the real CLI installed.
 
 import { existsSync, mkdirSync, writeFileSync, unlinkSync, appendFileSync, renameSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { serialiseEntry } from "./frontmatter.mjs";
 import { validateEntry } from "./validate.mjs";
+
+// Note on the inline atomic-write helper below: the rest of the bundle
+// uses scripts/lib/fsx.mjs::atomicWriteText, which is async (built on
+// fs/promises). writeEntry stays sync because the surrounding work it
+// orchestrates is sync end-to-end (spawnSync into skill-llm-wiki, sync
+// filesystem ops). The semantics are identical: write to a temp file
+// in the same directory, fsync via the rename, best-effort unlink on
+// failure. Centralising into a sync sibling helper inside fsx.mjs is
+// a follow-up; for now keep the parity behaviour inlined and clearly
+// commented.
 
 /**
  * Write one knowledge entry through the atomic 4-step sequence.
