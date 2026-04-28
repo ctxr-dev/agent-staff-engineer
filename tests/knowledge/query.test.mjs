@@ -6,7 +6,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { enumerateEntries, query, getEntryById, _clearCache } from "../../scripts/lib/knowledge/query.mjs";
+import {
+  enumerateEntries,
+  query,
+  getEntryById,
+  DuplicateEntryIdError,
+  _clearCache,
+} from "../../scripts/lib/knowledge/query.mjs";
 import { serialiseEntry } from "../../scripts/lib/knowledge/frontmatter.mjs";
 
 function makeWiki() {
@@ -130,6 +136,30 @@ test("getEntryById: returns matching entry or null", () => {
     assert.ok(hit && hit.id === "needle");
     const miss = getEntryById(wiki, "haystack");
     assert.equal(miss, null);
+  } finally {
+    rmSync(wiki, { recursive: true, force: true });
+  }
+});
+
+test("getEntryById: throws DuplicateEntryIdError when the same id exists in two domains", () => {
+  // Schema enforces single-segment kebab-case ids (no `/`); the on-disk
+  // path encodes the domain but the id field does not. So two entries
+  // with id "foo" can land under knowledge/patterns/foo.md AND
+  // knowledge/incidents/foo.md if a hand-edit / manual rename slips
+  // past the writeEntry collision check. getEntryById refuses to
+  // pick a winner: it throws so the human can repair the tree.
+  const wiki = makeWiki();
+  try {
+    seed(wiki, "patterns", "foo");
+    seed(wiki, "incidents", "foo");
+    _clearCache();
+    assert.throws(() => getEntryById(wiki, "foo"), DuplicateEntryIdError);
+    try {
+      getEntryById(wiki, "foo");
+    } catch (err) {
+      assert.equal(err.id, "foo");
+      assert.equal(err.paths.length, 2);
+    }
   } finally {
     rmSync(wiki, { recursive: true, force: true });
   }

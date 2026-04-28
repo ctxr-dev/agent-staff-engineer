@@ -85,6 +85,49 @@ test("writeEntry: rejects domain/slug shapes that could escape the tree", () => 
   }
 });
 
+test("writeEntry: step 0 collision detection refuses to create a duplicate id under a different domain", () => {
+  // Schema enforces single-segment ids, so two entries with id "foo"
+  // could land under knowledge/patterns/foo.md AND
+  // knowledge/incidents/foo.md if writeEntry let them. They wouldn't —
+  // step 0 walks the tree, finds the existing path, and refuses.
+  // Updates to the SAME path are not collisions (data.id === slug, the
+  // existing match equals the target path).
+  const wiki = makeWiki();
+  try {
+    const r1 = writeEntry({
+      wikiRoot: wiki,
+      domain: "patterns",
+      slug: "shared-id",
+      data: validData("shared-id"),
+      body: "First.\n",
+    }, happyDeps());
+    assert.equal(r1.ok, true, `first write should succeed: ${r1.error || ""}`);
+    // Same id, different domain: must be refused.
+    const r2 = writeEntry({
+      wikiRoot: wiki,
+      domain: "incidents",
+      slug: "shared-id",
+      data: validData("shared-id"),
+      body: "Second.\n",
+    }, happyDeps());
+    assert.equal(r2.ok, false);
+    assert.equal(r2.step, 0);
+    assert.match(r2.error, /already exists/);
+    assert.match(r2.error, /knowledge\/patterns\/shared-id\.md/);
+    // Same id, SAME domain: that's an UPDATE, must be allowed.
+    const r3 = writeEntry({
+      wikiRoot: wiki,
+      domain: "patterns",
+      slug: "shared-id",
+      data: validData("shared-id"),
+      body: "Updated.\n",
+    }, happyDeps());
+    assert.equal(r3.ok, true, `same-path update should succeed: ${r3.error || ""}`);
+  } finally {
+    rmSync(wiki, { recursive: true, force: true });
+  }
+});
+
 test("writeEntry: step 2 (local schema) failure rolls back the file", () => {
   const wiki = makeWiki();
   try {

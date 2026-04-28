@@ -217,14 +217,46 @@ export function query(wikiRoot, filter = {}) {
 }
 
 /**
- * Find a single entry by id. Returns null if not found.
+ * Find a single entry by id. Returns null if not found. Throws if more
+ * than one entry shares the id: the schema treats `data.id` as the
+ * lookup key (the on-disk path encodes the domain, the id does not),
+ * so duplicates would let getEntryById return an arbitrary winner and
+ * silently mis-route every link that resolves through this function.
+ * The duplicate state is repairable damage — writeEntry rejects new
+ * writes that would create one, but a hand-edited tree could still
+ * land here. Surfacing the duplicate is strictly better than picking
+ * a winner.
  *
  * @param {string} wikiRoot
  * @param {string} id
+ * @throws {DuplicateEntryIdError} when the wiki contains more than one
+ *   entry with the supplied id (typically the result of a manual rename
+ *   or a cross-domain copy)
  */
 export function getEntryById(wikiRoot, id) {
   const matches = query(wikiRoot, { id });
+  if (matches.length > 1) {
+    throw new DuplicateEntryIdError(id, matches.map((m) => m.path));
+  }
   return matches[0] ?? null;
+}
+
+/**
+ * Thrown by getEntryById when the wiki contains multiple entries with
+ * the same id. The `paths` field lists every offending leaf so a human
+ * can resolve the conflict (rename one, delete one, or extend the
+ * schema to support domain-qualified ids).
+ */
+export class DuplicateEntryIdError extends Error {
+  constructor(id, paths) {
+    super(
+      `knowledge: duplicate entry id ${JSON.stringify(id)} found at ${paths.length} paths: ${paths.join(", ")}. ` +
+        "Rename one of the entries (or delete the stale copy) so id-based lookups resolve unambiguously.",
+    );
+    this.name = "DuplicateEntryIdError";
+    this.id = id;
+    this.paths = paths;
+  }
 }
 
 // Test-only: clear the in-process cache so consecutive tests don't see

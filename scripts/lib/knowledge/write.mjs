@@ -31,6 +31,7 @@ import { spawnSync } from "node:child_process";
 import { atomicWriteTextSync } from "../fsx.mjs";
 import { serialiseEntry } from "./frontmatter.mjs";
 import { validateEntry } from "./validate.mjs";
+import { query as queryEntries } from "./query.mjs";
 
 // Sync atomic write contract is owned by scripts/lib/fsx.mjs::
 // atomicWriteTextSync — same write-to-temp + rename + cleanup-on-failure
@@ -73,6 +74,26 @@ export function writeEntry(args, _deps = {}) {
   const dir = resolve(wikiRoot, "knowledge", domain);
   const path = join(dir, `${slug}.md`);
   const warnings = [];
+
+  // Step 0 — global id uniqueness. The schema enforces single-segment
+  // kebab-case ids (no `/`), so the on-disk path encodes the domain
+  // but the `data.id` does not. That means an entry at
+  // knowledge/patterns/foo.md and another at knowledge/incidents/foo.md
+  // would share id "foo", and read-side getEntryById would have to
+  // pick a winner arbitrarily. Fail-fast at write time when this
+  // collision would be created. Existing-at-the-same-path is fine —
+  // that is an UPDATE, not a collision; we only reject when the same
+  // id already exists at a DIFFERENT path under <wikiRoot>/knowledge/.
+  const existingMatches = _deps.findExistingById
+    ? _deps.findExistingById(wikiRoot, slug)
+    : findExistingById(wikiRoot, slug);
+  const collisions = existingMatches.filter((p) => p !== path);
+  if (collisions.length > 0) {
+    return fail(
+      0,
+      `writeEntry: id "${slug}" already exists under <wikiRoot>/knowledge at: ${collisions.join(", ")}. Pick a different slug, rename the existing entry, or delete the stale copy first.`,
+    );
+  }
 
   // Step 1 — write markdown atomically (write-to-temp + rename). A
   // crash/kill mid-write must NEVER leave a truncated leaf in the wiki
@@ -166,6 +187,19 @@ function rollback(path) {
   } catch {
     // best-effort; if the file is already gone we're done.
   }
+}
+
+/**
+ * Walk <wikiRoot>/knowledge/ and return every leaf path whose
+ * frontmatter `id` matches the supplied slug. Used by writeEntry's
+ * step-0 collision check. The default implementation defers to
+ * query.mjs::query, which uses the same in-process tree fingerprint
+ * as enumerateEntries, so adjacent writeEntry calls in the same
+ * process see fresh state without manual cache invalidation. Tests
+ * can inject a stub via _deps.findExistingById.
+ */
+function findExistingById(wikiRoot, id) {
+  return queryEntries(wikiRoot, { id }).map((m) => m.path);
 }
 
 /**
