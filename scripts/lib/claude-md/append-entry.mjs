@@ -62,7 +62,7 @@ export function appendEntryToContent(existing, entry) {
   const block = extractRegistryBlock(content);
   if (!block) {
     // Should be unreachable — seedRegistryInContent guarantees a block.
-    throw new Error("append-entry: registry block missing after seed; cannot proceed");
+    throw new Error("registry block missing after seed; cannot proceed");
   }
 
   const rendered = renderEntry(entry);
@@ -118,25 +118,30 @@ const SECTION_HEADING = {
   quirk: "### Codebase quirks",
 };
 
+// Error-message convention: thrown messages are NOT prefixed with
+// "append-entry:". The CLI handler (runCli) prefixes once on the way
+// out so stderr reads `append-entry: <reason>`; programmatic callers
+// see the bare reason. Without this contract, a programmatic caller
+// got `append-entry: append-entry: ...` after re-prefixing.
 function validateEntry(entry) {
   if (!entry || typeof entry !== "object") {
-    throw new Error("append-entry: entry must be an object");
+    throw new Error("entry must be an object");
   }
   if (!VALID_SECTIONS.has(entry.section)) {
     throw new Error(
-      `append-entry: section must be one of ${[...VALID_SECTIONS].join(", ")}; got ${JSON.stringify(entry.section)}`,
+      `section must be one of ${[...VALID_SECTIONS].join(", ")}; got ${JSON.stringify(entry.section)}`,
     );
   }
   for (const field of ["title", "firstSeen", "remediation"]) {
     if (typeof entry[field] !== "string" || entry[field].length === 0) {
-      throw new Error(`append-entry: ${field} is required and must be a non-empty string`);
+      throw new Error(`${field} is required and must be a non-empty string`);
     }
   }
   if (!isValidIsoDate(entry.firstSeen)) {
-    throw new Error(`append-entry: firstSeen must be a valid YYYY-MM-DD date; got ${JSON.stringify(entry.firstSeen)}`);
+    throw new Error(`firstSeen must be a valid YYYY-MM-DD date; got ${JSON.stringify(entry.firstSeen)}`);
   }
   if (entry.nextReview != null && !isValidIsoDate(entry.nextReview)) {
-    throw new Error(`append-entry: nextReview must be a valid YYYY-MM-DD date; got ${JSON.stringify(entry.nextReview)}`);
+    throw new Error(`nextReview must be a valid YYYY-MM-DD date; got ${JSON.stringify(entry.nextReview)}`);
   }
   // Quirks render only `Last verified: <firstSeen>` and have no Owner
   // bullet. renderEntry silently drops `nextReview` / `owner` for
@@ -144,10 +149,10 @@ function validateEntry(entry) {
   // (passing those fields to a quirk by accident) surfaces immediately.
   if (entry.section === "quirk") {
     if (entry.nextReview != null) {
-      throw new Error("append-entry: nextReview is not valid for section=quirk (quirks render only Last verified)");
+      throw new Error("nextReview is not valid for section=quirk (quirks render only Last verified)");
     }
     if (entry.owner != null) {
-      throw new Error("append-entry: owner is not valid for section=quirk (quirks have no owner field)");
+      throw new Error("owner is not valid for section=quirk (quirks have no owner field)");
     }
   }
 }
