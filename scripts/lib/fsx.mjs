@@ -82,9 +82,10 @@ function tmpPathFor(abs) {
   return `${abs}.tmp-${process.pid}-${Date.now()}-${rand}`;
 }
 
-/** Atomic write: write to "<path>.tmp" then rename to "<path>". Creates parent dirs. Cleans up the temp file
- *  if anything fails in between. Same-filesystem requirement: rename is only atomic on one filesystem; callers
- *  should pass paths under the project root rather than crossing mount boundaries. */
+/** Atomic write: write to a temp file ("<path>.tmp-<pid>-<ms>-<rand8>", produced by tmpPathFor) and
+ *  then rename it onto "<path>". Creates parent dirs. Cleans up the temp file if anything fails in
+ *  between. Same-filesystem requirement: rename is only atomic on one filesystem; callers should pass
+ *  paths under the project root rather than crossing mount boundaries. */
 export async function atomicWriteText(p, content) {
   const abs = resolve(p);
   await ensureDir(dirname(abs));
