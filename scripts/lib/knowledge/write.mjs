@@ -25,9 +25,10 @@
 // inject `runSkillLlmWiki` and `runIndexRebuild` to drive failure paths
 // without needing the real CLI installed.
 
-import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, unlinkSync, appendFileSync, renameSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { serialiseEntry } from "./frontmatter.mjs";
 import { validateEntry } from "./validate.mjs";
 
@@ -63,10 +64,25 @@ export function writeEntry(args, _deps = {}) {
   const path = join(dir, `${slug}.md`);
   const warnings = [];
 
-  // Step 1 — write markdown.
+  // Step 1 — write markdown atomically (write-to-temp + rename). A
+  // crash/kill mid-write must NEVER leave a truncated leaf in the wiki
+  // tree; if it did, the next skill-llm-wiki validate would either
+  // accept the corrupted file (silent rot) or fail and require manual
+  // cleanup. Same-filesystem rename is the standard atomic-replace
+  // primitive on POSIX + ReFS / NTFS.
   try {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(path, serialiseEntry(data, body));
+    const tmp = `${path}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+    try {
+      writeFileSync(tmp, serialiseEntry(data, body));
+      renameSync(tmp, path);
+    } catch (err) {
+      // Best-effort cleanup of the temp file; the rename failure is
+      // surfaced through the outer catch so the caller sees one clear
+      // error instead of two.
+      try { unlinkSync(tmp); } catch { /* tmp may be gone already */ }
+      throw err;
+    }
   } catch (err) {
     return fail(1, `step 1 (write markdown): ${err?.message ?? String(err)}`);
   }
@@ -168,21 +184,29 @@ function runIndexRebuildCli(wikiRoot, leafDir) {
   if (!scoped.error && scoped.status === 0) {
     return { ok: true, scoped: true };
   }
-  // If scoped failed because the flag isn't supported yet, fall back
-  // to the full rebuild. We detect that case by inspecting the stderr;
-  // any other failure (timeout, real validation failure) propagates.
-  const stderr = (scoped.stderr || "").toLowerCase();
-  const flagUnknown =
-    stderr.includes("unknown") ||
-    stderr.includes("unrecognised") ||
-    stderr.includes("unrecognized") ||
-    stderr.includes("usage:") ||
-    scoped.error?.code === "ENOENT" === false && scoped.status !== 0 && stderr.includes("scope");
-  if (!flagUnknown && scoped.error?.code !== undefined) {
-    // Spawn itself failed (e.g. ENOENT). Surface that.
+  // If scoped failed because the flag isn't supported yet (the dep at
+  // skill-llm-wiki#16 hasn't landed), fall back to full-tree rebuild.
+  // Any OTHER failure (timeout, real validation failure, spawn errors
+  // unrelated to flag parsing) propagates as-is so a real bug isn't
+  // masked by the fallback.
+  //
+  // The ENOENT case (the binary itself isn't on PATH) is fatal AND
+  // independent of the flag — surface that first; the full-rebuild
+  // call would just hit the same ENOENT.
+  if (scoped.error && scoped.error.code === "ENOENT") {
     return { ok: false, error: `spawn failed: ${scoped.error.message}` };
   }
-  if (!flagUnknown && scoped.status !== 0) {
+  const stderrLower = (scoped.stderr || "").toLowerCase();
+  const flagUnknown =
+    stderrLower.includes("unknown") ||
+    stderrLower.includes("unrecognised") ||
+    stderrLower.includes("unrecognized") ||
+    stderrLower.includes("usage:") ||
+    (scoped.status !== 0 && stderrLower.includes("scope"));
+  if (!flagUnknown) {
+    if (scoped.error) {
+      return { ok: false, error: `spawn failed: ${scoped.error.message}` };
+    }
     return { ok: false, error: (scoped.stderr || scoped.stdout || `exit ${scoped.status}`).trim() };
   }
   // Fall back to full rebuild.
@@ -196,21 +220,22 @@ function runIndexRebuildCli(wikiRoot, leafDir) {
 }
 
 /**
- * Default frontier reindex hook. Today this writes a marker at
- * <stateDir>/reindex-pending and appends the entry path on a new line.
- * The next session's --incremental reindex (ships with the SQLite
- * follow-up) reads the marker, processes the queued entries, then
- * truncates the file.
+ * Default frontier reindex hook. Appends the entry path as a new line
+ * to <stateDir>/reindex-pending. The next session's --incremental
+ * reindex (ships with the SQLite follow-up) reads the marker,
+ * processes the queued entries, then truncates the file.
+ *
+ * Uses appendFileSync (which opens with O_APPEND on POSIX, atomically
+ * appending each call's bytes). Two concurrent writeEntry() calls
+ * each emit one self-contained line; their writes interleave at line
+ * granularity but never overwrite each other. This is the standard
+ * pattern for low-volume append-only logs.
  */
 function enqueueFrontierReindexFile(stateDir, entryPath) {
   try {
     if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
     const marker = join(stateDir, "reindex-pending");
-    let body = "";
-    if (existsSync(marker)) body = readFileSync(marker, "utf8");
-    if (!body.endsWith("\n") && body.length > 0) body += "\n";
-    body += entryPath + "\n";
-    writeFileSync(marker, body);
+    appendFileSync(marker, entryPath + "\n");
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err?.message ?? String(err) };

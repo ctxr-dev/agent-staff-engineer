@@ -18,7 +18,18 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseEntry } from "./frontmatter.mjs";
 
-const _treeCache = new Map(); // realRoot -> { mtime, entries }
+// Cache invalidation. The knowledge-dir mtime alone isn't enough:
+// directory mtime changes when entries are added / removed / renamed,
+// but NOT when an existing leaf's contents change in place. To detect
+// in-place edits without re-walking + re-parsing the tree on every
+// call, we cache a fingerprint that combines:
+//   - the dir mtime (cheap; catches add / remove / rename)
+//   - the running max(leaf.mtimeMs) + sum(leaf.size) across all
+//     `.md` files in the tree (catches in-place edits via one
+//     statSync per leaf, an order of magnitude cheaper than parsing
+//     the YAML frontmatter).
+// Any drift across the fingerprint invalidates the cache.
+const _treeCache = new Map(); // realRoot -> { fingerprint, entries }
 
 /**
  * Locate the canonical knowledge directory under a wiki root.
@@ -47,12 +58,13 @@ export function enumerateEntries(wikiRoot, opts = {}) {
   const dir = knowledgeDir(wikiRoot);
   if (!existsSync(dir)) return [];
   const cacheKey = dir;
-  const dirStat = statSync(dir);
-  if (!opts.noCache) {
-    const cached = _treeCache.get(cacheKey);
-    if (cached && cached.mtime === dirStat.mtimeMs) return cached.entries;
-  }
-  const out = [];
+
+  // Walk the tree once; collect every leaf's (path, stat) so we can
+  // cheaply build the cache fingerprint AND avoid re-walking when the
+  // cache is hot. The fingerprint stat-only pass is one statSync per
+  // leaf — substantially cheaper than the readFileSync + YAML parse
+  // we'd otherwise repeat on a stale cache.
+  const leafFiles = [];
   const stack = [dir];
   while (stack.length > 0) {
     const cur = stack.pop();
@@ -71,29 +83,63 @@ export function enumerateEntries(wikiRoot, opts = {}) {
       }
       if (!ent.name.endsWith(".md")) continue;
       if (ent.name === "index.md") continue;
-      let text;
       try {
-        text = readFileSync(full, "utf8");
+        const st = statSync(full);
+        leafFiles.push({ path: full, mtimeMs: st.mtimeMs, size: st.size });
       } catch {
         continue;
       }
-      let data, body;
-      try {
-        const parsed = parseEntry(text);
-        data = parsed.data;
-        body = parsed.content;
-      } catch {
-        continue;
-      }
-      if (!data || typeof data.id !== "string") continue;
-      out.push({ id: data.id, path: full, data, body });
     }
+  }
+
+  // Fingerprint the tree state. Any add / remove / rename changes the
+  // count or path order; any in-place edit changes max-mtime or sum-size.
+  const dirStat = statSync(dir);
+  const fingerprint = computeTreeFingerprint(dirStat.mtimeMs, leafFiles);
+
+  if (!opts.noCache) {
+    const cached = _treeCache.get(cacheKey);
+    if (cached && cached.fingerprint === fingerprint) return cached.entries;
+  }
+
+  const out = [];
+  for (const leaf of leafFiles) {
+    let text;
+    try {
+      text = readFileSync(leaf.path, "utf8");
+    } catch {
+      continue;
+    }
+    let data, body;
+    try {
+      const parsed = parseEntry(text);
+      data = parsed.data;
+      body = parsed.content;
+    } catch {
+      continue;
+    }
+    if (!data || typeof data.id !== "string") continue;
+    out.push({ id: data.id, path: leaf.path, data, body });
   }
   out.sort((a, b) => a.id.localeCompare(b.id));
   if (!opts.noCache) {
-    _treeCache.set(cacheKey, { mtime: dirStat.mtimeMs, entries: out });
+    _treeCache.set(cacheKey, { fingerprint, entries: out });
   }
   return out;
+}
+
+function computeTreeFingerprint(dirMtimeMs, leafFiles) {
+  // Concatenate dir mtime + (count, max-mtime, total-size) over leaves.
+  // This is `O(number of leaves)` — cheap relative to YAML parse — and
+  // catches add / remove / rename via dirMtimeMs and count, plus
+  // in-place edits via max-mtime + total-size.
+  let maxMtime = 0;
+  let totalSize = 0;
+  for (const f of leafFiles) {
+    if (f.mtimeMs > maxMtime) maxMtime = f.mtimeMs;
+    totalSize += f.size;
+  }
+  return `${dirMtimeMs}|${leafFiles.length}|${maxMtime}|${totalSize}`;
 }
 
 /**
