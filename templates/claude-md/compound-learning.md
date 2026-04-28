@@ -77,6 +77,14 @@ each quirk as:
 
   - <title>[ (<linked>)]. Remediation: <pointer>. Last verified: YYYY-MM-DD.
 
+Constraint: titles MUST NOT end with `)` because the renderer's
+optional `(<linked>)` group sits at the same boundary; an idempotent
+upsert cannot disambiguate "title ends with parens" from "title +
+linked group". Phrase the title without a trailing parenthetical
+(or move the parenthesis earlier in the title), and put any
+reference / URL in the `--linked` field where it belongs. The
+append-entry helper rejects the ambiguous shape at write time.
+
 Examples:
 - "main is the deploy branch; release/* is for hotfixes only"
   (Remediation: "branch from main for new features").
