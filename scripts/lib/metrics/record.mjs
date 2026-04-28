@@ -248,8 +248,8 @@ export function writeRecord(record, stateDir) {
   }
   for (const k of ["input", "output", "cache_read", "cache_write"]) {
     const v = record.tokens[k];
-    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
-      throw new Error(`metrics.writeRecord: record.tokens.${k} must be a non-negative finite number; got ${JSON.stringify(v)}`);
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || !Number.isInteger(v)) {
+      throw new Error(`metrics.writeRecord: record.tokens.${k} must be a non-negative integer; got ${JSON.stringify(v)}`);
     }
   }
   // Validate the remaining required top-level fields. A caller that
@@ -425,13 +425,21 @@ function int(v) {
 }
 
 /**
- * Extract the UTC YYYY-MM-DD prefix from an ISO 8601 string. We do not
- * use new Date() round-tripping because the input may already be the
- * canonical "2026-04-28T..." form and we want to preserve the exact
- * date no matter what the host's locale says.
+ * Extract the UTC YYYY-MM-DD calendar day from an ISO 8601 string.
+ * Both accepted shapes (Z-form and explicit-offset form) go through
+ * `new Date(iso)` for two reasons:
+ *   1. Reject impossible dates like "2026-99-99T..." that would
+ *      otherwise pass the regex pre-filter and produce an invalid
+ *      YYYY-MM-DD prefix.
+ *   2. Normalise an offset timestamp (e.g. "2026-04-28T23:30:00-05:00",
+ *      which is UTC 2026-04-29) to the correct UTC calendar day.
+ * The Date object's UTC accessors are independent of the host's
+ * locale, so the output is stable across machines.
  *
  * @param {string} iso
- * @returns {string}
+ * @param {string} [fieldName] field label used in error messages
+ *                             (e.g. "started_at", "ended_at")
+ * @returns {string} YYYY-MM-DD
  */
 export function utcDateFromIso(iso, fieldName = "timestamp") {
   if (typeof iso !== "string") {
