@@ -157,6 +157,30 @@ test("aggregate: sub-invocations fold into parent skill, never appear as their o
   }
 });
 
+test("aggregate: orphan sub-invocations are dropped, never appear as a phantom row", () => {
+  // A sub-invocation whose parent record is NOT present in this batch
+  // (because the parent ran in a different ISO week or was filtered
+  // out) is "orphaned". The contract: orphans are dropped from the
+  // rollup entirely, never surfaced as their own per_skill row. This
+  // keeps invocation counts stable at week boundaries — a sub run on
+  // Sunday whose parent ran on Monday must not flip between "folded"
+  // and "phantom" depending on the aggregation window.
+  const records = [
+    {
+      trace_id: "child-1", skill: "explorer", parent_trace_id: "parent-not-here",
+      started_at: "2026-04-28T10:00:00Z", ended_at: "2026-04-28T10:00:30Z",
+      tokens: { input: 999, output: 999, cache_read: 0, cache_write: 0 },
+      cost_usd: 0.50, exit: "success",
+    },
+  ];
+  const w = isoWeekWindow(new Date("2026-04-28T10:00:00Z"));
+  const out = aggregate(records, { isoWeek: w.isoWeek });
+  assert.equal(out.per_skill.length, 0, "orphan sub must not surface as a row");
+  assert.equal(out.totals.invocations, 0, "orphan sub must not count as an invocation");
+  assert.equal(out.totals.cost_usd, 0, "orphan sub cost is dropped");
+  assert.equal(out.totals.tokens.input, 0, "orphan sub tokens are dropped");
+});
+
 test("aggregate: thresholds drive red flags, sorted by skill then kind", () => {
   // Synthetic records where dev-loop has a low cache hit and a big avg.
   const records = [

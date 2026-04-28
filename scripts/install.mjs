@@ -927,6 +927,7 @@ if (opsConfig.paths.gitignore_dev_working_dir !== false) {
     // rollup published to its team wiki can copy from here and run it
     // through the wiki skill manually.
     ".claude/state/metrics/",
+    ".claude/state/metrics-weekly/",
   ]);
 }
 for (const w of writes) {

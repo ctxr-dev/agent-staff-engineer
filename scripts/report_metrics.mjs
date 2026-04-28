@@ -20,7 +20,7 @@
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseArgv } from "./lib/argv.mjs";
+import { parseArgv, boolFlag } from "./lib/argv.mjs";
 import { atomicWriteText } from "./lib/fsx.mjs";
 import { preflight } from "./preflight.mjs";
 import {
@@ -34,11 +34,15 @@ async function main() {
   const { flags } = parseArgv(process.argv.slice(2), {
     booleans: new Set(["weekly", "help"]),
   });
-  if (flags.help) {
+  // Resolve --help / --weekly through boolFlag so a `--help=false` or
+  // `--weekly=false` (parseArgv's eq branch yields the string "false",
+  // which is truthy) is interpreted as an explicit "no" rather than
+  // an enabled flag.
+  if (boolFlag(flags, "help")) {
     printHelp();
     return;
   }
-  if (!flags.weekly) {
+  if (!boolFlag(flags, "weekly")) {
     process.stderr.write("error: pass --weekly (other rollups not yet implemented)\n");
     process.exit(2);
   }
