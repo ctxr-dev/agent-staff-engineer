@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ctxr.dev/schemas/knowledge-entry.schema.json",
+  "title": "Canonical knowledge entry frontmatter",
+  "description": "Composite frontmatter shape for one entry under <wikiRoot>/knowledge/<domain>/<slug>.md, where wikiRoot is the configured wiki root passed to scripts/lib/knowledge/write.mjs (typically `wiki.roots.shared`). Covers the wiki-required fields (id, type, depth_role, focus, covers, parents) plus the indexing fields (kind, entities, related, first_seen, last_verified, source, status). Per the issue spec, every write into the knowledge store goes through the atomic 4-step sequence in scripts/lib/knowledge/write.mjs; this schema is the gate. Scope note: this v1 schema deliberately models entities and source as plain string forms (string array and single string). The issue's PR description sketches richer shapes (e.g. entities as {type, login} objects, source as an array, status including 'superseded'); those are deferred follow-ups so the v1 frontmatter stays narrow and reviewable. Authors who need the richer fields today can include them in the markdown body and link via the source string.",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "depth_role",
+    "focus",
+    "covers",
+    "parents",
+    "kind",
+    "first_seen",
+    "last_verified",
+    "source",
+    "status"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable id; must equal the filename basename without extension. Lowercase kebab-case ONLY (no `/`). The directory under knowledge/<domain>/ disambiguates per-domain — the id is the file slug, not a path-qualified \"<domain>/<slug>\" form. Examples in the issue/PR description that show `reviewers/alice` are informal (entry-id-with-domain-context) and do not match this schema; the actual frontmatter value is the unqualified slug (e.g. `alice` for that file). Domain lives in the path on disk, not inside the id.",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["leaf", "cluster", "domain"],
+      "description": "wiki node type. leaf = atomic entry (default for knowledge), cluster/domain = aggregating index nodes."
+    },
+    "depth_role": {
+      "type": "string",
+      "enum": ["root", "domain", "cluster", "leaf"],
+      "description": "Position in the wiki depth hierarchy. Almost always 'leaf' for knowledge entries."
+    },
+    "focus": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One-line topical focus that the parent wiki index will consume to route descents."
+    },
+    "covers": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Topical handles this entry covers; at least one. Free-form tags."
+    },
+    "parents": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "description": "Soft-DAG parent IDS (kebab-case slugs), NOT path-style references like `../index.md`. The knowledge store models the soft DAG as id-to-id links so it stays portable when the wiki tree is reorganised. The wiki layer's `parents: [../index.md]` shape (path-relative parent index) is a separate concept owned by skill-llm-wiki for the wiki's own depth-role math; do not confuse the two. Empty array for top-level entries. skill-llm-wiki validate enforces id resolvability at write time."
+    },
+    "shared_covers": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Optional: handles propagated up the parent chain by skill-llm-wiki's index-rebuild. Authors usually leave this empty."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["fact", "pattern", "incident", "decision", "runbook", "owner", "observation"],
+      "description": "Indexing kind; agent consumers (knowledge-capture, query-by-kind) filter on this."
+    },
+    "entities": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Concrete entities the entry is about (file paths, service names, package names). Optional."
+    },
+    "related": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+      "description": "Other entry ids this one relates to. Soft links; not enforced as a DAG."
+    },
+    "first_seen": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO 8601 date the underlying fact was first observed (YYYY-MM-DD)."
+    },
+    "last_verified": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO 8601 date a human last reconfirmed this entry. Aggressive entries may have lower latency; default to first_seen at creation."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provenance pointer: PR ref, incident report, runbook URL, doc path. Free-form."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "deprecated", "archived"],
+      "description": "active = current best understanding; deprecated = replaced by a newer entry (record the replacement in `related`); archived = preserved for history, not part of routing."
+    }
+  }
+}

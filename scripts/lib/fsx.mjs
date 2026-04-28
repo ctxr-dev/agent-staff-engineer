@@ -14,7 +14,14 @@ import {
   unlink,
   access,
 } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import {
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
 /** Ensure a directory exists (recursive mkdir). Returns the absolute path. */
@@ -62,13 +69,32 @@ export async function readJsonOrNull(p) {
   }
 }
 
-/** Atomic write: write to "<path>.tmp" then rename to "<path>". Creates parent dirs. Cleans up the temp file
- *  if anything fails in between. Same-filesystem requirement: rename is only atomic on one filesystem; callers
- *  should pass paths under the project root rather than crossing mount boundaries. */
+// Shared tmp-name helper so the async + sync atomic helpers do not drift
+// on suffix shape. Format: "<abs>.tmp-<pid>-<ms>-<rand8>". Pid + ms keeps
+// names readable in `ls`; the random fragment defeats sub-millisecond
+// collisions when the same process writes the same target twice in quick
+// succession (which Date.now() alone does not).
+function tmpPathFor(abs) {
+  // Capture Date.now() once so the timestamp embedded in the filename
+  // matches the timestamp folded into the random hash. Two separate
+  // calls could land on different milliseconds (rare but possible),
+  // making the suffix slightly harder to reason about for debugging.
+  const now = Date.now();
+  const rand = createHash("sha256")
+    .update(`${abs}|${process.pid}|${now}|${Math.random()}`)
+    .digest("hex")
+    .slice(0, 8);
+  return `${abs}.tmp-${process.pid}-${now}-${rand}`;
+}
+
+/** Atomic write: write to a temp file ("<path>.tmp-<pid>-<ms>-<rand8>", produced by tmpPathFor) and
+ *  then rename it onto "<path>". Creates parent dirs. Cleans up the temp file if anything fails in
+ *  between. Same-filesystem requirement: rename is only atomic on one filesystem; callers should pass
+ *  paths under the project root rather than crossing mount boundaries. */
 export async function atomicWriteText(p, content) {
   const abs = resolve(p);
   await ensureDir(dirname(abs));
-  const tmp = `${abs}.tmp-${process.pid}-${Date.now()}`;
+  const tmp = tmpPathFor(abs);
   try {
     await writeFile(tmp, content, "utf8");
     await rename(tmp, abs);
@@ -87,6 +113,40 @@ export async function atomicWriteText(p, content) {
 export async function atomicWriteJson(p, obj) {
   const content = JSON.stringify(obj, null, 2) + "\n";
   return atomicWriteText(p, content);
+}
+
+/**
+ * Sync sibling of atomicWriteText. Same write-to-temp + rename contract,
+ * same cleanup-on-failure semantics; differs only in being synchronous.
+ *
+ * Exists because some writers (notably scripts/lib/knowledge/write.mjs)
+ * orchestrate sync-only sequences (spawnSync into skill-llm-wiki, sync
+ * fs ops) and benefit from a single synchronous control flow. Centralising
+ * the temp naming + rename + unlink-on-failure here keeps the two
+ * variants from drifting on tmp suffix shape, encoding, or cleanup
+ * behaviour.
+ *
+ * @param {string} p        absolute or relative path; resolved here
+ * @param {string} content  text payload (utf-8)
+ * @returns {string}        the absolute path that was written
+ */
+export function atomicWriteTextSync(p, content) {
+  const abs = resolve(p);
+  const dir = dirname(abs);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const tmp = tmpPathFor(abs);
+  try {
+    writeFileSync(tmp, content, "utf8");
+    renameSync(tmp, abs);
+    return abs;
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw err;
+  }
 }
 
 /** Walk a directory recursively, yielding absolute file paths. Skips entries whose names start with "." by default.

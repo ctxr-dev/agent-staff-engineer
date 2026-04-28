@@ -28,6 +28,27 @@ describe("gitignore.normalisePattern", () => {
     assert.equal(normalisePattern(null), "");
     assert.equal(normalisePattern(undefined), "");
   });
+
+  it("trims surrounding whitespace before stripping slashes", () => {
+    // Without the trim, an accidental leading/trailing space in a
+    // configured pattern would be written verbatim and gitignore
+    // would never match the intended path.
+    assert.equal(normalisePattern("  .development/local  "), ".development/local");
+    assert.equal(normalisePattern("\t/foo/\n"), "foo");
+  });
+
+  it("converts Windows backslash separators to forward slashes", () => {
+    // Gitignore patterns are slash-based regardless of host OS. A
+    // configured pattern that came from a Windows-style path
+    // (e.g. read from a YAML file authored on Windows) should still
+    // produce a usable gitignore entry.
+    assert.equal(
+      normalisePattern(".claude\\state\\knowledge-index.db"),
+      ".claude/state/knowledge-index.db",
+    );
+    // Mixed separators get normalised too.
+    assert.equal(normalisePattern("a/b\\c/d"), "a/b/c/d");
+  });
 });
 
 describe("gitignore.isListed", () => {
@@ -107,5 +128,57 @@ describe("gitignore.ensureGitignore", () => {
     assert.deepEqual(added, []);
     const after = await readFile(join(dir, ".gitignore"), "utf8");
     assert.equal(after, before, "file must be byte-stable when there is nothing to add");
+  });
+
+  it("emits a file pattern WITHOUT trailing slash when type:'file' is requested", async () => {
+    const dir = await makeDir("file-form", "");
+    const { added } = await ensureGitignore(dir, [
+      { pattern: ".claude/state/knowledge-index.db", type: "file" },
+    ]);
+    assert.deepEqual(added, ["/.claude/state/knowledge-index.db"]);
+    const content = await readFile(join(dir, ".gitignore"), "utf8");
+    assert.match(content, /^\/\.claude\/state\/knowledge-index\.db$/m);
+    // Crucially: NO trailing slash on the file form.
+    assert.doesNotMatch(content, /^\/\.claude\/state\/knowledge-index\.db\/$/m);
+  });
+
+  it("re-running with type:'file' is idempotent (no duplicate, no rewrite)", async () => {
+    const dir = await makeDir("file-idem", "/.claude/state/knowledge-index.db\n");
+    const before = await readFile(join(dir, ".gitignore"), "utf8");
+    const { added } = await ensureGitignore(dir, [
+      { pattern: ".claude/state/knowledge-index.db", type: "file" },
+    ]);
+    assert.deepEqual(added, []);
+    const after = await readFile(join(dir, ".gitignore"), "utf8");
+    assert.equal(after, before);
+  });
+
+  it("type:'file' adds the file form even if a stale dir-form line for the same path exists", async () => {
+    // Defends against a regression: round 18 added a directory-form
+    // gitignore call for the SQLite frontier, which (under that
+    // version) produced `/.claude/state/knowledge-index.db/`. After
+    // round 19 fixed the call to `type: "file"`, an upgrading project
+    // could already have the broken dir-form line in its .gitignore.
+    // The helper must detect that the existing entry is the wrong
+    // KIND and append the correct file-form rule alongside it.
+    const dir = await makeDir(
+      "file-vs-dir",
+      "# pre-existing stale entry from an older installer\n/.claude/state/knowledge-index.db/\n",
+    );
+    const { added } = await ensureGitignore(dir, [
+      { pattern: ".claude/state/knowledge-index.db", type: "file" },
+    ]);
+    assert.deepEqual(added, ["/.claude/state/knowledge-index.db"]);
+    const content = await readFile(join(dir, ".gitignore"), "utf8");
+    // Both forms now coexist; the file-form actually ignores the file.
+    assert.match(content, /^\/\.claude\/state\/knowledge-index\.db\/$/m);
+    assert.match(content, /^\/\.claude\/state\/knowledge-index\.db$/m);
+  });
+
+  it("rejects malformed entries (non-string, non-object)", async () => {
+    const dir = await makeDir("bad", "");
+    await assert.rejects(() => ensureGitignore(dir, [42]));
+    await assert.rejects(() => ensureGitignore(dir, [{ wrongKey: "x" }]));
+    await assert.rejects(() => ensureGitignore(dir, [null]));
   });
 });
