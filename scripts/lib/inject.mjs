@@ -93,11 +93,14 @@ export function removeManagedBlock(existing, markers) {
   }
   if (indices == null) return existing;
   const { beginLineStart, endLineEnd } = indices;
-  // Trim trailing / leading whitespace-only lines on each side. CRLF
-  // files (common on Windows checkouts) end lines with `\r\n`; the
-  // previous `/\n+$/` and `/^\n+/` left a stray `\r` adjacent to the
-  // strip site. Match both forms so the remaining content is
-  // self-consistent regardless of the file's EOL flavour.
+  // Trim trailing / leading runs of blank lines (sequences of `\r?\n`)
+  // on each side. The intent is to collapse the gap left by the
+  // removed block, NOT to scrub leading/trailing tabs or spaces on
+  // surrounding lines. CRLF files (common on Windows checkouts) end
+  // lines with `\r\n`; the previous `/\n+$/` and `/^\n+/` left a
+  // stray `\r` adjacent to the strip site. The `\r?` matches both
+  // forms so the remaining content is self-consistent regardless of
+  // the file's EOL flavour.
   const before = existing.slice(0, beginLineStart).replace(/(?:\r?\n)+$/, "");
   const after = existing.slice(endLineEnd).replace(/^(?:\r?\n)+/, "");
   // Detect the file's prevailing EOL once so we re-emit the separator
