@@ -16,7 +16,7 @@
 // ops.config.json; the aggregator accepts them as plain options so it
 // stays pure (no config-loading inside this module).
 
-import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -85,7 +85,20 @@ export function isoWeekDesignation(monday) {
  * @param {Date} end
  */
 export function readRecordsInWindow(metricsDir, start, end) {
-  if (!existsSync(metricsDir)) return [];
+  // Single TOCTOU-safe stat. existsSync was the previous gate but it
+  // does not guarantee the path is a DIRECTORY: a metricsDir that
+  // points at a regular file (or a symlink to one, or a dead symlink)
+  // would slip past existsSync and crash readdirSync with ENOTDIR /
+  // ENOENT, taking the weekly report CLI down. statSync inside a
+  // try/catch handles every failure mode (missing, not-a-dir,
+  // permission denied) by returning the same empty-window result.
+  let st;
+  try {
+    st = statSync(metricsDir);
+  } catch {
+    return [];
+  }
+  if (!st.isDirectory()) return [];
   const startKey = ymdKey(start);
   const endKey = ymdKey(end);
   const files = readdirSync(metricsDir)

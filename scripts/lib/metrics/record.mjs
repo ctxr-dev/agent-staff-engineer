@@ -219,7 +219,7 @@ export function writeRecord(record, stateDir) {
   // utcDateFromIso below already enforces ISO 8601 shape on started_at;
   // re-run it now on ended_at so a malformed value surfaces here, not
   // on the next aggregator pass.
-  utcDateFromIso(record.ended_at);
+  utcDateFromIso(record.ended_at, "ended_at");
   if (typeof record.cost_usd !== "number" || !Number.isFinite(record.cost_usd) || record.cost_usd < 0) {
     throw new Error(`metrics.writeRecord: record.cost_usd must be a non-negative finite number; got ${JSON.stringify(record.cost_usd)}`);
   }
@@ -227,7 +227,7 @@ export function writeRecord(record, stateDir) {
   if (!validExits.has(record.exit)) {
     throw new Error(`metrics.writeRecord: record.exit must be one of ${[...validExits].join(", ")}; got ${JSON.stringify(record.exit)}`);
   }
-  const date = utcDateFromIso(record.started_at);
+  const date = utcDateFromIso(record.started_at, "started_at");
   const dir = resolve(stateDir, "metrics");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const file = join(dir, `${date}.jsonl`);
@@ -338,23 +338,27 @@ function int(v) {
  * @param {string} iso
  * @returns {string}
  */
-export function utcDateFromIso(iso) {
+export function utcDateFromIso(iso, fieldName = "timestamp") {
   if (typeof iso !== "string") {
-    throw new Error(`metrics: started_at must be ISO 8601; got ${JSON.stringify(iso)}`);
+    throw new Error(`metrics: ${fieldName} must be ISO 8601; got ${JSON.stringify(iso)}`);
   }
   // Two acceptable shapes:
-  //   1. Strict UTC form ending in `Z`: slice the date prefix directly.
+  //   1. Strict UTC form ending in `Z`: parse via Date to reject
+  //      impossible dates like 2026-99-99T...Z (the regex shape would
+  //      otherwise pass and produce an impossible YYYY-MM-DD prefix
+  //      that breaks window selection downstream).
   //   2. ISO with a timezone offset: convert to UTC via Date so the
   //      file-boundary date reflects the UTC calendar day, NOT the
   //      caller's local day. Without this, `2026-04-28T23:30:00-05:00`
   //      (an instant on UTC 2026-04-29) would land in the 04-28 file.
-  if (/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(iso)) {
-    return iso.slice(0, 10);
-  }
-  if (/^\d{4}-\d{2}-\d{2}T[\d:.]+(?:[+-]\d{2}:?\d{2})$/.test(iso)) {
+  // Both branches now go through the same Date parse + UTC extract;
+  // the regex pre-filter still rejects shapes the spec disallows
+  // (e.g. naive timestamps with no zone designator).
+  if (/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(iso) ||
+      /^\d{4}-\d{2}-\d{2}T[\d:.]+(?:[+-]\d{2}:?\d{2})$/.test(iso)) {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) {
-      throw new Error(`metrics: started_at unparseable as ISO 8601; got ${JSON.stringify(iso)}`);
+      throw new Error(`metrics: ${fieldName} unparseable as ISO 8601; got ${JSON.stringify(iso)}`);
     }
     const yyyy = d.getUTCFullYear();
     const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -362,7 +366,7 @@ export function utcDateFromIso(iso) {
     return `${yyyy}-${mm}-${dd}`;
   }
   throw new Error(
-    `metrics: started_at must be ISO 8601 with Z or +/-HH:MM offset; got ${JSON.stringify(iso)}`,
+    `metrics: ${fieldName} must be ISO 8601 with Z or +/-HH:MM offset; got ${JSON.stringify(iso)}`,
   );
 }
 
