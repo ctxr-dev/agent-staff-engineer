@@ -917,9 +917,11 @@ if (opsConfig.paths.gitignore_dev_working_dir !== false) {
     // (input/output/cache_read/cache_write), cost_usd, subagent counts,
     // mcp_servers_used (server names only), and the exit status.
     // No PII; no payloads; no diffs. They are local artefacts (not code),
-    // so they stay out of git. Aggregator output lands under
-    // .development/shared/reports/metrics/ and that directory is ALREADY
-    // committed by convention.
+    // so they stay out of git. Aggregator output (the weekly rollup) also
+    // lands under .development/local/ by default — flat per-week leaves
+    // don't fit the wiki's nested-scalable layout, so the script writes
+    // local; promoting a curated subset into .development/shared/ for
+    // git is a project's choice, not the script's default.
     ".claude/state/metrics/",
   ]);
 }

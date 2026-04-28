@@ -181,14 +181,16 @@ const RECORD_KEY_ORDER = [
 ];
 
 function orderedRecord(record) {
+  // Whitelist-only: drop any key the schema doesn't know about. The
+  // record schema sets `additionalProperties: false`, so a record
+  // that smuggled an extra field through writeRecord would be
+  // rejected on read. Enforcing the same contract on write keeps the
+  // privacy guarantee strict and makes the recorder's shape
+  // predictable for downstream consumers.
   const out = {};
   for (const k of RECORD_KEY_ORDER) {
     if (k in record && record[k] !== undefined) out[k] = record[k];
   }
-  // Defensive: any unknown key (the schema forbids it on read but the
-  // recorder is permissive on write) is appended in lex order.
-  const extras = Object.keys(record).filter((k) => !RECORD_KEY_ORDER.includes(k)).sort();
-  for (const k of extras) out[k] = record[k];
   return out;
 }
 

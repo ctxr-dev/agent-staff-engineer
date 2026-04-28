@@ -147,18 +147,24 @@ export function aggregate(records, opts) {
     // each level carries its own parent_trace_id. Resolve to the
     // top-most ancestor's skill so the per-skill row counts every
     // descendant against the work that originated it. Handles cycles
-    // defensively via a visited set (records should never form a cycle
-    // but we don't trust adversarial input).
+    // defensively via resolveRootSkill().
     const rootSkill = isSub ? resolveRootSkill(r, recordsByTraceId) : r.skill;
     // Sub-invocations whose parent chain leaves the aggregation window
-    // (parent record not present in this batch) are folded under the
-    // sub's OWN skill rather than dropped entirely. This costs a row
-    // for orphans, but it's correct: the cost / tokens are real and
-    // need to land somewhere; dropping them under-reports the totals.
-    const skill = rootSkill ?? (typeof r.skill === "string" ? r.skill : null);
-    if (!skill) continue; // truly malformed; nothing else to do
+    // (parent record not present in this batch) are "orphans". We fold
+    // them under the sub's OWN skill rather than dropping them: their
+    // cost / tokens are real and need to land somewhere. We treat them
+    // as a top-level invocation FOR THE PURPOSES OF AVERAGING so the
+    // per-skill row's avg_cost / avg_tokens stay meaningful (otherwise
+    // a skill that only appears as orphan sub-records ends up with
+    // invocations=0 and avg = total / 1, which mis-reports a total
+    // as an average).
+    const isOrphanSub = isSub && rootSkill == null;
+    const skill = rootSkill ?? (isSub ? r.skill : null);
+    if (!skill) continue; // truly malformed; nothing to do
+    const countsAsInvocation = !isSub || isOrphanSub;
+
     const acc = skillStats.get(skill) ?? newSkillAcc();
-    acc.invocations += isSub ? 0 : 1; // count top-level invocations only
+    if (countsAsInvocation) acc.invocations += 1;
     acc.cost_usd += num(r.cost_usd);
     acc.tokens_input += num(r.tokens?.input);
     acc.tokens_output += num(r.tokens?.output);
@@ -166,15 +172,15 @@ export function aggregate(records, opts) {
     acc.tokens_cache_write += num(r.tokens?.cache_write);
     skillStats.set(skill, acc);
 
-    // Cost AND tokens both include sub-invocations: a top-level
-    // dev-loop run that fans out to three Explorer subagents should
-    // surface the full bill in totals.cost_usd, not just the parent's
-    // share. Invocation count, however, is top-level only — sub
-    // entries are folded into the parent's per-skill row above and
-    // would inflate the count if also added here.
-    if (!isSub) {
-      totals.invocations += 1;
-    }
+    // Cost AND tokens both include sub-invocations (and orphan subs):
+    // a top-level dev-loop run that fans out to three Explorer
+    // subagents should surface the full bill in totals.cost_usd, not
+    // just the parent's share. Invocation count tracks distinct
+    // user-visible work units — top-level invocations PLUS orphan
+    // subs that look like top-levels in this window — so an
+    // aggregation containing only orphan subs reports a non-zero
+    // invocations count consistent with non-zero cost.
+    if (countsAsInvocation) totals.invocations += 1;
     totals.cost_usd += num(r.cost_usd);
     totals.tokens.input += num(r.tokens?.input);
     totals.tokens.output += num(r.tokens?.output);
