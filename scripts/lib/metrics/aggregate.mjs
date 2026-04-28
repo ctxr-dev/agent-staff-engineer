@@ -344,8 +344,16 @@ function isPlainRecord(r) {
 }
 
 function num(v) {
+  // Clamp negative values to 0. The recorder validates non-negative
+  // counts at write time, but a corrupted / hand-edited JSONL line
+  // could land a negative, and weekly rollups have `minimum: 0` on
+  // every cost / token field (schemas/metrics-weekly.schema.json).
+  // Coercing here keeps the rollup schema-conformant even when the
+  // input file is damaged; we'd rather under-count a row than emit
+  // a JSON object the consumer's validator will reject outright.
   const n = Number(v ?? 0);
-  return Number.isFinite(n) ? n : 0;
+  if (!Number.isFinite(n)) return 0;
+  return n < 0 ? 0 : n;
 }
 
 function computeCacheHitRate(input, cacheRead) {

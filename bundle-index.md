@@ -125,8 +125,18 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 
 ### Per-skill metrics + weekly rollup
 
+**Status: library-only in this PR.** The recorder, aggregator, and
+weekly-report CLI all ship here, but the per-skill dispatch sites that
+would call `record()` on every invocation are NOT yet wired up — the
+bundle has no centralised dispatch layer today. As a result, until the
+follow-up wiring lands, no JSONL records are produced automatically;
+the helpers can be invoked manually or through tests, and the CLI
+runs against any pre-existing JSONL the user (or a future version)
+deposits under `.claude/state/metrics/`. The schema field
+`observability.metrics_enabled` is reserved for that follow-up.
+
 - [scripts/lib/metrics/record.mjs](scripts/lib/metrics/record.mjs): per-invocation recorder. Builds + writes one JSONL line per skill invocation under `.claude/state/metrics/<yyyy>-<mm>-<dd>.jsonl`. Cost computed from token counts + a per-model rate table.
-- [scripts/lib/metrics/aggregate.mjs](scripts/lib/metrics/aggregate.mjs): daily JSONL -> ISO-week rollup. Sub-invocations fold into the parent's skill row; thresholds drive red-flag annotations; output is deterministic across re-runs.
+- [scripts/lib/metrics/aggregate.mjs](scripts/lib/metrics/aggregate.mjs): daily JSONL -> ISO-week rollup. Sub-invocations fold into the parent's skill row when the parent is in-window; orphan subs are dropped from the rollup. Thresholds drive red-flag annotations; output is deterministic across re-runs.
 - [scripts/report_metrics.mjs](scripts/report_metrics.mjs): CLI entrypoint (`node scripts/report_metrics.mjs --weekly`). Writes JSON + markdown to `.claude/state/metrics-weekly/<yyyy>-Www.{json,md}` — under `.claude/state/`, NOT under `.development/**`, since the latter is wiki-governed (rules/llm-wiki.md) and requires a nested-scalable layout that flat per-week leaves do not fit. Echoes the markdown to stdout.
 - [schemas/metrics-record.schema.json](schemas/metrics-record.schema.json): per-invocation record shape (additionalProperties: false; no PII).
 - [schemas/metrics-weekly.schema.json](schemas/metrics-weekly.schema.json): rollup shape.
