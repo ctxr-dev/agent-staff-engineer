@@ -28,10 +28,13 @@ import { parseEntry } from "./frontmatter.mjs";
 // cache a fingerprint composed of:
 //   - the root dir mtime (catches add/remove at the top level cheaply)
 //   - the leaf count
-//   - max(leaf.mtimeMs) — catches in-place edits
+//   - max(leaf.mtimeMs) — fast aggregate that catches most edits
 //   - sum(leaf.size) — defence-in-depth against same-mtime edits
-//   - sha256 of the sorted-leaf-path list — catches rename / move in
-//     any subdirectory without statSync-ing every parent dir.
+//   - sha256 of the sorted per-leaf (path, mtimeMs, size) tuples —
+//     catches rename / move in any subdirectory AND any individual
+//     leaf edit (path component) (mtime tick) (size delta) without
+//     statSync-ing every parent dir. The aggregates above are
+//     redundant given this hash, kept as cheap fast-path mismatches.
 // Any drift across the fingerprint invalidates the cache. The cache
 // is keyed by the absolute knowledge-dir path passed in (NOT a
 // realpath resolution); two callers passing different symlink paths

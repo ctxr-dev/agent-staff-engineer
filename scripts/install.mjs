@@ -913,6 +913,18 @@ if (opsConfig.paths.gitignore_dev_working_dir !== false) {
     `${opsConfig.paths.dev_working_dir}/${cacheSub}`,
   ]);
 }
+
+// Knowledge-store SQLite frontier (Tier 2). The .db is regenerable
+// from the canonical markdown leaves in the wiki; committing it would
+// produce noisy diffs and merge conflicts. Gitignored unconditionally
+// (NOT gated on gitignore_dev_working_dir, which is specifically about
+// the .development tree). Resolves the schema claim that this path is
+// "Gitignored by the installer".
+{
+  const sqlitePath = opsConfig.knowledge_store?.frontier?.sqlite_path
+    ?? ".claude/state/knowledge-index.db";
+  await ensureGitignore(TARGET, [sqlitePath]);
+}
 for (const w of writes) {
   if (w.content == null) continue;
   await ensureDir(dirname(w.path));
