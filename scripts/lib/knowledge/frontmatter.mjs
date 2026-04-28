@@ -49,11 +49,18 @@ export function parseEntry(text) {
 
 /**
  * Serialise a knowledge entry to markdown. Frontmatter is rendered
- * with fields in FIELD_ORDER (extras allowed by the schema are
- * appended in alphabetical order via orderedFrontmatter, so two
- * writers composing the same logical object emit byte-identical
- * frontmatter regardless of key insertion order). Body content is
- * preserved verbatim.
+ * with fields in FIELD_ORDER first; any extra keys present on the
+ * input object are appended in alphabetical order so two writers
+ * composing the same logical object emit byte-identical frontmatter
+ * regardless of key insertion order. NOTE: this serialiser does NOT
+ * filter unknown fields, but the canonical schema
+ * (schemas/knowledge-entry.schema.json) sets `additionalProperties:
+ * false`, so `validate.mjs::validateEntry` rejects extras at the
+ * write boundary. The alphabetical-extras handling exists so a
+ * future schema version that opens up extension points (e.g. a
+ * `tags` array) ships with deterministic output the day it lands,
+ * not so callers can sneak unknown fields past the validator today.
+ * Body content is preserved verbatim.
  *
  * @param {object} data
  * @param {string} content

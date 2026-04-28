@@ -108,10 +108,26 @@ export function writeEntry(args, _deps = {}) {
   // to full-tree rebuild and surfaces a warning.
   const rebuildResult = runRebuild(wikiRoot, dir);
   if (!rebuildResult.ok) {
+    // Rollback contract: a step-3 failure can occur AFTER the rebuilder
+    // has partially updated index.md siblings (cluster / domain
+    // indexes) to reference the new leaf. Just deleting the leaf at
+    // <slug>.md would leave those index.md edits dangling, so the wiki
+    // would still surface a stale entry pointing at a now-missing
+    // file. Restore consistency by running a full-tree rebuild AFTER
+    // removing the leaf: that rewrites every index.md from the live
+    // tree state, which no longer contains the failed leaf, so the
+    // dangling references are dropped. If the reconcile rebuild also
+    // fails, the wiki really is inconsistent; surface both errors so
+    // ops sees the full picture.
     rollback(path);
-    // We do not attempt to re-rebuild here; if the rebuild itself fails
-    // the wiki may be inconsistent. Surface that plainly.
-    return fail(3, `step 3 (index-rebuild): ${rebuildResult.error}`);
+    const reconcile = runRebuild(wikiRoot, dir);
+    if (!reconcile.ok) {
+      return fail(
+        3,
+        `step 3 (index-rebuild): ${rebuildResult.error}; reconcile after leaf rollback also failed: ${reconcile.error}. Wiki indexes may be inconsistent; run \`skill-llm-wiki index-rebuild ${wikiRoot}\` manually.`,
+      );
+    }
+    return fail(3, `step 3 (index-rebuild): ${rebuildResult.error} (leaf removed; indexes reconciled)`);
   }
   if (rebuildResult.scoped === false) {
     warnings.push(

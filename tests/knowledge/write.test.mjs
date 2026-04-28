@@ -1,9 +1,17 @@
 // Tests for scripts/lib/knowledge/write.mjs
 //
-// The atomic 4-step contract: any step failing rolls back step 1 so the
-// wiki tree never lands in a half-state. Tests inject runSkillLlmWiki +
-// runIndexRebuild + enqueueFrontierReindex through _deps so we don't
-// require the real CLI.
+// Contract overview:
+//   * Steps 1 (atomic markdown write), 2 (local + skill-llm-wiki
+//     validate), and 3 (index-rebuild) are HARD-FAIL with rollback:
+//     any failure removes the new leaf, and a step-3 failure also
+//     re-runs index-rebuild against the post-rollback tree so the
+//     index.md siblings do not reference a now-missing leaf.
+//   * Step 4 (SQLite frontier reindex marker) is BEST-EFFORT: a marker
+//     write failure is reported as a warning, NOT rolled back, since
+//     the wiki itself is already consistent and the next session-start
+//     incremental reindex can recover by walking the tree.
+// Tests inject runSkillLlmWiki + runIndexRebuild + enqueueFrontierReindex
+// through _deps so we do not require the real CLI.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -139,6 +147,70 @@ test("writeEntry: step 3 (index-rebuild) failure rolls back the file", () => {
     assert.equal(r.step, 3);
     const path = join(wiki, "knowledge", "patterns", "pr-iteration-bot-id.md");
     assert.equal(existsSync(path), false);
+  } finally {
+    rmSync(wiki, { recursive: true, force: true });
+  }
+});
+
+test("writeEntry: step 3 failure runs reconcile rebuild after leaf rollback", () => {
+  // The atomic contract requires a step-3 failure to also reconcile the
+  // index.md siblings against the post-rollback tree. Without this, an
+  // index.md update made by the partial rebuild would still reference
+  // a now-missing leaf. Verify the reconcile rebuild is invoked AFTER
+  // the leaf is removed (so the rebuild operates on a tree without
+  // the failed leaf).
+  const wiki = makeWiki();
+  try {
+    const path = join(wiki, "knowledge", "patterns", "pr-iteration-bot-id.md");
+    let calls = 0;
+    let leafExistsAtReconcile = null;
+    const r = writeEntry({
+      wikiRoot: wiki,
+      domain: "patterns",
+      slug: "pr-iteration-bot-id",
+      data: validData(),
+      body: "Body.\n",
+    }, {
+      runSkillLlmWiki: () => ({ ok: true }),
+      runIndexRebuild: () => {
+        calls += 1;
+        if (calls === 1) return { ok: false, error: "rebuild crashed" };
+        // Second call is the reconcile. Capture the on-disk state so
+        // we can assert the leaf is GONE before reconcile runs.
+        leafExistsAtReconcile = existsSync(path);
+        return { ok: true, scoped: false };
+      },
+      enqueueFrontierReindex: () => ({ ok: true }),
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.step, 3);
+    assert.equal(calls, 2, "reconcile rebuild must run after rollback");
+    assert.equal(leafExistsAtReconcile, false, "leaf must be deleted BEFORE reconcile rebuild runs");
+    assert.equal(existsSync(path), false);
+    assert.match(r.error, /leaf removed; indexes reconciled/);
+  } finally {
+    rmSync(wiki, { recursive: true, force: true });
+  }
+});
+
+test("writeEntry: step 3 + reconcile both fail flag the wiki as inconsistent", () => {
+  const wiki = makeWiki();
+  try {
+    const r = writeEntry({
+      wikiRoot: wiki,
+      domain: "patterns",
+      slug: "pr-iteration-bot-id",
+      data: validData(),
+      body: "Body.\n",
+    }, {
+      runSkillLlmWiki: () => ({ ok: true }),
+      runIndexRebuild: () => ({ ok: false, error: "rebuild crashed" }),
+      enqueueFrontierReindex: () => ({ ok: true }),
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.step, 3);
+    assert.match(r.error, /reconcile after leaf rollback also failed/);
+    assert.match(r.error, /Wiki indexes may be inconsistent/);
   } finally {
     rmSync(wiki, { recursive: true, force: true });
   }

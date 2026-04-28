@@ -2,7 +2,7 @@
 // File-system helpers used by the installer and friends. Zero npm deps.
 // Every write goes through an atomic "write-to-temp then rename" path.
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   mkdir,
   readFile,
