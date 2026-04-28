@@ -93,11 +93,27 @@ export function removeManagedBlock(existing, markers) {
   }
   if (indices == null) return existing;
   const { beginLineStart, endLineEnd } = indices;
-  const before = existing.slice(0, beginLineStart).replace(/\n+$/, "");
-  const after = existing.slice(endLineEnd).replace(/^\n+/, "");
+  // Trim trailing / leading whitespace-only lines on each side. CRLF
+  // files (common on Windows checkouts) end lines with `\r\n`; the
+  // previous `/\n+$/` and `/^\n+/` left a stray `\r` adjacent to the
+  // strip site. Match both forms so the remaining content is
+  // self-consistent regardless of the file's EOL flavour.
+  const before = existing.slice(0, beginLineStart).replace(/(?:\r?\n)+$/, "");
+  const after = existing.slice(endLineEnd).replace(/^(?:\r?\n)+/, "");
+  // Detect the file's prevailing EOL once so we re-emit the separator
+  // in the same flavour. The first newline observed wins (matches the
+  // detectEol helper convention used by seed.mjs / append-entry.mjs).
+  const eol = detectEol(existing);
   if (before.length === 0) return after;
-  if (after.length === 0) return before + "\n";
-  return `${before}\n\n${after}`;
+  if (after.length === 0) return before + eol;
+  return `${before}${eol}${eol}${after}`;
+}
+
+function detectEol(text) {
+  if (typeof text !== "string" || text.length === 0) return "\n";
+  const idx = text.indexOf("\n");
+  if (idx === -1) return "\n";
+  return idx > 0 && text[idx - 1] === "\r" ? "\r\n" : "\n";
 }
 
 /** Locate the begin/end line offsets in `existing`. Returns null when missing. */
