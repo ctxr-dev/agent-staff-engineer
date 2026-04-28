@@ -347,8 +347,14 @@ export function renderMarkdown(weekly) {
   lines.push("| skill | invocations | avg_tokens | cache_hit | avg_cost | delta_vs_prev |");
   lines.push("|---|---|---|---|---|---|");
   for (const row of weekly.per_skill) {
+    // Render null as "n/a" rather than "new". delta_vs_prev is null
+    // for two distinct structural reasons (newly seen skill OR
+    // previous-week avg_cost was 0 with this week non-zero, i.e.
+    // infinite relative change); the rollup field is the same null
+    // for both, so the renderer cannot honestly label one case as
+    // "new". "n/a" is accurate for either union member.
     const delta = row.delta_vs_prev == null
-      ? "new"
+      ? "n/a"
       : `${row.delta_vs_prev >= 0 ? "+" : ""}${(row.delta_vs_prev * 100).toFixed(0)} %`;
     lines.push(`| ${row.skill} | ${row.invocations} | ${row.avg_tokens} | ${pct(row.cache_hit_rate)} | $${row.avg_cost.toFixed(2)} | ${delta} |`);
   }
@@ -461,7 +467,14 @@ function round6(n) {
 }
 
 function pct(n) {
-  return `${(n * 100).toFixed(0)} %`;
+  // 1-decimal precision so a `cache_hit_rate < cache_hit_rate_min`
+  // MISS is not visually identical to the threshold itself
+  // (e.g. 69.5 % vs 70 %). The rendered table previously printed
+  // both as "70 %", which made it hard for a human skimming the
+  // markdown to see why a row landed in the red-flag list. The
+  // raw fraction stays in the JSON rollup at full round4
+  // precision; this helper is only for human-facing markdown.
+  return `${(n * 100).toFixed(1)} %`;
 }
 
 function ymdKey(d) {

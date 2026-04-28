@@ -196,15 +196,37 @@ export function buildRecord(input) {
     exit: input.exit ?? "success",
   };
   if (input.model) record.model = input.model;
-  if (input.subagents) {
+  if (input.subagents != null) {
+    // Strict shape check. The previous truthy guard accepted any
+    // non-falsy value (including `true`, `42`, `"yes"`) and silently
+    // coerced count / total_tokens through int(), which masks real
+    // caller mistakes. buildRecord is documented as producing
+    // schema-conformant records, so reject anything that is not a
+    // plain object with the two required numeric fields.
+    if (typeof input.subagents !== "object" || Array.isArray(input.subagents)) {
+      throw new Error(`metrics.buildRecord: subagents must be an object with {count, total_tokens} when present; got ${JSON.stringify(input.subagents)}`);
+    }
+    if (typeof input.subagents.count !== "number" || typeof input.subagents.total_tokens !== "number") {
+      throw new Error(`metrics.buildRecord: subagents.count and subagents.total_tokens are required numeric fields; got ${JSON.stringify(input.subagents)}`);
+    }
     record.subagents = {
       count: int(input.subagents.count),
       total_tokens: int(input.subagents.total_tokens),
     };
   }
-  if (Array.isArray(input.mcp_servers_used) && input.mcp_servers_used.length > 0) {
-    // Dedupe + sort so JSONL diffs stay stable across record orderings.
-    record.mcp_servers_used = [...new Set(input.mcp_servers_used)].sort();
+  if (input.mcp_servers_used != null) {
+    if (!Array.isArray(input.mcp_servers_used)) {
+      throw new Error(`metrics.buildRecord: mcp_servers_used must be an array of non-empty strings when present; got ${JSON.stringify(input.mcp_servers_used)}`);
+    }
+    for (const item of input.mcp_servers_used) {
+      if (typeof item !== "string" || item.length === 0) {
+        throw new Error(`metrics.buildRecord: mcp_servers_used items must be non-empty strings; got ${JSON.stringify(item)}`);
+      }
+    }
+    if (input.mcp_servers_used.length > 0) {
+      // Dedupe + sort so JSONL diffs stay stable across record orderings.
+      record.mcp_servers_used = [...new Set(input.mcp_servers_used)].sort();
+    }
   }
   return record;
 }
