@@ -69,13 +69,26 @@ export async function readJsonOrNull(p) {
   }
 }
 
+// Shared tmp-name helper so the async + sync atomic helpers do not drift
+// on suffix shape. Format: "<abs>.tmp-<pid>-<ms>-<rand8>". Pid + ms keeps
+// names readable in `ls`; the random fragment defeats sub-millisecond
+// collisions when the same process writes the same target twice in quick
+// succession (which Date.now() alone does not).
+function tmpPathFor(abs) {
+  const rand = createHash("sha256")
+    .update(`${abs}|${process.pid}|${Date.now()}|${Math.random()}`)
+    .digest("hex")
+    .slice(0, 8);
+  return `${abs}.tmp-${process.pid}-${Date.now()}-${rand}`;
+}
+
 /** Atomic write: write to "<path>.tmp" then rename to "<path>". Creates parent dirs. Cleans up the temp file
  *  if anything fails in between. Same-filesystem requirement: rename is only atomic on one filesystem; callers
  *  should pass paths under the project root rather than crossing mount boundaries. */
 export async function atomicWriteText(p, content) {
   const abs = resolve(p);
   await ensureDir(dirname(abs));
-  const tmp = `${abs}.tmp-${process.pid}-${Date.now()}`;
+  const tmp = tmpPathFor(abs);
   try {
     await writeFile(tmp, content, "utf8");
     await rename(tmp, abs);
@@ -115,7 +128,7 @@ export function atomicWriteTextSync(p, content) {
   const abs = resolve(p);
   const dir = dirname(abs);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const tmp = `${abs}.tmp-${process.pid}-${createHash("sha256").update(`${abs}|${Date.now()}|${Math.random()}`).digest("hex").slice(0, 8)}`;
+  const tmp = tmpPathFor(abs);
   try {
     writeFileSync(tmp, content, "utf8");
     renameSync(tmp, abs);

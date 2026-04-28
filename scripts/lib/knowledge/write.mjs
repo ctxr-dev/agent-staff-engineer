@@ -113,14 +113,14 @@ export function writeEntry(args, _deps = {}) {
     // indexes) to reference the new leaf. Just deleting the leaf at
     // <slug>.md would leave those index.md edits dangling, so the wiki
     // would still surface a stale entry pointing at a now-missing
-    // file. Restore consistency by running a full-tree rebuild AFTER
-    // removing the leaf: that rewrites every index.md from the live
-    // tree state, which no longer contains the failed leaf, so the
-    // dangling references are dropped. If the reconcile rebuild also
-    // fails, the wiki really is inconsistent; surface both errors so
-    // ops sees the full picture.
+    // file. Restore consistency by running a FULL-tree rebuild AFTER
+    // removing the leaf: `fullTree: true` skips the scoped attempt so
+    // a partial index update is always overwritten against the live
+    // tree, regardless of which form failed in the original rebuild.
+    // If the reconcile rebuild also fails, the wiki really is
+    // inconsistent; surface both errors so ops sees the full picture.
     rollback(path);
-    const reconcile = runRebuild(wikiRoot, dir);
+    const reconcile = runRebuild(wikiRoot, dir, { fullTree: true });
     if (!reconcile.ok) {
       return fail(
         3,
@@ -195,8 +195,19 @@ function runSkillLlmWikiCli(wikiRoot) {
  * scoped form first (`--scope <dir>`); on unrecognised flag it falls
  * back to the full-tree form and reports `scoped: false` so callers
  * can warn.
+ *
+ * @param {string} wikiRoot
+ * @param {string} leafDir
+ * @param {{ fullTree?: boolean }} [opts] when fullTree is true, the
+ *        scoped attempt is SKIPPED and the runner goes directly to the
+ *        full-tree call. Used by writeEntry's step-3 reconcile path so
+ *        an index.md half-write made by the failed scoped rebuild is
+ *        always rewritten against the live tree.
  */
-function runIndexRebuildCli(wikiRoot, leafDir) {
+function runIndexRebuildCli(wikiRoot, leafDir, opts = {}) {
+  if (opts.fullTree === true) {
+    return runFullTreeRebuild(wikiRoot);
+  }
   // Attempt scoped rebuild first. Once skill-llm-wiki#16 lands this is
   // O(depth) and finishes in well under a second on real trees.
   const scoped = spawnSync("skill-llm-wiki", ["index-rebuild", wikiRoot, "--scope", leafDir], {
@@ -233,6 +244,10 @@ function runIndexRebuildCli(wikiRoot, leafDir) {
     return { ok: false, error: (scoped.stderr || scoped.stdout || `exit ${scoped.status}`).trim() };
   }
   // Fall back to full rebuild.
+  return runFullTreeRebuild(wikiRoot);
+}
+
+function runFullTreeRebuild(wikiRoot) {
   const full = spawnSync("skill-llm-wiki", ["index-rebuild", wikiRoot], {
     encoding: "utf8",
     timeout: 60_000,

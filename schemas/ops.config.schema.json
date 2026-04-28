@@ -575,7 +575,7 @@
         "knowledge_dir": {
           "type": "string",
           "default": "knowledge",
-          "description": "Subdirectory under <paths.wiki> where the canonical entries live. Relative; combined with paths.wiki at runtime."
+          "description": "Reserved for a follow-up: today scripts/lib/knowledge/{query,write}.mjs hardcode the literal `knowledge` segment under <paths.wiki>. The field is documented here so consumers can plan around the override, but changing it from the default has no effect until the helpers thread the value through. Until then, leave at the default."
         },
         "frontier": {
           "type": "object",

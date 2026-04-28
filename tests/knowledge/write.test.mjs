@@ -164,6 +164,7 @@ test("writeEntry: step 3 failure runs reconcile rebuild after leaf rollback", ()
     const path = join(wiki, "knowledge", "patterns", "pr-iteration-bot-id.md");
     let calls = 0;
     let leafExistsAtReconcile = null;
+    let reconcileOpts = null;
     const r = writeEntry({
       wikiRoot: wiki,
       domain: "patterns",
@@ -172,12 +173,16 @@ test("writeEntry: step 3 failure runs reconcile rebuild after leaf rollback", ()
       body: "Body.\n",
     }, {
       runSkillLlmWiki: () => ({ ok: true }),
-      runIndexRebuild: () => {
+      runIndexRebuild: (_root, _leaf, opts) => {
         calls += 1;
         if (calls === 1) return { ok: false, error: "rebuild crashed" };
-        // Second call is the reconcile. Capture the on-disk state so
-        // we can assert the leaf is GONE before reconcile runs.
+        // Second call is the reconcile. Capture the on-disk state AND
+        // the opts so we can assert (a) the leaf is GONE before
+        // reconcile runs, and (b) the reconcile passes fullTree:true
+        // so the runner skips the scoped attempt and goes straight to
+        // a full-tree rebuild against the live (post-rollback) tree.
         leafExistsAtReconcile = existsSync(path);
+        reconcileOpts = opts;
         return { ok: true, scoped: false };
       },
       enqueueFrontierReindex: () => ({ ok: true }),
@@ -186,6 +191,7 @@ test("writeEntry: step 3 failure runs reconcile rebuild after leaf rollback", ()
     assert.equal(r.step, 3);
     assert.equal(calls, 2, "reconcile rebuild must run after rollback");
     assert.equal(leafExistsAtReconcile, false, "leaf must be deleted BEFORE reconcile rebuild runs");
+    assert.deepEqual(reconcileOpts, { fullTree: true }, "reconcile must request fullTree to skip scoped attempt");
     assert.equal(existsSync(path), false);
     assert.match(r.error, /leaf removed; indexes reconciled/);
   } finally {
