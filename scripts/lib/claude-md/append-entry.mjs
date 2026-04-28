@@ -143,6 +143,16 @@ function validateEntry(entry) {
   if (entry.nextReview != null && !isValidIsoDate(entry.nextReview)) {
     throw new Error(`nextReview must be a valid YYYY-MM-DD date; got ${JSON.stringify(entry.nextReview)}`);
   }
+  // Optional string fields. Without these checks a bare CLI flag
+  // (parseArgv yields boolean `true` for `--linked` without a value)
+  // would render into CLAUDE.md as `Linked: true` / `Owner: true`.
+  // Reject anything that is not a non-empty string.
+  for (const field of ["linked", "owner"]) {
+    if (entry[field] == null) continue;
+    if (typeof entry[field] !== "string" || entry[field].length === 0) {
+      throw new Error(`${field} must be a non-empty string when provided; got ${JSON.stringify(entry[field])}`);
+    }
+  }
   // Quirks render only `Last verified: <firstSeen>` and have no Owner
   // bullet. renderEntry silently drops `nextReview` / `owner` for
   // section=quirk; reject them at validation time so a caller mistake
@@ -443,13 +453,21 @@ async function runCli() {
   // --flag=value, --flag value.
   const { parseArgv } = await import("../argv.mjs");
   const { flags } = parseArgv(process.argv.slice(2));
-  // `--path` without a value comes back as boolean `true` (parseArgv's
-  // bare-flag form). `if (!flags.path)` would treat `true` as a valid
-  // path and pass a boolean down the line, where readTextOrNull
-  // explodes with a confusing TypeError instead of a usage message.
-  // Require an actual non-empty string.
-  if (typeof flags.path !== "string" || flags.path.length === 0) {
-    process.stderr.write("usage: append-entry.mjs --path <CLAUDE.md> --section worked|failed|quirk --title <t> --first-seen YYYY-MM-DD --remediation <r> [--next-review YYYY-MM-DD] [--linked <ref>] [--owner <name>]\n");
+  // Required CLI flags. Each must be a non-empty string. parseArgv
+  // returns boolean `true` for a bare `--flag` (no value supplied);
+  // accepting `true` would pass a boolean down to validateEntry /
+  // readTextOrNull and surface a confusing TypeError instead of the
+  // usage message. Surface the missing flag by name so the user can
+  // fix the command line directly.
+  const requiredFlags = ["path", "section", "title", "first-seen", "remediation"];
+  const missingFlags = requiredFlags.filter(
+    (k) => typeof flags[k] !== "string" || flags[k].length === 0,
+  );
+  if (missingFlags.length > 0) {
+    process.stderr.write(
+      `error: missing or empty required flag(s): ${missingFlags.map((f) => "--" + f).join(", ")}\n` +
+        "usage: append-entry.mjs --path <CLAUDE.md> --section worked|failed|quirk --title <t> --first-seen YYYY-MM-DD --remediation <r> [--next-review YYYY-MM-DD] [--linked <ref>] [--owner <name>]\n",
+    );
     process.exit(2);
   }
   try {

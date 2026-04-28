@@ -1285,11 +1285,14 @@ async function runUninstall({ dryRun = false } = {}) {
 
     // The project-level CLAUDE.md is a managed-block injection, not a wrapper
     // file. Always strip the installer-owned managed block. Strip the
-    // compound-learning registry block ONLY when its body is pristine
-    // (matches the seed stub byte-for-byte modulo whitespace) — once a
-    // human or append-entry.mjs has added real content, that content
-    // belongs to the project and survives uninstall. Anything outside
-    // both blocks is preserved either way.
+    // compound-learning registry block ONLY when its body matches the
+    // seed stub after CRLF-to-LF normalisation and outer-whitespace
+    // trimming (this is what isPristineRegistryBlock checks; internal
+    // whitespace differences are NOT normalised, so any user edit
+    // beyond reflowing the surrounding blank lines makes the block
+    // non-pristine). Once a human or append-entry.mjs has added real
+    // content, that content belongs to the project and survives
+    // uninstall. Anything outside both blocks is preserved either way.
     if (entry.kind === "project-claude-md") {
       const {
         REGISTRY_BEGIN_MARKER,
