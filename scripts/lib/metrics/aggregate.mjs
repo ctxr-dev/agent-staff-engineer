@@ -251,7 +251,15 @@ export function aggregate(records, opts) {
     const avgCost = round6(acc.cost_usd / inv);
     const cacheHit = computeCacheHitRate(acc.tokens_input, acc.tokens_cache_read);
     const prev = previousAvgCostBySkill.get(skill);
-    const delta = prev == null ? null : prev === 0 ? null : round4((avgCost - prev) / prev);
+    // delta_vs_prev is null when the relative change is undefined:
+    //   - skill missing from the prev-week map (newly seen)
+    //   - prev was 0 AND avgCost is non-zero (infinite relative change)
+    // When BOTH weeks were 0, return 0 (literally no change in cost).
+    // Schema description on `delta_vs_prev` records the same union.
+    let delta;
+    if (prev == null) delta = null;
+    else if (prev === 0) delta = avgCost === 0 ? 0 : null;
+    else delta = round4((avgCost - prev) / prev);
     const row = {
       skill,
       invocations: acc.invocations,

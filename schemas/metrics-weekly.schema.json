@@ -67,7 +67,7 @@
           "avg_cost": { "type": "number", "minimum": 0 },
           "delta_vs_prev": {
             "type": ["number", "null"],
-            "description": "Fractional change in avg_cost vs the previous week's value for the same skill. null for newly seen skills."
+            "description": "Fractional change in avg_cost vs the previous week's value for the same skill. null when the delta is undefined: the skill was not in the previous-week rollup (newly seen), OR the previous-week avg_cost was 0 with this week non-zero (relative change is infinite). When BOTH weeks were 0, the delta is 0 (no change)."
           }
         }
       }
