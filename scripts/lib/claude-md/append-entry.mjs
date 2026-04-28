@@ -384,10 +384,23 @@ function upsertEntry(body, entry, rendered) {
   // newlines they kept stay intact. The only thing we add is enough
   // separation in front of and after the new entry to keep markdown
   // valid (one blank line either side, no more, no less).
+  // EOL-agnostic blank-line detection: `\r\n\r\n` does NOT satisfy
+  // `.endsWith("\n\n")`, so a CRLF file would have churned an extra
+  // blank line on every append. Use regex tests that match both LF
+  // and CRLF runs.
   const before = body.slice(0, sectionRange.end);
   const after = body.slice(sectionRange.end);
-  const leadingSep = before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
-  const trailingSep = after.startsWith("\n\n") || after.length === 0 ? "" : after.startsWith("\n") ? "\n" : "\n\n";
+  const leadingSep = /(?:\r?\n){2,}$/.test(before)
+    ? ""
+    : /(?:\r?\n)$/.test(before)
+      ? "\n"
+      : "\n\n";
+  const trailingSep =
+    after.length === 0 || /^(?:\r?\n){2,}/.test(after)
+      ? ""
+      : /^(?:\r?\n)/.test(after)
+        ? "\n"
+        : "\n\n";
   return {
     body: before + leadingSep + rendered + trailingSep + after,
     action: "added",
