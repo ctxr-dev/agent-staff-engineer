@@ -85,6 +85,52 @@ test("writeEntry: rejects domain/slug shapes that could escape the tree", () => 
   }
 });
 
+test("writeEntry: rollback restores the previous file contents on a same-path UPDATE failure", () => {
+  // Step 0 explicitly allows a same-path update. The atomic step-1 write
+  // replaces the previous version on disk, so a subsequent step-2 / step-3
+  // failure with a naive "delete on rollback" would silently lose the
+  // user's prior entry. Verify the snapshot-and-restore contract: the
+  // file on disk after rollback equals what was there before writeEntry
+  // was called.
+  const wiki = makeWiki();
+  try {
+    // First write succeeds and lands a known body so we can detect
+    // mutation on rollback.
+    const r1 = writeEntry({
+      wikiRoot: wiki,
+      domain: "patterns",
+      slug: "rolling-stone",
+      data: validData("rolling-stone"),
+      body: "ORIGINAL.\n",
+    }, happyDeps());
+    assert.equal(r1.ok, true, `seed write should succeed: ${r1.error || ""}`);
+    const path = r1.path;
+    const before = readFileSync(path, "utf8");
+    // Second write (same path => UPDATE) fails at step 2b. Rollback
+    // must restore the original bytes, not delete the file.
+    const r2 = writeEntry({
+      wikiRoot: wiki,
+      domain: "patterns",
+      slug: "rolling-stone",
+      data: validData("rolling-stone"),
+      body: "REPLACEMENT.\n",
+    }, {
+      runSkillLlmWiki: () => ({ ok: false, error: "boom" }),
+      runIndexRebuild: () => ({ ok: true, scoped: true }),
+      enqueueFrontierReindex: () => ({ ok: true }),
+    });
+    assert.equal(r2.ok, false);
+    assert.equal(r2.step, 2);
+    assert.ok(existsSync(path), "prior version must still exist after rollback");
+    const after = readFileSync(path, "utf8");
+    assert.equal(after, before, "rollback must restore the original bytes byte-for-byte");
+    assert.match(after, /ORIGINAL/);
+    assert.doesNotMatch(after, /REPLACEMENT/);
+  } finally {
+    rmSync(wiki, { recursive: true, force: true });
+  }
+});
+
 test("writeEntry: step 0 collision detection refuses to create a duplicate id under a different domain", () => {
   // Schema enforces single-segment ids, so two entries with id "foo"
   // could land under knowledge/patterns/foo.md AND

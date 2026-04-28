@@ -613,7 +613,7 @@
       "type": "object",
       "required": ["plans_root", "plan_states", "dev_working_dir", "templates", "agent_bundle_dir", "wrappers"],
       "additionalProperties": false,
-      "description": "Working paths inside the target project. The agent reads and writes only inside these. It never writes under daily/ or knowledge/.",
+      "description": "Working paths inside the target project. The agent reads and writes only inside these. None of these paths overlap with the project's daily/ folder (owned by the user's daily-log system) or with <paths.wiki>/knowledge/ (the canonical knowledge store from `knowledge_store`, which is written through the atomic 4-step contract in scripts/lib/knowledge/write.mjs, not through these paths). In other words: scripts/skills/wrappers live here; canonical knowledge entries live under <paths.wiki>/knowledge/.",
       "properties": {
         "agent_bundle_dir": {
           "type": "string",
@@ -677,7 +677,7 @@
         },
         "dev_working_dir": {
           "type": "string",
-          "description": "Working directory for generated artefacts. Splits into shared/ (committed), local/ (gitignored), and cache/ (gitignored) subtrees via dev_working_{shared,local,cache}_subdir. Never equal to a daily/ or knowledge/ path.",
+          "description": "Working directory for generated artefacts. Splits into shared/ (committed), local/ (gitignored), and cache/ (gitignored) subtrees via dev_working_{shared,local,cache}_subdir. Must not point at the project's daily/ folder (owned by the user's daily-log system) or at the canonical knowledge store at <paths.wiki>/knowledge/ — those are separate write surfaces with their own contracts.",
           "default": ".development",
           "pattern": "^\\.[^/]*(/[^/]+)*$"
         },

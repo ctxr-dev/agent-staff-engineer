@@ -25,7 +25,7 @@
 // inject `runSkillLlmWiki` and `runIndexRebuild` to drive failure paths
 // without needing the real CLI installed.
 
-import { existsSync, mkdirSync, unlinkSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { atomicWriteTextSync } from "../fsx.mjs";
@@ -95,6 +95,21 @@ export function writeEntry(args, _deps = {}) {
     );
   }
 
+  // Snapshot the prior file contents before the atomic write so a
+  // rollback on a same-path UPDATE can restore the previous version.
+  // Without this, a step-2/3 failure on an update would delete the
+  // user's existing entry — silent data loss. For brand-new writes
+  // (file does not exist yet), `priorContent` stays null and rollback
+  // falls back to deleting the leaf.
+  let priorContent = null;
+  if (existsSync(path)) {
+    try {
+      priorContent = readFileSync(path, "utf8");
+    } catch (err) {
+      return fail(1, `step 1 (snapshot prior content for rollback): ${err?.message ?? String(err)}`);
+    }
+  }
+
   // Step 1 — write markdown atomically (write-to-temp + rename). A
   // crash/kill mid-write must NEVER leave a truncated leaf in the wiki
   // tree; if it did, the next skill-llm-wiki validate would either
@@ -111,7 +126,7 @@ export function writeEntry(args, _deps = {}) {
   // Step 2a — local frontmatter schema check.
   const local = validateFn(data, path);
   if (!local.ok) {
-    rollback(path);
+    rollback(path, priorContent);
     return fail(2, `step 2 (local frontmatter validation): ${local.errors.join("; ")}`);
   }
 
@@ -120,7 +135,7 @@ export function writeEntry(args, _deps = {}) {
   // caught locally, depth-role rules, and slug uniqueness.
   const wikiResult = runWikiValidate(wikiRoot);
   if (!wikiResult.ok) {
-    rollback(path);
+    rollback(path, priorContent);
     return fail(2, `step 2 (skill-llm-wiki validate): ${wikiResult.error}`);
   }
 
@@ -140,7 +155,7 @@ export function writeEntry(args, _deps = {}) {
     // tree, regardless of which form failed in the original rebuild.
     // If the reconcile rebuild also fails, the wiki really is
     // inconsistent; surface both errors so ops sees the full picture.
-    rollback(path);
+    rollback(path, priorContent);
     const reconcile = runRebuild(wikiRoot, dir, { fullTree: true });
     if (!reconcile.ok) {
       return fail(
@@ -181,11 +196,30 @@ function fail(step, error) {
   return { ok: false, step, error };
 }
 
-function rollback(path) {
+function rollback(path, priorContent) {
+  // Two cases:
+  //   priorContent === null  — this was a brand-new write (no file at
+  //                            `path` before step 1). Delete the leaf
+  //                            so the tree returns to its pre-write
+  //                            state.
+  //   priorContent  is a string — this was an UPDATE. The atomic
+  //                            rename in step 1 has already replaced
+  //                            the previous version on disk. Restore
+  //                            the snapshot via atomicWriteTextSync
+  //                            so a step-2/3 failure does not turn
+  //                            into silent data loss.
+  // Both branches are best-effort: if the rollback itself fails we
+  // do not throw (the caller is already returning a fail() with the
+  // step-2/3 error; surfacing a second one here would obscure it).
   try {
-    if (existsSync(path)) unlinkSync(path);
+    if (priorContent == null) {
+      if (existsSync(path)) unlinkSync(path);
+    } else {
+      atomicWriteTextSync(path, priorContent);
+    }
   } catch {
-    // best-effort; if the file is already gone we're done.
+    // best-effort; the next session-start incremental reindex will
+    // notice the mismatch on the next run.
   }
 }
 
