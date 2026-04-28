@@ -53,17 +53,23 @@ export const DEFAULT_RATES = {
  * @returns {number}
  */
 export function computeCostUsd(tokens, model, rates = DEFAULT_RATES) {
-  // Resolve the rate: model-specific entry first, fall back to the
-  // table's `default`, and FINALLY fall back to DEFAULT_RATES.default
-  // when the caller passed an override map without a `default` entry.
-  // The previous code dereferenced an undefined `rate` if the override
-  // omitted both the model AND `default`, throwing a generic "Cannot
-  // read properties of undefined" instead of producing a sensible
-  // result. Falling through to DEFAULT_RATES.default keeps cost
-  // reporting non-zero in that pathological case (callers can still
-  // pass a complete override when they need exact rates).
+  // Resolve the rate by walking a four-step fallback chain:
+  //   1. caller's override at rates[model]      (most specific)
+  //   2. DEFAULT_RATES[model]                   (known model, just not overridden)
+  //   3. caller's rates.default                 (caller's chosen default)
+  //   4. DEFAULT_RATES.default                  (last-resort sane number)
+  // The DEFAULT_RATES[model] step matters: a caller that overrides
+  // pricing for one model should NOT cause every OTHER known model to
+  // fall to the caller's default rate. Without this step, a record
+  // for claude-opus-4-7 priced through an override map that defines
+  // only "some-other-model" + "default" would silently use the
+  // (probably-wrong) default-tier price instead of the documented
+  // opus rate. The DEFAULT_RATES.default tail keeps cost non-zero
+  // even when the override omits both the model AND `default`, so
+  // computeCostUsd never throws on a partial map.
   const rate =
     (model && rates && rates[model]) ||
+    (model && DEFAULT_RATES[model]) ||
     (rates && rates.default) ||
     DEFAULT_RATES.default;
   const cost =

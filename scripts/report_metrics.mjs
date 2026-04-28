@@ -96,11 +96,15 @@ async function main() {
   if (flags["token-ceiling"] != null) {
     const raw = flags["token-ceiling"];
     const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0) {
-      process.stderr.write(`error: --token-ceiling must be a non-negative number; got ${JSON.stringify(raw)}\n`);
+    // --token-ceiling is documented as an INTEGER count; silently
+    // truncating a fractional input (e.g. 5000.9 -> 5000) hides typos
+    // and makes the effective threshold non-obvious in the rendered
+    // report. Reject explicitly so the user fixes the command line.
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+      process.stderr.write(`error: --token-ceiling must be a non-negative integer; got ${JSON.stringify(raw)}\n`);
       process.exit(2);
     }
-    thresholds.per_skill_token_ceiling = Math.trunc(n);
+    thresholds.per_skill_token_ceiling = n;
   }
 
   const rollup = aggregate(records, {

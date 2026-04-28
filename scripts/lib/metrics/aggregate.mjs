@@ -70,6 +70,16 @@ export function isoWeekDesignation(monday) {
  * objects. Malformed lines are skipped with no throw — the recorder is
  * the contract gate; the aggregator stays resilient.
  *
+ * Schema enforcement: schemas/metrics-record.schema.json sets
+ * additionalProperties:false at every layer, but THIS function does
+ * not run ajv validation against parsed lines. That is deliberate:
+ * a bad line (extra key, fractional token, negative cost) is degraded
+ * gracefully by the downstream `intNum` / `num` clamps and the
+ * `isPlainRecord` shape check, which keeps a single corrupted line
+ * from blowing up the whole weekly rollup. Third-party consumers that
+ * want strict additionalProperties enforcement should run their own
+ * ajv pass on the raw JSONL; the schema file is the contract for them.
+ *
  * @param {string} metricsDir
  * @param {Date} start
  * @param {Date} end
@@ -176,10 +186,10 @@ export function aggregate(records, opts) {
     const acc = skillStats.get(skill) ?? newSkillAcc();
     if (countsAsInvocation) acc.invocations += 1;
     acc.cost_usd += num(r.cost_usd);
-    acc.tokens_input += num(r.tokens?.input);
-    acc.tokens_output += num(r.tokens?.output);
-    acc.tokens_cache_read += num(r.tokens?.cache_read);
-    acc.tokens_cache_write += num(r.tokens?.cache_write);
+    acc.tokens_input += intNum(r.tokens?.input);
+    acc.tokens_output += intNum(r.tokens?.output);
+    acc.tokens_cache_read += intNum(r.tokens?.cache_read);
+    acc.tokens_cache_write += intNum(r.tokens?.cache_write);
     skillStats.set(skill, acc);
 
     // Cost AND tokens include in-window sub-invocations (folded into
@@ -190,10 +200,10 @@ export function aggregate(records, opts) {
     // were already filtered out above so they never reach this branch.
     if (countsAsInvocation) totals.invocations += 1;
     totals.cost_usd += num(r.cost_usd);
-    totals.tokens.input += num(r.tokens?.input);
-    totals.tokens.output += num(r.tokens?.output);
-    totals.tokens.cache_read += num(r.tokens?.cache_read);
-    totals.tokens.cache_write += num(r.tokens?.cache_write);
+    totals.tokens.input += intNum(r.tokens?.input);
+    totals.tokens.output += intNum(r.tokens?.output);
+    totals.tokens.cache_read += intNum(r.tokens?.cache_read);
+    totals.tokens.cache_write += intNum(r.tokens?.cache_write);
   }
 
   const perSkill = [];
@@ -361,6 +371,18 @@ function num(v) {
   const n = Number(v ?? 0);
   if (!Number.isFinite(n)) return 0;
   return n < 0 ? 0 : n;
+}
+
+function intNum(v) {
+  // Token-field variant of num(): also truncates to integer. The
+  // weekly rollup schema requires every tokens.* and per_skill.*.tokens.*
+  // field to be an integer (minimum 0). buildRecord coerces token
+  // inputs through Math.trunc(), but a hand-edited JSONL line could
+  // still land a fractional value; truncating here keeps the rollup
+  // schema-valid without forcing readRecordsInWindow to reject the
+  // whole record. Cost stays float (num()) since cost_usd is allowed
+  // to carry decimal precision.
+  return Math.trunc(num(v));
 }
 
 function computeCacheHitRate(input, cacheRead) {

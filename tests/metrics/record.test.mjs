@@ -141,14 +141,35 @@ test("writeRecord: rejects records whose tokens shape is malformed", () => {
   }
 });
 
-test("computeCostUsd: rates override missing the `default` entry falls back to DEFAULT_RATES.default", () => {
-  // A caller passing a partial override map without a `default` entry
-  // (and an unknown model) previously threw "Cannot read properties of
-  // undefined". Now the code falls through to DEFAULT_RATES.default so
-  // cost reporting stays non-zero.
+test("computeCostUsd: known-model fallback uses DEFAULT_RATES[model] before caller's default", () => {
+  // A caller's partial override map MUST NOT downgrade pricing for a
+  // KNOWN model that simply isn't in the override. The fallback chain:
+  // (1) rates[model] (2) DEFAULT_RATES[model] (3) rates.default
+  // (4) DEFAULT_RATES.default. Step 2 catches this case: the override
+  // applies where the caller asked, but every other DOCUMENTED model
+  // continues to price through DEFAULT_RATES.
+  const tokens = { input: 1_000_000, output: 0, cache_read: 0, cache_write: 0 };
+  const partial = {
+    "some-other-model": { input: 999, output: 999, cache_read: 999, cache_write: 999 },
+    default: { input: 999, output: 999, cache_read: 999, cache_write: 999 },
+  };
+  const cost = computeCostUsd(tokens, "claude-opus-4-7", partial);
+  assert.equal(
+    cost,
+    DEFAULT_RATES["claude-opus-4-7"].input,
+    "known model price must come from DEFAULT_RATES, not the caller's default",
+  );
+});
+
+test("computeCostUsd: truly-unknown model with empty override falls back to DEFAULT_RATES.default", () => {
+  // Last-resort tail of the fallback chain. A caller passing a partial
+  // override map with NEITHER the model NOR a `default` entry, AND a
+  // model name that is unknown to DEFAULT_RATES, lands on
+  // DEFAULT_RATES.default. The previous code threw "Cannot read
+  // properties of undefined" on this path.
   const tokens = { input: 1_000_000, output: 0, cache_read: 0, cache_write: 0 };
   const partial = { "some-other-model": { input: 1, output: 1, cache_read: 1, cache_write: 1 } };
-  const cost = computeCostUsd(tokens, "claude-opus-4-7", partial);
+  const cost = computeCostUsd(tokens, "totally-unknown-model", partial);
   assert.equal(cost, DEFAULT_RATES.default.input);
 });
 

@@ -28,7 +28,8 @@
     "skill": {
       "type": "string",
       "minLength": 1,
-      "description": "Skill name (e.g. dev-loop, pr-iteration, incident-intake)."
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "description": "Skill name (e.g. dev-loop, pr-iteration, incident-intake). Lowercase alphanumeric + underscore + dash only; the writer (scripts/lib/metrics/record.mjs::writeRecord) enforces the same pattern at write time. The pattern is also a path-traversal guard since the per-day JSONL filename is derived from the started_at date, not the skill, but the skill name still appears in error messages and aggregator output where we want a stable shape."
     },
     "started_at": {
       "type": "string",
