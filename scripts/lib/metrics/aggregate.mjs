@@ -126,12 +126,13 @@ export function aggregate(records, opts) {
   // inside the aggregation window are folded into the root parent's
   // totals (parent_trace_id != null contributes cost/tokens to the
   // parent's row, not its own). Sub-invocations whose parent record is
-  // NOT present in this batch ("orphan subs") cannot be folded; we land
-  // them under the sub's own skill AND count them as invocations so the
-  // per-skill avg_cost / avg_tokens math stays meaningful (the
-  // alternative — invocations=0 with non-zero totals — mis-reports a
-  // total as an average). See the isOrphanSub branch below; the
-  // top-level totals reflect this same accounting.
+  // NOT present in this batch ("orphan subs") are dropped from the
+  // rollup entirely — they neither surface as their own per_skill row
+  // nor fold into a phantom parent. Promoting orphans to top-level
+  // rows would make per_skill invocation counts unstable at week
+  // boundaries (a sub run on Sunday whose parent ran on Monday would
+  // flip between "folded" and "phantom" depending on the aggregation
+  // window). When cross-week accuracy matters, widen the window.
   const recordsByTraceId = new Map();
   for (const r of records) {
     if (r && typeof r.trace_id === "string") {
