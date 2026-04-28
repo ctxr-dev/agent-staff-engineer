@@ -47,16 +47,21 @@ async function main() {
   const metricsDir = flags["metrics-dir"]
     ? resolve(cwd, String(flags["metrics-dir"]))
     : resolve(cwd, ".claude", "state", "metrics");
-  // Default out-dir is intentionally OUTSIDE <paths.wiki>: the wiki
-  // tree is governed by skill-llm-wiki and demands a nested-scalable
-  // layout (rules/llm-wiki.md). Weekly rollups are flat per-week
-  // artefacts that don't fit that layout. Land them under
-  // .development/local/ (gitignored by the installer) instead, so
-  // a project can choose to commit a curated subset by hand if they
-  // want it in the wiki — the script never writes there directly.
+  // Default out-dir lives under .claude/state/, which is OUTSIDE the
+  // wiki-governed .development/** tree entirely (the wiki roots
+  // include .development/local/ and .development/shared/, both of
+  // which require the skill-llm-wiki nested-scalable layout per
+  // rules/llm-wiki.md). Weekly rollups are flat per-week artefacts
+  // that do not fit that layout, so writing them anywhere under
+  // .development/** would either bypass wiki invariants or trip
+  // them. .claude/state/ is the staging area for derivative state
+  // (the daily JSONL records already live alongside, in
+  // .claude/state/metrics/). A project that wants to publish a
+  // curated rollup to the team wiki can copy it from here and run
+  // it through the wiki skill manually.
   const outDir = flags["out-dir"]
     ? resolve(cwd, String(flags["out-dir"]))
-    : resolve(cwd, ".development", "local", "metrics");
+    : resolve(cwd, ".claude", "state", "metrics-weekly");
 
   const referenceDate = flags.week
     ? mondayFromIsoWeek(String(flags.week))

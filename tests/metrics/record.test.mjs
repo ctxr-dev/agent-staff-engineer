@@ -68,6 +68,19 @@ test("utcDateFromIso: returns the YYYY-MM-DD prefix", () => {
   assert.throws(() => utcDateFromIso(null));
 });
 
+test("buildRecord: rejects non-object inputs with a stable error", () => {
+  // Without the explicit object guard at the top of buildRecord, these
+  // inputs threw a generic `Cannot read properties of null/undefined`
+  // TypeError from the input[k] access in the required-field loop. The
+  // guard surfaces a stable `metrics.buildRecord:` message instead so
+  // callers (and human ops) get one diagnostic shape they can match on.
+  assert.throws(() => buildRecord(null), /metrics\.buildRecord: input must be a plain object/);
+  assert.throws(() => buildRecord(undefined), /metrics\.buildRecord: input must be a plain object/);
+  assert.throws(() => buildRecord(42), /metrics\.buildRecord: input must be a plain object/);
+  assert.throws(() => buildRecord("string"), /metrics\.buildRecord: input must be a plain object/);
+  assert.throws(() => buildRecord([]), /metrics\.buildRecord: input must be a plain object/);
+});
+
 test("buildRecord: required fields enforced", () => {
   assert.throws(() => buildRecord({}), /skill is required/);
   assert.throws(

@@ -98,6 +98,15 @@ export function newTraceId() {
  * @returns {object}
  */
 export function buildRecord(input) {
+  // Explicit object guard so a caller passing null / undefined / a
+  // primitive gets a stable `metrics.buildRecord:` error instead of a
+  // generic `Cannot read properties of null` TypeError thrown by the
+  // `input[k]` access in the required-field loop below.
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error(
+      `metrics.buildRecord: input must be a plain object; got ${input === null ? "null" : Array.isArray(input) ? "array" : typeof input}`,
+    );
+  }
   const required = ["skill", "started_at", "ended_at", "tokens"];
   for (const k of required) {
     if (input[k] == null) throw new Error(`metrics.buildRecord: ${k} is required`);

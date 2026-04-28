@@ -127,7 +127,7 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 
 - [scripts/lib/metrics/record.mjs](scripts/lib/metrics/record.mjs): per-invocation recorder. Builds + writes one JSONL line per skill invocation under `.claude/state/metrics/<yyyy>-<mm>-<dd>.jsonl`. Cost computed from token counts + a per-model rate table.
 - [scripts/lib/metrics/aggregate.mjs](scripts/lib/metrics/aggregate.mjs): daily JSONL -> ISO-week rollup. Sub-invocations fold into the parent's skill row; thresholds drive red-flag annotations; output is deterministic across re-runs.
-- [scripts/report_metrics.mjs](scripts/report_metrics.mjs): CLI entrypoint (`node scripts/report_metrics.mjs --weekly`). Writes JSON + markdown to `.development/local/metrics/<yyyy>-Www.{json,md}` (local because flat per-week leaves don't fit the wiki's nested-scalable layout; promoting curated rollups to `.development/shared/` is a project's choice). Echoes the markdown to stdout.
+- [scripts/report_metrics.mjs](scripts/report_metrics.mjs): CLI entrypoint (`node scripts/report_metrics.mjs --weekly`). Writes JSON + markdown to `.claude/state/metrics-weekly/<yyyy>-Www.{json,md}` — under `.claude/state/`, NOT under `.development/**`, since the latter is wiki-governed (rules/llm-wiki.md) and requires a nested-scalable layout that flat per-week leaves do not fit. Echoes the markdown to stdout.
 - [schemas/metrics-record.schema.json](schemas/metrics-record.schema.json): per-invocation record shape (additionalProperties: false; no PII).
 - [schemas/metrics-weekly.schema.json](schemas/metrics-weekly.schema.json): rollup shape.
 

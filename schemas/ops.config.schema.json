@@ -565,7 +565,7 @@
     "observability": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Per-skill token accounting and weekly metrics report. The recorder writes one JSONL line per invocation under .claude/state/metrics/<yyyy>-<mm>-<dd>.jsonl; report_metrics.mjs --weekly rolls daily files into ISO-week summaries under .development/local/metrics/<yyyy>-Www.json (local/, not shared/, because flat per-week leaves do not fit the wiki nested-scalable layout the project's wiki enforces). See scripts/lib/metrics/. Note: this PR ships the recorder, aggregator, and CLI; the per-skill dispatch sites that read `metrics_enabled` and emit records land in a follow-up wiring PR (the bundle has no centralised dispatch layer today).",
+      "description": "Per-skill token accounting and weekly metrics report. The recorder writes one JSONL line per invocation under .claude/state/metrics/<yyyy>-<mm>-<dd>.jsonl; report_metrics.mjs --weekly rolls daily files into ISO-week summaries under .claude/state/metrics-weekly/<yyyy>-Www.json. Both live under .claude/state/, NOT under .development/**: the .development/* roots are wiki-governed (rules/llm-wiki.md) and require a nested-scalable layout that flat per-week leaves do not fit. See scripts/lib/metrics/. Note: this PR ships the recorder, aggregator, and CLI; the per-skill dispatch sites that read `metrics_enabled` and emit records land in a follow-up wiring PR (the bundle has no centralised dispatch layer today).",
       "properties": {
         "metrics_enabled": {
           "type": "boolean",

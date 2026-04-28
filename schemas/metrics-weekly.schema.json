@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ctxr.dev/schemas/metrics-weekly.schema.json",
   "title": "Weekly metrics rollup",
-  "description": "Aggregator output. One object per ISO week. By default scripts/report_metrics.mjs writes under .development/local/metrics/<yyyy>-Www.json (the markdown report at <yyyy>-Www.md is rendered from this). Local rather than shared because flat per-week leaves don't fit the wiki's nested-scalable layout (rules/llm-wiki.md); promoting a curated subset to .development/shared/ for git is a project's choice, not the script's default.",
+  "description": "Aggregator output. One object per ISO week. By default scripts/report_metrics.mjs writes under .claude/state/metrics-weekly/<yyyy>-Www.json (the markdown report at <yyyy>-Www.md is rendered from this). The output lives under .claude/state/, NOT under .development/**, because .development/* roots are wiki-governed (rules/llm-wiki.md) and require a nested-scalable layout that flat per-week leaves do not fit. A project that wants the rollup published in its team wiki can copy it from here and route the publish through the wiki skill manually.",
   "type": "object",
   "required": [
     "iso_week",

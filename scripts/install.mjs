@@ -917,11 +917,15 @@ if (opsConfig.paths.gitignore_dev_working_dir !== false) {
     // (input/output/cache_read/cache_write), cost_usd, subagent counts,
     // mcp_servers_used (server names only), and the exit status.
     // No PII; no payloads; no diffs. They are local artefacts (not code),
-    // so they stay out of git. Aggregator output (the weekly rollup) also
-    // lands under .development/local/ by default — flat per-week leaves
-    // don't fit the wiki's nested-scalable layout, so the script writes
-    // local; promoting a curated subset into .development/shared/ for
-    // git is a project's choice, not the script's default.
+    // so they stay out of git. Weekly rollup output (`scripts/report_metrics.mjs`)
+    // lands under `.claude/state/metrics-weekly/` by default, NOT under
+    // `.development/**`: the .development/* roots are wiki-governed
+    // (rules/llm-wiki.md) and demand a nested-scalable layout, while
+    // weekly rollups are flat `<yyyy>-Www.json` per-week leaves. Keeping
+    // both daily and weekly metrics state under .claude/state/ keeps the
+    // wiki layout invariant intact; a project that wants a curated
+    // rollup published to its team wiki can copy from here and run it
+    // through the wiki skill manually.
     ".claude/state/metrics/",
   ]);
 }
