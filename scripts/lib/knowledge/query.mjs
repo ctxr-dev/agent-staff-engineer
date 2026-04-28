@@ -142,6 +142,16 @@ export function enumerateEntries(wikiRoot, opts = {}) {
     out.push({ id: data.id, path: leaf.path, data, body });
   }
   out.sort((a, b) => a.id.localeCompare(b.id));
+  // Deep-freeze the per-entry shape AND the wrapping array before
+  // caching so a caller that mutates the returned reference cannot
+  // corrupt subsequent calls in the same process. enumerateEntries
+  // is a public API; without freezing, an accidental
+  // `entries[0].data.parents.push(...)` would silently turn the
+  // cache into shared mutable state across every consumer.
+  if (!opts.noCache) {
+    for (const entry of out) deepFreezeEntry(entry);
+    Object.freeze(out);
+  }
   if (!opts.noCache) {
     _treeCache.set(cacheKey, { fingerprint, entries: out });
   }
@@ -278,6 +288,29 @@ function arr(v) {
   if (v == null) return [];
   if (Array.isArray(v)) return v;
   return [v];
+}
+
+// Deep-freeze a cached entry shape so callers cannot mutate the
+// shared cache state. Walks the entry's top-level fields and any
+// nested arrays/objects; primitives are already immutable. The
+// freeze is permanent for the lifetime of the cache slot — that is
+// fine because the cache key is invalidated by the tree fingerprint
+// the next time anything in the wiki changes, at which point a
+// fresh, mutable set of entries is computed and re-frozen.
+function deepFreezeEntry(entry) {
+  if (entry == null || typeof entry !== "object") return;
+  if (Object.isFrozen(entry)) return;
+  // data: own fields plus nested arrays (parents, covers, related,
+  // entities, shared_covers).
+  if (entry.data && typeof entry.data === "object" && !Object.isFrozen(entry.data)) {
+    for (const k of Object.keys(entry.data)) {
+      const v = entry.data[k];
+      if (Array.isArray(v) && !Object.isFrozen(v)) Object.freeze(v);
+      else if (v && typeof v === "object" && !Object.isFrozen(v)) Object.freeze(v);
+    }
+    Object.freeze(entry.data);
+  }
+  Object.freeze(entry);
 }
 
 // Re-export so callers can write `import { dirname } from "./query.mjs"`

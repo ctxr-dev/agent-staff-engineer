@@ -208,12 +208,20 @@ export function writeEntry(args, _deps = {}) {
 
   // Step 4 — SQLite frontier reindex. STUB until the follow-up PR adds
   // the actual sqlite writer. We write a marker so the next session-
-  // start `--incremental` reindex can fast-forward.
+  // start `--incremental` reindex can fast-forward. Best-effort: a
+  // failure here is a SOFT warning (the wiki itself is already
+  // consistent), so the call goes through try/catch — the injected
+  // dependency or a future implementation throwing synchronously
+  // must NOT break the soft-warning contract by propagating up to
+  // the caller as a hard failure.
   if (isNonEmptyString(args.stateDir)) {
-    const enq = enqueueReindex(args.stateDir, path);
+    let enq;
+    try {
+      enq = enqueueReindex(args.stateDir, path);
+    } catch (err) {
+      enq = { ok: false, error: `marker write threw: ${err?.message ?? String(err)}` };
+    }
     if (!enq.ok) {
-      // Soft failure: the wiki is consistent. We log the marker and let
-      // the next session recover.
       warnings.push(`step 4 (frontier reindex): ${enq.error} (marker not written; the next session-start reindex must walk the wiki to recover)`);
     }
   }
