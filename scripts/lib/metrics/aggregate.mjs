@@ -23,7 +23,10 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
  * Compute the start (Mon 00:00:00 UTC) and end (next Mon 00:00:00 UTC)
- * of the ISO week containing `date`. Returns ISO 8601 strings.
+ * of the ISO week containing `date`. `start` and `end` are returned as
+ * Date objects (UTC midnight); `isoWeek` is the ISO 8601 week
+ * designation (e.g. "2026-W17"). Callers that need a string boundary
+ * should call `.toISOString()` on the Date themselves.
  *
  * @param {Date} date
  * @returns {{start: Date, end: Date, isoWeek: string}}
@@ -119,12 +122,16 @@ export function aggregate(records, opts) {
   const thresholds = opts.thresholds ?? {};
   const previousAvgCostBySkill = opts.previousAvgCostBySkill ?? new Map();
 
-  // Per-skill accumulators. Sub-invocations are folded into their
-  // parent's totals (parent_trace_id != null counts toward the parent's
-  // skill, not its own row), since the issue's per-skill table is
-  // top-level invocations only. We attribute under parent's skill if
-  // we can find the parent record; otherwise we skip the sub-record so
-  // it never shows up as a phantom skill row.
+  // Per-skill accumulators. Sub-invocations whose parent chain RESOLVES
+  // inside the aggregation window are folded into the root parent's
+  // totals (parent_trace_id != null contributes cost/tokens to the
+  // parent's row, not its own). Sub-invocations whose parent record is
+  // NOT present in this batch ("orphan subs") cannot be folded; we land
+  // them under the sub's own skill AND count them as invocations so the
+  // per-skill avg_cost / avg_tokens math stays meaningful (the
+  // alternative — invocations=0 with non-zero totals — mis-reports a
+  // total as an average). See the isOrphanSub branch below; the
+  // top-level totals reflect this same accounting.
   const recordsByTraceId = new Map();
   for (const r of records) {
     if (r && typeof r.trace_id === "string") {

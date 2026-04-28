@@ -106,6 +106,37 @@ test("buildRecord: rejects negative or non-finite token counts", () => {
   assert.throws(() => buildRecord({ ...validInput(), tokens: { input: NaN, output: 0, cache_read: 0, cache_write: 0 } }));
 });
 
+test("writeRecord: nested whitelist drops unknown keys mutated onto tokens / subagents", () => {
+  // The schema sets additionalProperties: false at top level AND on the
+  // nested `tokens` and `subagents` objects. orderedRecord() now mirrors
+  // that contract on write: a caller that mutates the buildRecord
+  // output to add a non-schema field at any layer gets the unknown
+  // field dropped at JSONL serialisation time, the same way an unknown
+  // top-level key is dropped. Without nested projection the schema
+  // guarantee would only hold on read, after a downstream tool tripped
+  // over the smuggled field.
+  const dir = tmp();
+  try {
+    const r = buildRecord({
+      ...validInput(),
+      subagents: { count: 1, total_tokens: 100 },
+    });
+    // Mutate after buildRecord to mimic a sloppy caller that reaches
+    // into the returned object.
+    r.tokens.thinking = 9999;
+    r.subagents.parent_id = "t-leak";
+    r.unexpected_top = "leak";
+    const file = writeRecord(r, dir);
+    const body = readFileSync(file, "utf8");
+    const parsed = JSON.parse(body.split("\n")[0]);
+    assert.deepEqual(Object.keys(parsed.tokens), ["input", "output", "cache_read", "cache_write"]);
+    assert.deepEqual(Object.keys(parsed.subagents), ["count", "total_tokens"]);
+    assert.equal(parsed.unexpected_top, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeRecord: appends one JSONL line per invocation, file keyed by UTC date", () => {
   const dir = tmp();
   try {

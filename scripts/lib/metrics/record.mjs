@@ -10,12 +10,15 @@
 // validation is the consumer's job (record-time validation would
 // add latency to every skill invocation for marginal value).
 //
-// Top-level keys are rendered through orderedRecord() with an
-// explicit RECORD_KEY_ORDER so two callers passing the same logical
-// record write byte-identical JSONL lines. Nested objects (`tokens`,
-// `subagents`) are constructed inside this module with deterministic
-// key insertion (see normaliseTokens / buildRecord); they are not
-// re-sorted on write because callers cannot reach in to mutate them.
+// orderedRecord() projects every object level through an explicit
+// whitelist: the top-level keys against RECORD_KEY_ORDER, and the
+// nested `tokens` / `subagents` objects against their own per-key
+// allow-lists. Two callers passing the same logical record write
+// byte-identical JSONL lines AND any unknown key the caller has
+// reached in to add (after buildRecord returned the object) is
+// dropped at write time. That keeps the schema's
+// `additionalProperties: false` guarantee load-bearing on write,
+// not just on aggregator-side validation.
 //
 // Cost computation: cost_usd is derived from the four token fields and
 // a model rate table. The table covers the rates documented at the
@@ -180,16 +183,42 @@ const RECORD_KEY_ORDER = [
   "exit",
 ];
 
+// Per-nested-object key whitelists. Both `tokens` and `subagents` set
+// `additionalProperties: false` in their schemas; mirroring those
+// allow-lists here means a caller that mutates the object returned
+// from buildRecord (e.g. to smuggle a `tokens.thinking` count) gets
+// the unknown key dropped at write time, the same way an unknown
+// top-level key gets dropped.
+const TOKENS_KEY_ORDER = ["input", "output", "cache_read", "cache_write"];
+const SUBAGENTS_KEY_ORDER = ["count", "total_tokens"];
+
 function orderedRecord(record) {
-  // Whitelist-only: drop any key the schema doesn't know about. The
-  // record schema sets `additionalProperties: false`, so a record
-  // that smuggled an extra field through writeRecord would be
-  // rejected on read. Enforcing the same contract on write keeps the
-  // privacy guarantee strict and makes the recorder's shape
+  // Whitelist-only at every layer: drop any key the schema doesn't
+  // know about. The record schema sets `additionalProperties: false`
+  // at top-level AND on the nested `tokens` and `subagents` objects;
+  // a record that smuggled an extra field through writeRecord would
+  // be rejected on read. Enforcing the same contract on write keeps
+  // the privacy guarantee strict and makes the recorder's shape
   // predictable for downstream consumers.
   const out = {};
   for (const k of RECORD_KEY_ORDER) {
-    if (k in record && record[k] !== undefined) out[k] = record[k];
+    if (!(k in record) || record[k] === undefined) continue;
+    if (k === "tokens") out[k] = projectKeys(record[k], TOKENS_KEY_ORDER);
+    else if (k === "subagents") out[k] = projectKeys(record[k], SUBAGENTS_KEY_ORDER);
+    else out[k] = record[k];
+  }
+  return out;
+}
+
+function projectKeys(obj, keys) {
+  // Pure projection: take only the keys we know, in canonical order,
+  // dropping unknown keys silently. The caller is responsible for
+  // having validated the values via buildRecord; this helper is the
+  // last-mile shape filter.
+  const out = {};
+  if (!obj || typeof obj !== "object") return out;
+  for (const k of keys) {
+    if (k in obj && obj[k] !== undefined) out[k] = obj[k];
   }
   return out;
 }
