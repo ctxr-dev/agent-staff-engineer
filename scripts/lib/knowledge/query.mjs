@@ -170,13 +170,23 @@ function computeTreeFingerprint(dirMtimeMs, leafFiles) {
   //   * in-place edits (per-leaf mtime + size — see below)
   //
   // Earlier rounds folded just MAX(mtime) + SUM(size) into the
-  // fingerprint. That was vulnerable to a rare collision: a single
-  // leaf edited within the filesystem's mtime resolution that kept
-  // its size unchanged would leave both aggregates stable, and the
-  // cache could serve stale data/body. Switching to a per-leaf hash
-  // makes the fingerprint sensitive to ANY individual leaf
-  // (path, mtimeMs, size) tuple change, eliminating the collision
-  // window without measurably changing CPU cost.
+  // fingerprint. That was vulnerable to a class of collisions where
+  // any leaf edited within the filesystem's mtime resolution that
+  // kept its size unchanged would leave both aggregates stable, and
+  // the cache could serve stale data/body. Switching to a per-leaf
+  // hash makes the fingerprint sensitive to ANY individual leaf
+  // (path, mtimeMs, size) tuple change, REDUCING the window
+  // dramatically.
+  //
+  // It does NOT eliminate it: a leaf edited in-place that keeps both
+  // mtime AND size stable (coarse-mtime filesystems like FAT/HFS+,
+  // tooling that resets mtime via `touch -t`, or content edits that
+  // happen to round-trip the same byte length within a single
+  // filesystem-clock tick) still slips past the fingerprint. A true
+  // content hash would close that gap at the cost of reading every
+  // leaf body on every cache check, which defeats the cache. Callers
+  // that need stronger guarantees can pass `noCache: true` on the
+  // suspect read; the cache is for ergonomics, not correctness.
   let maxMtime = 0;
   let totalSize = 0;
   // Sort by path so the hash is stable across walk ordering.
