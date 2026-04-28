@@ -241,11 +241,20 @@ function findLineAnchored(haystack, needle, fromIndex = 0) {
       pos === 0 ||
       prev === "\n" ||
       (pos === 1 && haystack.charCodeAt(0) === 0xfeff);
+    // Allow trailing horizontal whitespace (spaces / tabs) between the
+    // marker and the EOL. Many editors strip-trailing-whitespace by
+    // default, but some do not — and a single trailing space on the
+    // marker line would otherwise make findRegistryMarkers fail to
+    // detect the existing block, triggering a duplicate-seed.
     const endPos = pos + needle.length;
+    let scan = endPos;
+    while (scan < haystack.length && (haystack[scan] === " " || haystack[scan] === "\t")) {
+      scan++;
+    }
     const endOk =
-      endPos === haystack.length ||
-      haystack[endPos] === "\n" ||
-      haystack[endPos] === "\r";
+      scan === haystack.length ||
+      haystack[scan] === "\n" ||
+      haystack[scan] === "\r";
     if (startOk && endOk) return pos;
     pos = haystack.indexOf(needle, pos + 1);
   }

@@ -53,7 +53,16 @@ export function injectManagedBlock(existing, managed, markers) {
   // didn't actually hold for Windows checkouts. New / empty files
   // default to LF (matches the rest of the bundle).
   const eol = detectEol(existing);
-  const body = ensureTrailingNewline(managed, eol);
+  // Normalise the caller-supplied managed body's INTERNAL newlines to
+  // the file's EOL too, not just the joiners + trailing newline.
+  // Callers commonly build `managed` with bare `\n`s; injecting that
+  // verbatim into a CRLF file produced mixed-EOL output INSIDE the
+  // managed block, which contradicts the byte-for-byte preservation
+  // contract for everything around it. normaliseEol first collapses
+  // any pre-existing CRLF in the input (so we don't end up with
+  // `\r\r\n`) then re-emits the chosen EOL at every line boundary.
+  const normalised = normaliseEol(managed, eol);
+  const body = ensureTrailingNewline(normalised, eol);
   const block = `${markers.begin}${eol}${body}${markers.end}${eol}`;
   if (existing == null || existing === "") {
     const preamble = markers.preamble ? ensureTrailingNewline(markers.preamble, eol) + eol : "";
@@ -199,6 +208,16 @@ function ensureTrailingNewline(s, eol = "\n") {
   // the appended newline matches the file's prevailing flavour.
   if (s.endsWith("\r\n") || s.endsWith("\n")) return s;
   return s + eol;
+}
+
+function normaliseEol(s, eol) {
+  // First collapse any existing CRLF/CR to LF so we don't double-emit
+  // (`\r\n` -> `\n` then -> `eol`). Then re-emit every LF as `eol`.
+  // Idempotent: running this twice with the same eol yields the same
+  // string. Inputs already in the target eol pass through unchanged.
+  if (typeof s !== "string" || s.length === 0) return s;
+  const lf = s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  return eol === "\n" ? lf : lf.replace(/\n/g, eol);
 }
 
 function assertValidMarkers({ begin, end }) {
