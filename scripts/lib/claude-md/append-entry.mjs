@@ -380,8 +380,16 @@ function upsertEntry(body, entry, rendered) {
   const sectionRange = locateSection(body, heading);
   if (!sectionRange) {
     // Section heading is missing (e.g. a custom CLAUDE.md without the
-    // standard layout). Append the heading + entry at the end of the body.
-    const sep = body.endsWith("\n\n") ? "" : body.endsWith("\n") ? "\n" : "\n\n";
+    // standard layout). Append the heading + entry at the end of the
+    // body. EOL-agnostic blank-line probe: a CRLF body ending in
+    // `\r\n\r\n` does NOT satisfy `.endsWith("\n\n")` and the LF-only
+    // checks would have churned an extra blank line into the body
+    // on every Windows-checkout invocation.
+    const sep = /(?:\r?\n){2,}$/.test(body)
+      ? ""
+      : /(?:\r?\n)$/.test(body)
+        ? "\n"
+        : "\n\n";
     return {
       body: body + sep + heading + "\n\n" + rendered + "\n",
       action: "added",
