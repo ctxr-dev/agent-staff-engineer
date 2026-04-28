@@ -197,6 +197,36 @@ export function writeRecord(record, stateDir) {
       throw new Error(`metrics.writeRecord: record.tokens.${k} must be a non-negative finite number; got ${JSON.stringify(v)}`);
     }
   }
+  // Validate the remaining required top-level fields. A caller that
+  // bypassed buildRecord (or mutated its output) could otherwise land
+  // a JSONL line with a missing trace_id, an unparseable started_at,
+  // or a negative cost, and the read schema would only reject it
+  // later (when it is already on disk and may have skewed the rollup
+  // for one or more weeks). Fail at write time so the bad record
+  // never lands on disk.
+  if (typeof record.trace_id !== "string" || !/^t-[0-9a-f]{16}$/.test(record.trace_id)) {
+    throw new Error(`metrics.writeRecord: record.trace_id must match /^t-[0-9a-f]{16}$/; got ${JSON.stringify(record.trace_id)}`);
+  }
+  if (record.parent_trace_id != null && typeof record.parent_trace_id !== "string") {
+    throw new Error(`metrics.writeRecord: record.parent_trace_id must be a string or null; got ${JSON.stringify(record.parent_trace_id)}`);
+  }
+  if (typeof record.started_at !== "string") {
+    throw new Error(`metrics.writeRecord: record.started_at must be an ISO 8601 string; got ${JSON.stringify(record.started_at)}`);
+  }
+  if (typeof record.ended_at !== "string") {
+    throw new Error(`metrics.writeRecord: record.ended_at must be an ISO 8601 string; got ${JSON.stringify(record.ended_at)}`);
+  }
+  // utcDateFromIso below already enforces ISO 8601 shape on started_at;
+  // re-run it now on ended_at so a malformed value surfaces here, not
+  // on the next aggregator pass.
+  utcDateFromIso(record.ended_at);
+  if (typeof record.cost_usd !== "number" || !Number.isFinite(record.cost_usd) || record.cost_usd < 0) {
+    throw new Error(`metrics.writeRecord: record.cost_usd must be a non-negative finite number; got ${JSON.stringify(record.cost_usd)}`);
+  }
+  const validExits = new Set(["success", "halt", "fault", "error", "cancelled"]);
+  if (!validExits.has(record.exit)) {
+    throw new Error(`metrics.writeRecord: record.exit must be one of ${[...validExits].join(", ")}; got ${JSON.stringify(record.exit)}`);
+  }
   const date = utcDateFromIso(record.started_at);
   const dir = resolve(stateDir, "metrics");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

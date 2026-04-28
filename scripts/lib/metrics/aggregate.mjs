@@ -342,6 +342,15 @@ function resolveRootSkill(record, recordsByTraceId) {
   // Return null so the caller drops the record the same way it drops
   // a parent-not-in-window orphan.
   if (cur == null || cur.parent_trace_id != null) return null;
+  // Also reject roots that fail isPlainRecord. The main loop skips
+  // malformed records via isPlainRecord, so the parent's own
+  // invocations counter never increments — but if a sub-invocation
+  // resolves to that malformed parent's skill, it would fold cost
+  // and tokens into a per_skill row whose invocations stayed at 0.
+  // That over-counts the rollup and produces an "invocations=0,
+  // cost>0" combination the schema technically allows but no
+  // downstream consumer wants to see. Drop the chain instead.
+  if (!isPlainRecord(cur)) return null;
   return typeof cur.skill === "string" ? cur.skill : null;
 }
 
