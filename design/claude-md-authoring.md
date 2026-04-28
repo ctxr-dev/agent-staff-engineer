@@ -68,16 +68,16 @@ Four required input fields on the helper API: `section`, `title`, `firstSeen` (s
 
 ## Seeding
 
-The seeder lives at [`scripts/lib/claude-md/seed.mjs`](../scripts/lib/claude-md/seed.mjs) and is invokable from any tool that knows the project's CLAUDE.md path:
+The seeder lives at [`scripts/lib/claude-md/seed.mjs`](../scripts/lib/claude-md/seed.mjs). On a fresh install (or `install.mjs --update`), the installer's CLAUDE.md pass calls `seedRegistryInContent()` after `injectManagedBlock`, so a project's first install produces a CLAUDE.md that already carries the compound-learning registry stub.
+
+The seeder is idempotent: re-running the installer is a no-op for the registry section. Any hand-edited entries (or runtime appends from `append-entry.mjs`) are preserved byte-for-byte across re-installs because the stub is only written when the registry marker pair is absent.
+
+For ad-hoc use (e.g. seeding into a CLAUDE.md outside the install flow), the helper is invokable from any tool:
 
 ```js
 import { seedRegistryAtPath } from "./scripts/lib/claude-md/seed.mjs";
 await seedRegistryAtPath("/abs/path/to/CLAUDE.md");
 ```
-
-It emits a registry stub (empty "Project context" placeholder plus the three "Patterns that worked / failed / Codebase quirks" headings) and is idempotent: existing CLAUDE.md content is preserved, the registry block is owned by a marker pair so re-runs never overwrite hand-edited entries.
-
-Wiring `scripts/install.mjs` to call `seedRegistryAtPath()` at the end of its CLAUDE.md pass is a follow-up task; until that lands, run the helper directly the first time you need a stub.
 
 ## How entries get added
 

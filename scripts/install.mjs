@@ -54,6 +54,7 @@ import { mergeWrapper } from "./lib/wrapper.mjs";
 import { ensureGitignore } from "./lib/gitignore.mjs";
 import { CODE_REVIEW_SKILL, CODE_REVIEW_INTERNAL } from "./lib/constants.mjs";
 import { injectManagedBlock, removeManagedBlock } from "./lib/inject.mjs";
+import { seedRegistryInContent } from "./lib/claude-md/seed.mjs";
 import { getAgentPrefix, prefixed } from "./lib/agentName.mjs";
 import { portableRef, resolvePortable } from "./lib/bundleRef.mjs";
 import { normaliseMemberPath } from "./lib/trackers/dispatcher.mjs";
@@ -809,6 +810,12 @@ for (const file of ruleFiles) {
       begin: CLAUDE_MD_BEGIN_MARKER,
       end: CLAUDE_MD_END_MARKER,
     });
+    // Compound-learning registry seed (per design/claude-md-authoring.md).
+    // Idempotent: seedRegistryInContent only writes the stub if the
+    // registry markers are absent. Hand-edited registries are
+    // preserved byte-for-byte across re-installs.
+    const seeded = seedRegistryInContent(content);
+    if (seeded.changed) content = seeded.content;
   } catch (err) {
     process.stderr.write(
       `install: CLAUDE.md injection refused (${err.message}). Skipping.\n` +
@@ -1262,12 +1269,22 @@ async function runUninstall({ dryRun = false } = {}) {
     }
 
     // The project-level CLAUDE.md is a managed-block injection, not a wrapper
-    // file. Strip the block, preserve user content outside it. If nothing is
-    // left (i.e. we created the file), delete it. Otherwise keep the file.
+    // file. Strip the managed block AND the compound-learning registry
+    // block (also installer-owned via scripts/lib/claude-md/seed.mjs);
+    // preserve user content outside both. If nothing of the user's
+    // remains, delete the file (we created it from scratch); otherwise
+    // keep it with their content.
     if (entry.kind === "project-claude-md") {
-      const stripped = removeManagedBlock(content, {
+      const { REGISTRY_BEGIN_MARKER, REGISTRY_END_MARKER } = await import(
+        "./lib/claude-md/seed.mjs"
+      );
+      const afterManaged = removeManagedBlock(content, {
         begin: CLAUDE_MD_BEGIN_MARKER,
         end: CLAUDE_MD_END_MARKER,
+      });
+      const stripped = removeManagedBlock(afterManaged, {
+        begin: REGISTRY_BEGIN_MARKER,
+        end: REGISTRY_END_MARKER,
       });
       if (stripped === content) {
         process.stdout.write(
@@ -1278,10 +1295,10 @@ async function runUninstall({ dryRun = false } = {}) {
       const remaining = stripped.replace(/\s+/g, "");
       if (remaining.length === 0) {
         await rm(absPath, { force: true });
-        process.stdout.write(`removed: ${relative(TARGET, absPath)} (no user content outside managed block)\n`);
+        process.stdout.write(`removed: ${relative(TARGET, absPath)} (no user content outside managed blocks)\n`);
       } else {
         await atomicWriteText(absPath, stripped);
-        process.stdout.write(`stripped managed block from: ${relative(TARGET, absPath)} (user content preserved)\n`);
+        process.stdout.write(`stripped managed blocks from: ${relative(TARGET, absPath)} (user content preserved)\n`);
       }
       continue;
     }

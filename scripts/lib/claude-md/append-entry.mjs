@@ -127,12 +127,39 @@ function validateEntry(entry) {
       throw new Error(`append-entry: ${field} is required and must be a non-empty string`);
     }
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.firstSeen)) {
-    throw new Error(`append-entry: firstSeen must be YYYY-MM-DD; got ${JSON.stringify(entry.firstSeen)}`);
+  if (!isValidIsoDate(entry.firstSeen)) {
+    throw new Error(`append-entry: firstSeen must be a valid YYYY-MM-DD date; got ${JSON.stringify(entry.firstSeen)}`);
   }
-  if (entry.nextReview != null && !/^\d{4}-\d{2}-\d{2}$/.test(entry.nextReview)) {
-    throw new Error(`append-entry: nextReview must be YYYY-MM-DD; got ${JSON.stringify(entry.nextReview)}`);
+  if (entry.nextReview != null && !isValidIsoDate(entry.nextReview)) {
+    throw new Error(`append-entry: nextReview must be a valid YYYY-MM-DD date; got ${JSON.stringify(entry.nextReview)}`);
   }
+  // Quirks render only `Last verified: <firstSeen>` and have no Owner
+  // bullet. renderEntry silently drops `nextReview` / `owner` for
+  // section=quirk; reject them at validation time so a caller mistake
+  // (passing those fields to a quirk by accident) surfaces immediately.
+  if (entry.section === "quirk") {
+    if (entry.nextReview != null) {
+      throw new Error("append-entry: nextReview is not valid for section=quirk (quirks render only Last verified)");
+    }
+    if (entry.owner != null) {
+      throw new Error("append-entry: owner is not valid for section=quirk (quirks have no owner field)");
+    }
+  }
+}
+
+/**
+ * Strict YYYY-MM-DD validator: regex shape AND a real Date round-trip
+ * so impossible dates like 2026-02-31 or 2026-13-05 are rejected.
+ * Without the round-trip, defaultNextReview() would happily compute a
+ * misleading "Next review" value for a nonexistent input date.
+ */
+function isValidIsoDate(s) {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split("-").map((p) => Number.parseInt(p, 10));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  // Date(year, month, day) silently rolls over invalid components
+  // (Feb 31 -> Mar 3). Verify the round-trip preserved the input.
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }
 
 function defaultNextReview(firstSeen) {
@@ -396,8 +423,13 @@ if (isDirectRun) {
 }
 
 async function runCli() {
-  const args = parseArgs(process.argv.slice(2));
-  if (!args.path) {
+  // Use the bundle's shared parseArgv helper so this CLI's flag
+  // parsing matches every other entrypoint (scripts/adapt.mjs,
+  // scripts/install.mjs). Three forms supported: --flag,
+  // --flag=value, --flag value.
+  const { parseArgv } = await import("../argv.mjs");
+  const { flags } = parseArgv(process.argv.slice(2));
+  if (!flags.path) {
     process.stderr.write("usage: append-entry.mjs --path <CLAUDE.md> --section worked|failed|quirk --title <t> --first-seen YYYY-MM-DD --remediation <r> [--next-review YYYY-MM-DD] [--linked <ref>] [--owner <name>]\n");
     process.exit(2);
   }
@@ -406,40 +438,18 @@ async function runCli() {
     // Awaiting here ensures errors land in the catch block instead of
     // becoming unhandled promise rejections, and the JSON.stringify
     // below renders the resolved object, not a Promise.
-    const result = await appendEntryAtPath(args.path, {
-      section: args.section,
-      title: args.title,
-      firstSeen: args["first-seen"],
-      remediation: args.remediation,
-      nextReview: args["next-review"],
-      linked: args.linked,
-      owner: args.owner,
+    const result = await appendEntryAtPath(flags.path, {
+      section: flags.section,
+      title: flags.title,
+      firstSeen: flags["first-seen"],
+      remediation: flags.remediation,
+      nextReview: flags["next-review"],
+      linked: flags.linked,
+      owner: flags.owner,
     });
     process.stdout.write(JSON.stringify(result) + "\n");
   } catch (err) {
     process.stderr.write(`append-entry: ${err?.message ?? String(err)}\n`);
     process.exit(1);
   }
-}
-
-function parseArgs(argv) {
-  const out = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (!a.startsWith("--")) continue;
-    const eq = a.indexOf("=");
-    if (eq !== -1) {
-      out[a.slice(2, eq)] = a.slice(eq + 1);
-      continue;
-    }
-    const key = a.slice(2);
-    const next = argv[i + 1];
-    if (next === undefined || next.startsWith("--")) {
-      out[key] = true;
-    } else {
-      out[key] = next;
-      i++;
-    }
-  }
-  return out;
 }

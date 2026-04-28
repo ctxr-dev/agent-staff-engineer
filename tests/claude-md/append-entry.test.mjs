@@ -36,7 +36,33 @@ test("append: validation rejects missing required fields", () => {
     () => appendEntryToContent(seeded, {
       section: "worked", title: "x", firstSeen: "April 28th", remediation: "y",
     }),
-    /firstSeen must be YYYY-MM-DD/,
+    /firstSeen must be a valid YYYY-MM-DD date/,
+  );
+  // Strict isValidIsoDate rejects impossible calendar dates:
+  assert.throws(
+    () => appendEntryToContent(seeded, {
+      section: "worked", title: "x", firstSeen: "2026-02-31", remediation: "y",
+    }),
+    /firstSeen must be a valid YYYY-MM-DD date/,
+  );
+  assert.throws(
+    () => appendEntryToContent(seeded, {
+      section: "worked", title: "x", firstSeen: "2026-13-01", remediation: "y",
+    }),
+    /firstSeen must be a valid YYYY-MM-DD date/,
+  );
+  // Quirks reject section-incompatible fields up front:
+  assert.throws(
+    () => appendEntryToContent(seeded, {
+      section: "quirk", title: "x", firstSeen: "2026-04-28", remediation: "y", nextReview: "2027-01-01",
+    }),
+    /nextReview is not valid for section=quirk/,
+  );
+  assert.throws(
+    () => appendEntryToContent(seeded, {
+      section: "quirk", title: "x", firstSeen: "2026-04-28", remediation: "y", owner: "alice",
+    }),
+    /owner is not valid for section=quirk/,
   );
 });
 
