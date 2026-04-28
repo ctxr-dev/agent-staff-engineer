@@ -75,11 +75,16 @@ export async function readJsonOrNull(p) {
 // collisions when the same process writes the same target twice in quick
 // succession (which Date.now() alone does not).
 function tmpPathFor(abs) {
+  // Capture Date.now() once so the timestamp embedded in the filename
+  // matches the timestamp folded into the random hash. Two separate
+  // calls could land on different milliseconds (rare but possible),
+  // making the suffix slightly harder to reason about for debugging.
+  const now = Date.now();
   const rand = createHash("sha256")
-    .update(`${abs}|${process.pid}|${Date.now()}|${Math.random()}`)
+    .update(`${abs}|${process.pid}|${now}|${Math.random()}`)
     .digest("hex")
     .slice(0, 8);
-  return `${abs}.tmp-${process.pid}-${Date.now()}-${rand}`;
+  return `${abs}.tmp-${process.pid}-${now}-${rand}`;
 }
 
 /** Atomic write: write to a temp file ("<path>.tmp-<pid>-<ms>-<rand8>", produced by tmpPathFor) and

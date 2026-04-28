@@ -100,3 +100,19 @@ test("validateEntry: extra unknown properties rejected", () => {
   assert.equal(r.ok, false);
   assert.ok(r.errors.some((e) => e.toLowerCase().includes("additional")));
 });
+
+test("validateEntry: optional fields with undefined value are accepted (matches on-disk shape)", () => {
+  // serialiseEntry / orderedFrontmatter strip undefined keys before
+  // writing to disk. validateEntry mirrors that contract: a caller
+  // that spreads optionals (e.g. `{...base, entities: maybeArr}` with
+  // maybeArr === undefined) gets the entry validated against what
+  // would actually land in the file, NOT against the JS object.
+  const data = {
+    ...validData(),
+    entities: undefined,
+    related: undefined,
+    shared_covers: undefined,
+  };
+  const r = validateEntry(data, validPath);
+  assert.equal(r.ok, true, `expected valid; got errors: ${r.errors.join(", ")}`);
+});

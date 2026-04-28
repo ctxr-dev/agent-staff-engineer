@@ -43,7 +43,15 @@ function ajvValidator() {
 export function validateEntry(data, entryPath) {
   const errors = [];
   const validate = ajvValidator();
-  const ok = validate(data);
+  // Validate against the SHAPE that will actually be written to disk.
+  // serialiseEntry strips undefined values via orderedFrontmatter, so
+  // a caller that spreads optionals (e.g. `{...base, owner: maybeOwner}`
+  // where maybeOwner === undefined) lands a frontmatter object that
+  // ajv would otherwise flag as schema-violating even though `owner`
+  // never reaches the file. Strip undefined here so validation
+  // matches the on-disk reality.
+  const stripped = stripUndefined(data);
+  const ok = validate(stripped);
   if (!ok) {
     for (const e of validate.errors ?? []) {
       const at = e.instancePath || "/";
@@ -84,6 +92,20 @@ export function validateEntry(data, entryPath) {
     }
   }
   return { ok: errors.length === 0, errors };
+}
+
+// Strip own properties whose value is undefined. Mirrors the
+// serialiseEntry/orderedFrontmatter contract that drops undefined
+// keys before writing to disk; we validate the post-strip shape so
+// validateEntry never rejects a record for a field that would not
+// actually land in the file.
+function stripUndefined(obj) {
+  if (obj == null || typeof obj !== "object" || Array.isArray(obj)) return obj;
+  const out = {};
+  for (const k of Object.keys(obj)) {
+    if (obj[k] !== undefined) out[k] = obj[k];
+  }
+  return out;
 }
 
 // Reset the cached validator (test-only seam; production callers never
