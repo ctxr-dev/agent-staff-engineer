@@ -565,7 +565,7 @@
     "knowledge_store": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Canonical team knowledge store. Tier 1 (canonical): markdown leaves under <paths.wiki>/knowledge/<domain>/<slug>.md, validated by skill-llm-wiki. Tier 2 (frontier; follow-up PR): local SQLite materialised view at .claude/state/knowledge-index.db. The atomic 4-step write contract (write -> validate -> index-rebuild -> reindex) is enforced by scripts/lib/knowledge/write.mjs.",
+      "description": "Canonical team knowledge store. Tier 1 (canonical): markdown leaves under <wikiRoot>/knowledge/<domain>/<slug>.md, where wikiRoot is the configured wiki root passed to scripts/lib/knowledge/write.mjs (typically `wiki.roots.shared`, since the canonical store is team-shared and committed). Validated by skill-llm-wiki. Tier 2 (frontier; follow-up PR): local SQLite materialised view at .claude/state/knowledge-index.db. The atomic 4-step write contract (write -> validate -> index-rebuild -> reindex) is enforced by scripts/lib/knowledge/write.mjs.",
       "properties": {
         "enabled": {
           "type": "boolean",
@@ -575,7 +575,7 @@
         "knowledge_dir": {
           "type": "string",
           "default": "knowledge",
-          "description": "Reserved for a follow-up: today scripts/lib/knowledge/{query,write}.mjs hardcode the literal `knowledge` segment under <paths.wiki>. The field is documented here so consumers can plan around the override, but changing it from the default has no effect until the helpers thread the value through. Until then, leave at the default."
+          "description": "Reserved for a follow-up: today scripts/lib/knowledge/{query,write}.mjs hardcode the literal `knowledge` segment under the wikiRoot they receive as an argument (typically `wiki.roots.shared`). The field is documented here so consumers can plan around the override, but changing it from the default has no effect until the helpers thread the value through. Until then, leave at the default."
         },
         "frontier": {
           "type": "object",
@@ -613,7 +613,7 @@
       "type": "object",
       "required": ["plans_root", "plan_states", "dev_working_dir", "templates", "agent_bundle_dir", "wrappers"],
       "additionalProperties": false,
-      "description": "Working paths inside the target project. The agent reads and writes only inside these. None of these paths overlap with the project's daily/ folder (owned by the user's daily-log system) or with <paths.wiki>/knowledge/ (the canonical knowledge store from `knowledge_store`, which is written through the atomic 4-step contract in scripts/lib/knowledge/write.mjs, not through these paths). In other words: scripts/skills/wrappers live here; canonical knowledge entries live under <paths.wiki>/knowledge/.",
+      "description": "Working paths inside the target project. The agent reads and writes only inside these. None of these paths overlap with the project's daily/ folder (owned by the user's daily-log system) or with the canonical knowledge store at <wiki.roots.shared>/knowledge/ (owned by `knowledge_store` and written through the atomic 4-step contract in scripts/lib/knowledge/write.mjs). In other words: scripts/skills/wrappers live here; canonical knowledge entries live under the wiki root.",
       "properties": {
         "agent_bundle_dir": {
           "type": "string",
@@ -677,7 +677,7 @@
         },
         "dev_working_dir": {
           "type": "string",
-          "description": "Working directory for generated artefacts. Splits into shared/ (committed), local/ (gitignored), and cache/ (gitignored) subtrees via dev_working_{shared,local,cache}_subdir. Must not point at the project's daily/ folder (owned by the user's daily-log system) or at the canonical knowledge store at <paths.wiki>/knowledge/ — those are separate write surfaces with their own contracts.",
+          "description": "Working directory for generated artefacts. Splits into shared/ (committed), local/ (gitignored), and cache/ (gitignored) subtrees via dev_working_{shared,local,cache}_subdir. Must not point at the project's daily/ folder (owned by the user's daily-log system) or at the canonical knowledge store at <wiki.roots.shared>/knowledge/ — those are separate write surfaces with their own contracts.",
           "default": ".development",
           "pattern": "^\\.[^/]*(/[^/]+)*$"
         },

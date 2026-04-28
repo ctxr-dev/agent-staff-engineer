@@ -1,7 +1,8 @@
 // scripts/lib/knowledge/frontmatter.mjs
 //
 // Parse and serialise the YAML frontmatter that gates every knowledge
-// entry under <paths.wiki>/knowledge/<domain>/<slug>.md.
+// entry under <wikiRoot>/knowledge/<domain>/<slug>.md, where wikiRoot
+// is the configured wiki root (typically `wiki.roots.shared`).
 //
 // We use gray-matter (already a runtime dep of the bundle) to read; we
 // render the YAML ourselves to keep field ordering deterministic so two

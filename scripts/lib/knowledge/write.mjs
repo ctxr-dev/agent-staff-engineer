@@ -47,7 +47,7 @@ import { query as queryEntries } from "./query.mjs";
  * Write one knowledge entry through the atomic 4-step sequence.
  *
  * @param {object} args
- * @param {string} args.wikiRoot       absolute path to <paths.wiki>
+ * @param {string} args.wikiRoot       absolute path to the configured wiki root (typically `wiki.roots.shared`)
  * @param {string} args.domain         domain slug under knowledge/ (e.g. "patterns", "incidents")
  * @param {string} args.slug           entry slug (matches data.id; written as <slug>.md)
  * @param {object} args.data           frontmatter object; full schema fields required
@@ -123,8 +123,26 @@ export function writeEntry(args, _deps = {}) {
     return fail(1, `step 1 (write markdown): ${err?.message ?? String(err)}`);
   }
 
-  // Step 2a — local frontmatter schema check.
-  const local = validateFn(data, path);
+  // Step 2a — local frontmatter schema check. Wrap in try/catch so an
+  // internal failure (schema file missing, ajv compile error, an
+  // injected test validator throwing) is treated as a step-2 failure
+  // and triggers rollback. Without the catch, the throw would
+  // propagate up to the caller AFTER step 1 already wrote the file,
+  // leaving the leaf on disk and violating the atomic contract.
+  let local;
+  try {
+    local = validateFn(data, path);
+  } catch (err) {
+    const rb = rollback(path, priorContent);
+    return fail(
+      2,
+      appendRollbackError(
+        `step 2 (local frontmatter validation): validator threw: ${err?.message ?? String(err)}`,
+        rb,
+        path,
+      ),
+    );
+  }
   if (!local.ok) {
     const rb = rollback(path, priorContent);
     return fail(
@@ -333,12 +351,23 @@ function runIndexRebuildCli(wikiRoot, leafDir, opts = {}) {
     return { ok: false, error: `spawn failed: ${scoped.error.message}` };
   }
   const stderrLower = (scoped.stderr || "").toLowerCase();
-  const flagUnknown =
+  // Tightened: only treat the failure as "unknown flag" when stderr
+  // explicitly mentions BOTH that the flag is unknown / unrecognised
+  // AND that it's the --scope flag specifically. The previous
+  // "usage:" / bare "scope" matches were too broad and would
+  // misclassify a real scoped-rebuild failure (e.g. a partial-tree
+  // assertion that mentions "scope" in its message) as a flag-unknown
+  // case, silently falling back to a full-tree rebuild and masking
+  // the genuine error. After skill-llm-wiki#16 lands the scoped
+  // form, this whole branch becomes dead code; we keep it tight in
+  // the meantime.
+  const looksUnknown =
     stderrLower.includes("unknown") ||
     stderrLower.includes("unrecognised") ||
-    stderrLower.includes("unrecognized") ||
-    stderrLower.includes("usage:") ||
-    (scoped.status !== 0 && stderrLower.includes("scope"));
+    stderrLower.includes("unrecognized");
+  const mentionsScope =
+    stderrLower.includes("--scope") || stderrLower.includes("'scope'") || stderrLower.includes("`scope`");
+  const flagUnknown = looksUnknown && mentionsScope;
   if (!flagUnknown) {
     if (scoped.error) {
       return { ok: false, error: `spawn failed: ${scoped.error.message}` };

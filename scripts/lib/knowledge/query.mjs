@@ -41,7 +41,7 @@ const _treeCache = new Map(); // dir absolute path -> { fingerprint, entries }
 /**
  * Locate the canonical knowledge directory under a wiki root.
  *
- * @param {string} wikiRoot  absolute path to <paths.wiki>
+ * @param {string} wikiRoot  absolute path to the configured wiki root (typically `wiki.roots.shared`)
  * @returns {string} absolute path to <wikiRoot>/knowledge
  */
 export function knowledgeDir(wikiRoot) {
@@ -79,10 +79,11 @@ export function enumerateEntries(wikiRoot, opts = {}) {
   const cacheKey = dir;
 
   // Walk the tree once; collect every leaf's (path, stat) so we can
-  // cheaply build the cache fingerprint AND avoid re-walking when the
-  // cache is hot. The fingerprint stat-only pass is one statSync per
-  // leaf — substantially cheaper than the readFileSync + YAML parse
-  // we'd otherwise repeat on a stale cache.
+  // build the cache fingerprint. Even on a hot cache we still pay
+  // for the readdir + per-leaf statSync pass (the fingerprint has
+  // to come from somewhere); what the cache saves is the per-leaf
+  // readFileSync + YAML parse + ajv-implicit-shape check below,
+  // which is ~10-100x more expensive than a single stat call.
   const leafFiles = [];
   const stack = [dir];
   while (stack.length > 0) {
