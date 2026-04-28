@@ -50,12 +50,13 @@ Every entry under "Patterns that worked" or "Patterns that failed" follows the r
 ```markdown
 ### Pattern: PR iteration must cache bot node IDs per repo
 - Status: worked
-- First seen: 2026-04-10 in PR #123 (regression: bot-less request silently no-op'd).
+- First seen: 2026-04-10.
+- Linked: PR #123
 - Remediation: capture bot ID once, store in iteration state. See `rules/pr-iteration.md`.
-- Next review: 2026-10-10.
+- Next review: 2026-10-10
 ```
 
-Four required fields: status, first seen, remediation, next review. Optional fields: linked issue or PR numbers, related canonical wiki entry, owner. The append helper enforces this shape.
+Four required input fields on the helper API: `section`, `title`, `firstSeen` (strict `YYYY-MM-DD`), `remediation`. Optional: `linked` (issue or PR refs; emitted as a dedicated bullet), `owner` (emitted only when supplied), `nextReview` (defaults to first-seen + 6 months, end-of-month clamped). The renderer emits exactly the bullet shape above; the append helper enforces idempotency on `{section, title}`.
 
 ## Anti-examples
 

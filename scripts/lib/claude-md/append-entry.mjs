@@ -10,11 +10,24 @@
 // future skills/knowledge-capture trigger that may fire more than once
 // for the same draft.
 //
-// Required entry fields per the compound-learning template:
-// status, first_seen, remediation, next_review.
-// next_review defaults to first_seen + 6 months when not supplied; this
-// matches design/claude-md-authoring.md's "older than 6 months requires
-// re-confirmation" rule.
+// Public API (camelCase JS shape):
+//   { section: "worked" | "failed" | "quirk",
+//     title: string,                           // required
+//     firstSeen: "YYYY-MM-DD",                 // required (worked/failed)
+//     remediation: string,                     // required
+//     nextReview?: "YYYY-MM-DD",               // worked/failed; defaults to firstSeen + 6 months (end-of-month clamped)
+//     linked?: string,                         // optional issue/PR refs
+//     owner?: string }                         // worked/failed only
+//
+// Quirks reuse `firstSeen` as the "last verified" date in the rendered
+// output (quirks have no explicit lastVerified field). The renderer
+// emits one bullet per quirk: `- <title>[ (linked)]. Remediation: <r>.
+// Last verified: <firstSeen>.`
+//
+// CLI flag names use kebab-case (--first-seen, --next-review); the
+// renderer maps camelCase JS keys to the snake_case field names that
+// appear in the human-facing markdown output (Status, First seen,
+// Linked, Remediation, Owner, Next review).
 
 import { readTextOrNull, atomicWriteText } from "../fsx.mjs";
 import { REGISTRY_BEGIN_MARKER, REGISTRY_END_MARKER, seedRegistryInContent } from "./seed.mjs";
@@ -135,7 +148,13 @@ function renderEntry(entry) {
   const status = entry.section === "quirk" ? null : entry.section; // quirks have no status field
   const nextReview = entry.nextReview ?? defaultNextReview(entry.firstSeen);
   if (entry.section === "quirk") {
-    // Quirks are one-liners by convention; render compactly without H3.
+    // Quirks are one-liner bullets. The CLI takes a single date input
+    // (--first-seen) which the renderer surfaces as "Last verified"
+    // because quirks describe stable codebase facts: the relevant
+    // datum is "when did a human last confirm this is still true?",
+    // not "when was it discovered". The accepted-by-API name stays
+    // `firstSeen` to keep one input-validation path; readers see
+    // "Last verified" in the bullet.
     const linked = entry.linked ? ` (${entry.linked})` : "";
     return `- ${entry.title}${linked}. Remediation: ${entry.remediation}. Last verified: ${entry.firstSeen}.`;
   }
@@ -345,14 +364,27 @@ function locateExistingEntry(sectionBody, entry) {
 
 // ---------- CLI ----------
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Direct-run detection through pathToFileURL handles Windows drive
+// letters, paths with spaces, and paths needing URL encoding. The
+// naive `file://${process.argv[1]}` template literal breaks on all
+// three. Matches the pattern other entrypoints in this bundle use.
+import { pathToFileURL } from "node:url";
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await runCli();
+}
+
+async function runCli() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.path) {
     process.stderr.write("usage: append-entry.mjs --path <CLAUDE.md> --section worked|failed|quirk --title <t> --first-seen YYYY-MM-DD --remediation <r> [--next-review YYYY-MM-DD] [--linked <ref>] [--owner <name>]\n");
     process.exit(2);
   }
   try {
-    const result = appendEntryAtPath(args.path, {
+    // appendEntryAtPath is async (it writes via atomicWriteText).
+    // Awaiting here ensures errors land in the catch block instead of
+    // becoming unhandled promise rejections, and the JSON.stringify
+    // below renders the resolved object, not a Promise.
+    const result = await appendEntryAtPath(args.path, {
       section: args.section,
       title: args.title,
       firstSeen: args["first-seen"],
@@ -363,7 +395,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     });
     process.stdout.write(JSON.stringify(result) + "\n");
   } catch (err) {
-    process.stderr.write(`append-entry: ${err.message}\n`);
+    process.stderr.write(`append-entry: ${err?.message ?? String(err)}\n`);
     process.exit(1);
   }
 }
