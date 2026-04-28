@@ -325,7 +325,14 @@ function resolveRootSkill(record, recordsByTraceId) {
     cur = parent;
     depth++;
   }
-  return typeof cur?.skill === "string" ? cur.skill : null;
+  // After the loop, `cur` is a root only when its parent_trace_id is
+  // null. Hitting the depth cap with parent_trace_id still set means
+  // the chain is corrupted (deeper than any real workflow ever
+  // produces); folding that into a phantom row would over-count.
+  // Return null so the caller drops the record the same way it drops
+  // a parent-not-in-window orphan.
+  if (cur == null || cur.parent_trace_id != null) return null;
+  return typeof cur.skill === "string" ? cur.skill : null;
 }
 
 function newSkillAcc() {

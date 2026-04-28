@@ -53,7 +53,19 @@ export const DEFAULT_RATES = {
  * @returns {number}
  */
 export function computeCostUsd(tokens, model, rates = DEFAULT_RATES) {
-  const rate = (model && rates[model]) || rates.default;
+  // Resolve the rate: model-specific entry first, fall back to the
+  // table's `default`, and FINALLY fall back to DEFAULT_RATES.default
+  // when the caller passed an override map without a `default` entry.
+  // The previous code dereferenced an undefined `rate` if the override
+  // omitted both the model AND `default`, throwing a generic "Cannot
+  // read properties of undefined" instead of producing a sensible
+  // result. Falling through to DEFAULT_RATES.default keeps cost
+  // reporting non-zero in that pathological case (callers can still
+  // pass a complete override when they need exact rates).
+  const rate =
+    (model && rates && rates[model]) ||
+    (rates && rates.default) ||
+    DEFAULT_RATES.default;
   const cost =
     (tokens.input * rate.input) +
     (tokens.output * rate.output) +
@@ -162,6 +174,22 @@ export function writeRecord(record, stateDir) {
   // second line of defence; this is the first.
   if (typeof record.skill !== "string" || !/^[a-z0-9][a-z0-9_-]*$/.test(record.skill)) {
     throw new Error(`metrics.writeRecord: invalid skill name ${JSON.stringify(record.skill)} (expected /^[a-z0-9][a-z0-9_-]*$/)`);
+  }
+  // Validate the nested `tokens` shape too: all four keys must be
+  // non-negative finite numbers. Without this check, a caller that
+  // hand-built a record (skipping buildRecord) could land a JSONL
+  // line whose tokens object is missing fields or carries strings;
+  // the read schema would reject it on aggregator-side validation,
+  // but the file would already be on disk. Fail at write time so the
+  // bad record never lands.
+  if (record.tokens == null || typeof record.tokens !== "object") {
+    throw new Error("metrics.writeRecord: record.tokens must be an object with input/output/cache_read/cache_write");
+  }
+  for (const k of ["input", "output", "cache_read", "cache_write"]) {
+    const v = record.tokens[k];
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
+      throw new Error(`metrics.writeRecord: record.tokens.${k} must be a non-negative finite number; got ${JSON.stringify(v)}`);
+    }
   }
   const date = utcDateFromIso(record.started_at);
   const dir = resolve(stateDir, "metrics");

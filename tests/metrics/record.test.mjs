@@ -119,6 +119,39 @@ test("buildRecord: rejects negative or non-finite token counts", () => {
   assert.throws(() => buildRecord({ ...validInput(), tokens: { input: NaN, output: 0, cache_read: 0, cache_write: 0 } }));
 });
 
+test("writeRecord: rejects records whose tokens shape is malformed", () => {
+  // Defends against hand-built records that skip buildRecord and would
+  // otherwise land malformed JSONL on disk. additionalProperties:false
+  // on the read schema would reject these on the next aggregator run,
+  // but the bad bytes are already on disk by then; fail at write time.
+  const dir = tmp();
+  try {
+    const r = buildRecord(validInput());
+    // Missing token field
+    const missing = { ...r, tokens: { input: 0, output: 0, cache_read: 0 } };
+    assert.throws(() => writeRecord(missing, dir), /tokens\.cache_write/);
+    // Wrong type
+    const wrongType = { ...r, tokens: { input: "10", output: 0, cache_read: 0, cache_write: 0 } };
+    assert.throws(() => writeRecord(wrongType, dir), /tokens\.input/);
+    // Missing tokens object entirely
+    const noTokens = { ...r, tokens: undefined };
+    assert.throws(() => writeRecord(noTokens, dir), /tokens must be an object/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("computeCostUsd: rates override missing the `default` entry falls back to DEFAULT_RATES.default", () => {
+  // A caller passing a partial override map without a `default` entry
+  // (and an unknown model) previously threw "Cannot read properties of
+  // undefined". Now the code falls through to DEFAULT_RATES.default so
+  // cost reporting stays non-zero.
+  const tokens = { input: 1_000_000, output: 0, cache_read: 0, cache_write: 0 };
+  const partial = { "some-other-model": { input: 1, output: 1, cache_read: 1, cache_write: 1 } };
+  const cost = computeCostUsd(tokens, "claude-opus-4-7", partial);
+  assert.equal(cost, DEFAULT_RATES.default.input);
+});
+
 test("writeRecord: nested whitelist drops unknown keys mutated onto tokens / subagents", () => {
   // The schema sets additionalProperties: false at top level AND on the
   // nested `tokens` and `subagents` objects. orderedRecord() now mirrors

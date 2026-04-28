@@ -77,14 +77,30 @@ async function main() {
     ? loadPreviousAvgCost(String(flags["prev-week-json"]))
     : new Map();
 
+  // Threshold flags. Fail-fast on invalid values rather than silently
+  // dropping the threshold: a typo like `--cache-min=7` or
+  // `--token-ceiling=-1` previously meant the report ran without that
+  // threshold applied, which is surprising in ops usage where the user
+  // expects red flags AND would not notice the omission until they
+  // skim the rendered markdown.
   const thresholds = {};
   if (flags["cache-min"] != null) {
-    const n = Number(flags["cache-min"]);
-    if (Number.isFinite(n) && n >= 0 && n <= 1) thresholds.cache_hit_rate_min = n;
+    const raw = flags["cache-min"];
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || n > 1) {
+      process.stderr.write(`error: --cache-min must be a number in [0, 1]; got ${JSON.stringify(raw)}\n`);
+      process.exit(2);
+    }
+    thresholds.cache_hit_rate_min = n;
   }
   if (flags["token-ceiling"] != null) {
-    const n = Number(flags["token-ceiling"]);
-    if (Number.isFinite(n) && n >= 0) thresholds.per_skill_token_ceiling = Math.trunc(n);
+    const raw = flags["token-ceiling"];
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      process.stderr.write(`error: --token-ceiling must be a non-negative number; got ${JSON.stringify(raw)}\n`);
+      process.exit(2);
+    }
+    thresholds.per_skill_token_ceiling = Math.trunc(n);
   }
 
   const rollup = aggregate(records, {
