@@ -111,7 +111,9 @@ test("writeRecord: appends one JSONL line per invocation, file keyed by UTC date
   try {
     const r = buildRecord(validInput());
     const file = writeRecord(r, dir);
-    assert.ok(file.endsWith("metrics/2026-04-28.jsonl"), `unexpected path: ${file}`);
+    // Use join() for the suffix so the assertion is portable across
+    // POSIX (`/`) and Windows (`\`) path separators.
+    assert.ok(file.endsWith(join("metrics", "2026-04-28.jsonl")), `unexpected path: ${file}`);
     const body = readFileSync(file, "utf8");
     // Single line + trailing newline.
     assert.equal(body.split("\n").length, 2);

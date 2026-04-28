@@ -23,7 +23,7 @@
 // (useful in tests and when a model's rate changes between releases).
 
 import { mkdirSync, appendFileSync, existsSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 
 // Per-million-token rates in USD. Source: documented Anthropic public
@@ -235,10 +235,31 @@ function int(v) {
  * @returns {string}
  */
 export function utcDateFromIso(iso) {
-  if (typeof iso !== "string" || !/^\d{4}-\d{2}-\d{2}T/.test(iso)) {
-    throw new Error(`metrics: started_at must be ISO 8601 with date prefix; got ${JSON.stringify(iso)}`);
+  if (typeof iso !== "string") {
+    throw new Error(`metrics: started_at must be ISO 8601; got ${JSON.stringify(iso)}`);
   }
-  return iso.slice(0, 10);
+  // Two acceptable shapes:
+  //   1. Strict UTC form ending in `Z`: slice the date prefix directly.
+  //   2. ISO with a timezone offset: convert to UTC via Date so the
+  //      file-boundary date reflects the UTC calendar day, NOT the
+  //      caller's local day. Without this, `2026-04-28T23:30:00-05:00`
+  //      (an instant on UTC 2026-04-29) would land in the 04-28 file.
+  if (/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(iso)) {
+    return iso.slice(0, 10);
+  }
+  if (/^\d{4}-\d{2}-\d{2}T[\d:.]+(?:[+-]\d{2}:?\d{2})$/.test(iso)) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) {
+      throw new Error(`metrics: started_at unparseable as ISO 8601; got ${JSON.stringify(iso)}`);
+    }
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  throw new Error(
+    `metrics: started_at must be ISO 8601 with Z or +/-HH:MM offset; got ${JSON.stringify(iso)}`,
+  );
 }
 
 // Resolve the .claude/state directory for a given project root. The
@@ -265,9 +286,13 @@ export function metricsDirForProject(projectRoot) {
 }
 
 // Build a portable POSIX-style relative path so callers logging
-// `recorded to <path>` get a consistent shape across OSes.
+// `recorded to <path>` get a consistent shape across OSes. Uses
+// path.relative() rather than a raw startsWith strip so unrelated
+// path prefixes (e.g. base "/a/b" vs absPath "/a/bad/file") don't
+// produce a misleading "ad/file"; relative() emits "../bad/file"
+// instead.
 export function toPosixRelative(absPath, base) {
-  const rel = absPath.startsWith(base) ? absPath.slice(base.length) : absPath;
+  const rel = relative(base, absPath);
   return rel.split(sep).filter(Boolean).join("/");
 }
 

@@ -142,10 +142,21 @@ export function aggregate(records, opts) {
   for (const r of records) {
     if (!isPlainRecord(r)) continue;
     const isSub = r.parent_trace_id != null;
-    const skill = isSub
-      ? (recordsByTraceId.get(r.parent_trace_id)?.skill ?? null)
-      : r.skill;
-    if (!skill) continue; // orphan sub-record: skip (no parent in this window)
+    // Walk the parent chain to the root skill, not just the immediate
+    // parent. A sub-invocation can itself fan out to nested subagents;
+    // each level carries its own parent_trace_id. Resolve to the
+    // top-most ancestor's skill so the per-skill row counts every
+    // descendant against the work that originated it. Handles cycles
+    // defensively via a visited set (records should never form a cycle
+    // but we don't trust adversarial input).
+    const rootSkill = isSub ? resolveRootSkill(r, recordsByTraceId) : r.skill;
+    // Sub-invocations whose parent chain leaves the aggregation window
+    // (parent record not present in this batch) are folded under the
+    // sub's OWN skill rather than dropped entirely. This costs a row
+    // for orphans, but it's correct: the cost / tokens are real and
+    // need to land somewhere; dropping them under-reports the totals.
+    const skill = rootSkill ?? (typeof r.skill === "string" ? r.skill : null);
+    if (!skill) continue; // truly malformed; nothing else to do
     const acc = skillStats.get(skill) ?? newSkillAcc();
     acc.invocations += isSub ? 0 : 1; // count top-level invocations only
     acc.cost_usd += num(r.cost_usd);
@@ -277,6 +288,31 @@ export function renderMarkdown(weekly) {
 }
 
 // ---------- internals ----------
+
+/**
+ * Walk the parent_trace_id chain back to the top-level record and
+ * return its skill. Returns null if the chain leaves the supplied
+ * record map (parent not in this aggregation window) so the caller
+ * can decide how to handle the orphan.
+ *
+ * Defends against cycles via a visited set; the chain length cap of
+ * 16 is generous (real-world subagent depth is 1 or 2) and prevents
+ * an adversarial JSONL from spinning the aggregator.
+ */
+function resolveRootSkill(record, recordsByTraceId) {
+  let cur = record;
+  const visited = new Set();
+  let depth = 0;
+  while (cur && cur.parent_trace_id != null && depth < 16) {
+    if (visited.has(cur.trace_id)) return null; // cycle
+    visited.add(cur.trace_id);
+    const parent = recordsByTraceId.get(cur.parent_trace_id);
+    if (!parent) return null; // parent not in window
+    cur = parent;
+    depth++;
+  }
+  return typeof cur?.skill === "string" ? cur.skill : null;
+}
 
 function newSkillAcc() {
   return {

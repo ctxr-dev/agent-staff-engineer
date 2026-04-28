@@ -19,8 +19,10 @@
 
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgv } from "./lib/argv.mjs";
 import { atomicWriteText } from "./lib/fsx.mjs";
+import { preflight } from "./preflight.mjs";
 import {
   isoWeekWindow,
   readRecordsInWindow,
@@ -45,9 +47,16 @@ async function main() {
   const metricsDir = flags["metrics-dir"]
     ? resolve(cwd, String(flags["metrics-dir"]))
     : resolve(cwd, ".claude", "state", "metrics");
+  // Default out-dir is intentionally OUTSIDE <paths.wiki>: the wiki
+  // tree is governed by skill-llm-wiki and demands a nested-scalable
+  // layout (rules/llm-wiki.md). Weekly rollups are flat per-week
+  // artefacts that don't fit that layout. Land them under
+  // .development/local/ (gitignored by the installer) instead, so
+  // a project can choose to commit a curated subset by hand if they
+  // want it in the wiki — the script never writes there directly.
   const outDir = flags["out-dir"]
     ? resolve(cwd, String(flags["out-dir"]))
-    : resolve(cwd, ".development", "shared", "reports", "metrics");
+    : resolve(cwd, ".development", "local", "metrics");
 
   const referenceDate = flags.week
     ? mondayFromIsoWeek(String(flags.week))
@@ -138,7 +147,14 @@ function loadPreviousAvgCost(path) {
   }
 }
 
-main().catch((err) => {
-  process.stderr.write(`error: ${err?.stack ?? err?.message ?? String(err)}\n`);
-  process.exit(1);
-});
+// Direct-run guard with the shared `?? ""` form so module imports don't
+// trigger the CLI side-effect. preflight() runs first to surface a
+// friendly error on too-old Node, matching every other bundle CLI.
+const isDirectRun = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
+if (isDirectRun) {
+  await preflight();
+  await main().catch((err) => {
+    process.stderr.write(`error: ${err?.stack ?? err?.message ?? String(err)}\n`);
+    process.exit(1);
+  });
+}
