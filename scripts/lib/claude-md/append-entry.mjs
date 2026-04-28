@@ -67,10 +67,25 @@ export function appendEntryToContent(existing, entry) {
     return { content, changed: false, action: "noop" };
   }
 
-  const newBlock =
-    `${REGISTRY_BEGIN_MARKER}\n${ensureTrailingNewline(next.body)}${REGISTRY_END_MARKER}`;
-  content = content.slice(0, block.start) + newBlock + content.slice(block.end);
+  // Preserve the file's existing line-ending style. A CLAUDE.md saved
+  // with CRLF (Windows checkout, core.autocrlf=true) should re-emit as
+  // CRLF; an LF file should stay LF. Detect the EOL by sampling the
+  // ORIGINAL content (not the renderer output, which always emits LF).
+  const eol = detectEol(content);
+  const blockBody = ensureTrailingNewline(next.body);
+  const newBlock = `${REGISTRY_BEGIN_MARKER}\n${blockBody}${REGISTRY_END_MARKER}`;
+  const reEoled = eol === "\r\n" ? newBlock.replace(/\r?\n/g, "\r\n") : newBlock;
+  content = content.slice(0, block.start) + reEoled + content.slice(block.end);
   return { content, changed: true, action: next.action };
+}
+
+function detectEol(text) {
+  // Use the FIRST line ending observed; the file is presumed
+  // self-consistent. CRLF wins when present at the first newline.
+  if (typeof text !== "string" || text.length === 0) return "\n";
+  const idx = text.indexOf("\n");
+  if (idx === -1) return "\n";
+  return idx > 0 && text[idx - 1] === "\r" ? "\r\n" : "\n";
 }
 
 /**
@@ -364,12 +379,19 @@ function locateExistingEntry(sectionBody, entry) {
 
 // ---------- CLI ----------
 
-// Direct-run detection through pathToFileURL handles Windows drive
-// letters, paths with spaces, and paths needing URL encoding. The
-// naive `file://${process.argv[1]}` template literal breaks on all
-// three. Matches the pattern other entrypoints in this bundle use.
+// Direct-run detection through pathToFileURL with the `?? ""` form
+// matches the convention every other bundle entrypoint uses
+// (scripts/adapt.mjs, scripts/preflight.mjs). The empty-string
+// fallback handles the rare case where process.argv[1] is undefined
+// so pathToFileURL doesn't throw. preflight() runs first so a
+// too-old Node version surfaces the same friendly error other CLIs
+// produce.
 import { pathToFileURL } from "node:url";
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+import { preflight } from "../../preflight.mjs";
+
+const isDirectRun = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
+if (isDirectRun) {
+  await preflight();
   await runCli();
 }
 

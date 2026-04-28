@@ -68,7 +68,16 @@ Four required input fields on the helper API: `section`, `title`, `firstSeen` (s
 
 ## Seeding
 
-`scripts/install.mjs` seeds CLAUDE.md on a fresh install with a registry stub: empty "Project context" placeholder plus the three "Patterns that worked / failed / Codebase quirks" headings. Existing CLAUDE.md content is preserved; the seeder merges only the registry section non-destructively. Re-running the installer is idempotent.
+The seeder lives at [`scripts/lib/claude-md/seed.mjs`](../scripts/lib/claude-md/seed.mjs) and is invokable from any tool that knows the project's CLAUDE.md path:
+
+```js
+import { seedRegistryAtPath } from "./scripts/lib/claude-md/seed.mjs";
+await seedRegistryAtPath("/abs/path/to/CLAUDE.md");
+```
+
+It emits a registry stub (empty "Project context" placeholder plus the three "Patterns that worked / failed / Codebase quirks" headings) and is idempotent: existing CLAUDE.md content is preserved, the registry block is owned by a marker pair so re-runs never overwrite hand-edited entries.
+
+Wiring `scripts/install.mjs` to call `seedRegistryAtPath()` at the end of its CLAUDE.md pass is a follow-up task; until that lands, run the helper directly the first time you need a stub.
 
 ## How entries get added
 
@@ -84,7 +93,7 @@ node scripts/lib/claude-md/append-entry.mjs \
   --remediation "capture bot ID once; see rules/pr-iteration.md"
 ```
 
-The helper is idempotent: re-running with the same `--title` updates the existing entry rather than duplicating it. A future `skills/knowledge-capture` integration will call this helper on accepted drafts so the registry grows without manual editing; today the entrypoint is the CLI.
+The helper is idempotent on the `{section, title}` pair: re-running with the same `--section worked --title "X"` updates the existing entry rather than duplicating it. The same title under a DIFFERENT section is treated as a separate entry (one quirk and one worked pattern can share a title). A future `skills/knowledge-capture` integration will call this helper on accepted drafts so the registry grows without manual editing; today the entrypoint is the CLI.
 
 ## Relationship to the canonical knowledge store
 

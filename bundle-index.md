@@ -118,7 +118,7 @@ Most skills are triggered by a concrete intent. Map the user's ask to the minima
 
 - [design/claude-md-authoring.md](design/claude-md-authoring.md): the editorial guide. What belongs in CLAUDE.md vs in the wiki archive; review cadence; anti-examples.
 - [templates/claude-md/compound-learning.md](templates/claude-md/compound-learning.md): registry template (Patterns that worked / failed / Codebase quirks).
-- [scripts/lib/claude-md/seed.mjs](scripts/lib/claude-md/seed.mjs): idempotent registry seeder; install.mjs uses it on a fresh install.
+- [scripts/lib/claude-md/seed.mjs](scripts/lib/claude-md/seed.mjs): idempotent registry seeder. Invokable directly via `seedRegistryAtPath()`; the install.mjs wiring lands in a follow-up task.
 - [scripts/lib/claude-md/append-entry.mjs](scripts/lib/claude-md/append-entry.mjs): runtime upsert API + CLI for appending compound-learning entries.
 
 ### Planning and parallel exploration

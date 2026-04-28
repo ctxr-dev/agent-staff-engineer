@@ -20,6 +20,14 @@ notes:
 
 # CLAUDE.md compound-learning registry
 
+<!--
+The H1 above is the title of THIS template document. It is NOT
+emitted into a project's CLAUDE.md. The seeder
+(scripts/lib/claude-md/seed.mjs) writes the content from
+`## Project context` downward, between its begin/end markers.
+Project-side CLAUDE.md files keep whatever H1 the project author wrote.
+-->
+
 ## Project context
 
 <!-- one paragraph; ~ 200 words; what is special about this repo -->
@@ -52,9 +60,11 @@ supplied. `Next review` defaults to first-seen + 6 months
 ### Patterns that failed
 
 <!--
-Same shape; status is "failed" or "abandoned". Always include a
-remediation pointer (what was tried and replaced) so future agents
-do not retry the same dead-end.
+Same H3 + bullet shape as "Patterns that worked"; the only
+difference is `Status: failed` (the renderer derives it from
+`--section failed`). Always include a Remediation pointer (what
+was tried and replaced) so future agents do not retry the same
+dead-end.
 -->
 
 ### Codebase quirks
