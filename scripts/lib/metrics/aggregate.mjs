@@ -101,7 +101,18 @@ export function readRecordsInWindow(metricsDir, start, end) {
   if (!st.isDirectory()) return [];
   const startKey = ymdKey(start);
   const endKey = ymdKey(end);
-  const files = readdirSync(metricsDir)
+  // Even though the statSync above proved the directory existed at
+  // T0, readdirSync can still throw at T1 if the dir is removed,
+  // permissions change, or the volume goes offline between the two
+  // calls. The aggregator's contract is "stay resilient on FS
+  // issues"; treat any failure here as an empty window.
+  let entries;
+  try {
+    entries = readdirSync(metricsDir);
+  } catch {
+    return [];
+  }
+  const files = entries
     .filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
     .filter((f) => {
       const k = f.slice(0, 10);
@@ -111,7 +122,16 @@ export function readRecordsInWindow(metricsDir, start, end) {
     .sort();
   const records = [];
   for (const f of files) {
-    const lines = readFileSync(join(metricsDir, f), "utf8").split("\n");
+    // Same TOCTOU window for the per-file read: the file might have
+    // been rotated / removed between readdirSync above and this
+    // readFileSync. Skip the file on any read error so the rollup
+    // stays computable instead of crashing the whole CLI.
+    let lines;
+    try {
+      lines = readFileSync(join(metricsDir, f), "utf8").split("\n");
+    } catch {
+      continue;
+    }
     for (const line of lines) {
       if (line.length === 0) continue;
       let parsed;

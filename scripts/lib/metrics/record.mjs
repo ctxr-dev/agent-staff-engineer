@@ -227,6 +227,39 @@ export function writeRecord(record, stateDir) {
   if (!validExits.has(record.exit)) {
     throw new Error(`metrics.writeRecord: record.exit must be one of ${[...validExits].join(", ")}; got ${JSON.stringify(record.exit)}`);
   }
+  // Optional top-level fields. orderedRecord copies model and
+  // mcp_servers_used through verbatim; the schema specifies their
+  // shapes (string for model; non-empty string array for
+  // mcp_servers_used). A caller that mutated the record after
+  // buildRecord could otherwise land schema-invalid JSONL on disk —
+  // valid JSON, but rejected by every downstream consumer that ran
+  // ajv against the schema. Validate here so the bad bytes never
+  // reach disk.
+  if (record.model !== undefined && typeof record.model !== "string") {
+    throw new Error(`metrics.writeRecord: record.model must be a string when present; got ${JSON.stringify(record.model)}`);
+  }
+  if (record.mcp_servers_used !== undefined) {
+    if (!Array.isArray(record.mcp_servers_used)) {
+      throw new Error(`metrics.writeRecord: record.mcp_servers_used must be an array of strings when present; got ${JSON.stringify(record.mcp_servers_used)}`);
+    }
+    for (const item of record.mcp_servers_used) {
+      if (typeof item !== "string" || item.length === 0) {
+        throw new Error(`metrics.writeRecord: record.mcp_servers_used items must be non-empty strings; got ${JSON.stringify(item)}`);
+      }
+    }
+  }
+  if (record.subagents !== undefined) {
+    const sa = record.subagents;
+    if (sa == null || typeof sa !== "object") {
+      throw new Error(`metrics.writeRecord: record.subagents must be an object when present; got ${JSON.stringify(sa)}`);
+    }
+    for (const k of ["count", "total_tokens"]) {
+      const v = sa[k];
+      if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || !Number.isInteger(v)) {
+        throw new Error(`metrics.writeRecord: record.subagents.${k} must be a non-negative integer when present; got ${JSON.stringify(v)}`);
+      }
+    }
+  }
   const date = utcDateFromIso(record.started_at, "started_at");
   const dir = resolve(stateDir, "metrics");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

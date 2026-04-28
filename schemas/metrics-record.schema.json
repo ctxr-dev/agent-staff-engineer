@@ -17,12 +17,13 @@
   "properties": {
     "trace_id": {
       "type": "string",
-      "minLength": 1,
-      "description": "Stable identifier for this invocation. Sub-invocations carry the parent's trace_id in parent_trace_id."
+      "pattern": "^t-[0-9a-f]{16}$",
+      "description": "Stable identifier for this invocation. Format: `t-` prefix + 16 lowercase hex chars (matches scripts/lib/metrics/record.mjs::newTraceId). Sub-invocations carry the parent's trace_id in parent_trace_id; the writer enforces the same pattern at write time."
     },
     "parent_trace_id": {
       "type": ["string", "null"],
-      "description": "Set on sub-invocations (subagent or pre-hydrate); null for top-level invocations.",
+      "pattern": "^t-[0-9a-f]{16}$",
+      "description": "Set on sub-invocations (subagent or pre-hydrate); null for top-level invocations. Same shape as trace_id when present.",
       "default": null
     },
     "skill": {
