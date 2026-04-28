@@ -10,7 +10,7 @@
 //     wiki tooling; the human authoring path goes through leaves only)
 
 import { readFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
@@ -60,7 +60,17 @@ export function validateEntry(data, entryPath) {
   }
   // Schema-independent invariants:
   if (typeof data?.id === "string" && typeof entryPath === "string" && entryPath.length > 0) {
-    const base = basename(entryPath).replace(/\.md$/i, "");
+    // Platform-agnostic basename: split on either separator and
+    // take the last non-empty segment. path.basename() uses the
+    // host's native separator and would not split a Windows-style
+    // path on POSIX (or vice versa), which the rest of this
+    // module already handles via /[\\/]/ for the knowledge-segment
+    // check. Mirror that approach here so the same `data.id` ->
+    // filename invariant fires regardless of which separator the
+    // caller passed.
+    const segments = entryPath.split(/[\\/]+/).filter(Boolean);
+    const last = segments.length > 0 ? segments[segments.length - 1] : entryPath;
+    const base = last.replace(/\.md$/i, "");
     if (data.id !== base) {
       errors.push(`/id "${data.id}" must match the filename basename "${base}" (without .md)`);
     }

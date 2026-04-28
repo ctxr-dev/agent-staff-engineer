@@ -15,11 +15,24 @@
 //      actual SQLite write.
 //
 // Failure semantics:
-//   - Any step failing aborts and rolls back step 1 (the markdown file
-//     is deleted) so the wiki tree never lands in a half-state.
-//   - Step 4's stub is a soft failure: the function returns successfully
-//     but writes a marker at .claude/state/reindex-pending so the next
-//     run can fast-forward the SQLite layer once the follow-up lands.
+//   - Steps 1, 2, 3 are HARD-FAIL with rollback. Rollback is
+//     restore-or-delete depending on whether step 1 was an
+//     UPDATE (file existed before this call; we snapshot prior
+//     contents and restore them on rollback) or a NEW write
+//     (no prior file; rollback deletes the leaf). Same-path
+//     updates are not collisions per step 0; this preserves the
+//     prior version on a step-2/3 failure instead of silently
+//     deleting it.
+//   - On a step-3 failure the rollback ALSO runs a full-tree
+//     index-rebuild against the post-rollback tree so a partial
+//     index update from the failed scoped rebuild cannot leave
+//     dangling references to a now-missing leaf.
+//   - Step 4's stub is BEST-EFFORT: a failure does NOT roll back
+//     the wiki (which is already consistent). The function returns
+//     ok:true with a warning, and a marker at
+//     .claude/state/reindex-pending lets the next session-start
+//     incremental reindex fast-forward the SQLite layer once the
+//     follow-up lands.
 //
 // Pure-ish: writes to disk + invokes external CLIs; no network. Tests
 // inject `runSkillLlmWiki` and `runIndexRebuild` to drive failure paths

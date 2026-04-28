@@ -69,6 +69,26 @@ test("validateEntry: type must be 'leaf' for entries under knowledge/", () => {
   assert.ok(r.errors.some((e) => e.includes('/type must be "leaf"')));
 });
 
+test("validateEntry: id-vs-basename invariant works on cross-style paths", () => {
+  // The basename derivation must split on either separator so a
+  // Windows-style path supplied to a POSIX host (and vice versa)
+  // still computes the right basename. Without segment-splitting,
+  // path.basename() on POSIX treats `C:\\repo\\...\\foo.md` as a
+  // single token and the invariant would never fire (or worse,
+  // would falsely fire because `base` becomes the whole string).
+  const winPath = "C:\\repo\\wiki\\knowledge\\patterns\\pr-iteration-bot-id.md";
+  const posixPath = "/abs/wiki/knowledge/patterns/pr-iteration-bot-id.md";
+  for (const p of [winPath, posixPath]) {
+    // Right id matches basename: passes the basename invariant.
+    const r1 = validateEntry(validData(), p);
+    assert.equal(r1.ok, true, `valid id should pass on path: ${p}; errors: ${r1.errors.join(", ")}`);
+    // Mismatched id triggers the invariant.
+    const r2 = validateEntry({ ...validData(), id: "different-slug" }, p);
+    assert.equal(r2.ok, false, `id != basename should fail on path: ${p}`);
+    assert.ok(r2.errors.some((e) => e.includes("must match the filename basename")));
+  }
+});
+
 test("validateEntry: knowledge/ segment detected on cross-style paths (POSIX + Windows)", () => {
   // The path-separator check must be platform-agnostic so a Windows host
   // that received a POSIX path (and vice versa) still applies the

@@ -11,14 +11,23 @@
 //     `type: "dir"` matches the legacy bare-string behaviour.
 //
 // Idempotency:
-//   - "Already listed" is determined by isListed(), which normalises
-//     leading / trailing slashes and trims comments before comparing.
-//     A directory entry written as `/path/` and a file entry written
-//     as `/path` therefore collide — when a caller asks for one and
-//     the other already exists, the helper does NOT overwrite the
-//     existing line. Mixing types for the same path produces a
-//     stalemate; callers that genuinely need to switch a path from
-//     dir to file (or vice versa) edit the .gitignore by hand.
+//   - "Already listed" is determined by isListed(). For BARE-STRING
+//     callers (the legacy form), match is loose: any line whose
+//     normalised path equals the target counts, regardless of
+//     trailing slash. So `/path/` and `/path` both shadow a
+//     bare-string `path` request — preserving the historical
+//     byte-stable behaviour for existing call sites.
+//   - For OBJECT-FORM callers (`{ pattern, type }`), match is
+//     STRICT: the existing line must ALSO match the requested
+//     kind. A stale `/path/` (dir form) does NOT block a fresh
+//     `{ pattern: "path", type: "file" }` request, and the two
+//     forms can coexist on disk. This avoids the failure mode
+//     where a stale dir-form line for a regenerable file path
+//     (e.g. `.claude/state/knowledge-index.db/` left behind by an
+//     older installer) silently masks the corrected file-form
+//     ignore and leaves the file unignored. Callers that need to
+//     switch a path between forms can simply add the typed entry;
+//     ops can then prune the stale line by hand if they care.
 //
 // The installer typically adds two patterns for the `.development/` folder:
 // `.development/local/` (per-user artefacts) and `.development/cache/` (regen
