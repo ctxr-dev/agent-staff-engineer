@@ -65,6 +65,8 @@
     "subagents": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["count", "total_tokens"],
+      "description": "When present, BOTH count and total_tokens are required. The writer (scripts/lib/metrics/record.mjs::writeRecord) enforces the same rule at write time.",
       "properties": {
         "count": { "type": "integer", "minimum": 0 },
         "total_tokens": { "type": "integer", "minimum": 0 }

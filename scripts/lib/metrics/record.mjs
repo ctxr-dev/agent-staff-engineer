@@ -142,6 +142,22 @@ export function buildRecord(input) {
   if (input.trace_id != null && (typeof input.trace_id !== "string" || !/^t-[0-9a-f]{16}$/.test(input.trace_id))) {
     throw new Error(`metrics.buildRecord: trace_id must match /^t-[0-9a-f]{16}$/ when supplied; got ${JSON.stringify(input.trace_id)}`);
   }
+  // ISO 8601 shape for started_at + ended_at. utcDateFromIso accepts
+  // both Z-form and offset-form and rejects naive timestamps; running
+  // it once here surfaces a malformed value at buildRecord time
+  // instead of writeRecord time. The result is discarded; we just
+  // want the throw on bad input.
+  utcDateFromIso(input.started_at, "started_at");
+  utcDateFromIso(input.ended_at, "ended_at");
+  if (input.exit != null) {
+    const validExits = new Set(["success", "halt", "fault", "error", "cancelled"]);
+    if (!validExits.has(input.exit)) {
+      throw new Error(`metrics.buildRecord: exit must be one of ${[...validExits].join(", ")} when present; got ${JSON.stringify(input.exit)}`);
+    }
+  }
+  if (input.model != null && typeof input.model !== "string") {
+    throw new Error(`metrics.buildRecord: model must be a string when present; got ${JSON.stringify(input.model)}`);
+  }
   const tokens = normaliseTokens(input.tokens);
   const record = {
     trace_id: input.trace_id ?? newTraceId(),
@@ -220,8 +236,10 @@ export function writeRecord(record, stateDir) {
   if (typeof record.trace_id !== "string" || !/^t-[0-9a-f]{16}$/.test(record.trace_id)) {
     throw new Error(`metrics.writeRecord: record.trace_id must match /^t-[0-9a-f]{16}$/; got ${JSON.stringify(record.trace_id)}`);
   }
-  if (record.parent_trace_id != null && typeof record.parent_trace_id !== "string") {
-    throw new Error(`metrics.writeRecord: record.parent_trace_id must be a string or null; got ${JSON.stringify(record.parent_trace_id)}`);
+  if (record.parent_trace_id != null) {
+    if (typeof record.parent_trace_id !== "string" || !/^t-[0-9a-f]{16}$/.test(record.parent_trace_id)) {
+      throw new Error(`metrics.writeRecord: record.parent_trace_id must match /^t-[0-9a-f]{16}$/ when present; got ${JSON.stringify(record.parent_trace_id)}`);
+    }
   }
   if (typeof record.started_at !== "string") {
     throw new Error(`metrics.writeRecord: record.started_at must be an ISO 8601 string; got ${JSON.stringify(record.started_at)}`);
