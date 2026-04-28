@@ -6,9 +6,16 @@
 // (aggregate.mjs) reads these files to produce weekly rollups.
 //
 // Record shape: schemas/metrics-record.schema.json. The recorder
-// produces records that conform to that schema; aggregate-time
-// validation is the consumer's job (record-time validation would
-// add latency to every skill invocation for marginal value).
+// runs lightweight runtime validation BEFORE appending each JSONL
+// line: pattern checks on trace_id / parent_trace_id / skill,
+// shape checks on tokens / subagents / mcp_servers_used, RFC3339
+// shape on started_at / ended_at, exit-enum membership, etc. (see
+// buildRecord + writeRecord). Full ajv schema validation is NOT
+// run on every write — that would add hot-path latency for the
+// recorder. The aggregator side stays loose by design too (see
+// aggregate.mjs::readRecordsInWindow); third-party consumers
+// that want strict schema enforcement can run ajv against the
+// schema themselves.
 //
 // orderedRecord() projects every object level through an explicit
 // whitelist: the top-level keys against RECORD_KEY_ORDER, and the

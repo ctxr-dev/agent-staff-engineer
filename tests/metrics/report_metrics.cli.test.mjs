@@ -6,7 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -87,15 +87,27 @@ test("report_metrics CLI: happy path runs against an empty metrics dir and write
     mkdirSync(join(dir, ".claude", "state", "metrics"), { recursive: true });
     const r = runCli(["--weekly"], dir);
     assert.equal(r.status, 0, `stderr: ${r.stderr}`);
-    // Stdout should contain the rendered markdown header.
     // Rendered header is `# Week <YYYY-Www>`.
     assert.match(r.stdout, /^# Week \d{4}-W\d{2}/m);
-    // JSON + markdown should land in the default out-dir.
+    // The CLI defaults the out-dir to .claude/state/metrics-weekly
+    // and writes <isoWeek>.json + .md atomically. Pick the iso week
+    // out of the rendered header so the assertion is independent of
+    // the wall-clock at test time.
+    const isoWeekMatch = /^# Week (\d{4}-W\d{2})/m.exec(r.stdout);
+    assert.ok(isoWeekMatch, `expected an iso-week heading in stdout, got: ${r.stdout}`);
+    const isoWeek = isoWeekMatch[1];
     const outDir = join(dir, ".claude", "state", "metrics-weekly");
-    const files = readFileSync; // referenced to keep import alive across linter passes
-    assert.ok(files);
-    // We cannot enumerate without readdir here, but the success exit
-    // code + the markdown stdout proves the write succeeded.
+    assert.ok(existsSync(outDir), `out-dir should exist after run: ${outDir}`);
+    const entries = readdirSync(outDir).sort();
+    assert.deepEqual(entries, [`${isoWeek}.json`, `${isoWeek}.md`]);
+    // JSON parses + matches the iso week the markdown reported.
+    const json = JSON.parse(readFileSync(join(outDir, `${isoWeek}.json`), "utf8"));
+    assert.equal(json.iso_week, isoWeek);
+    assert.equal(json.totals.invocations, 0);
+    // Markdown round-trips byte-for-byte against the rendered stdout
+    // (modulo the trailing "rollup written to" pointer line).
+    const md = readFileSync(join(outDir, `${isoWeek}.md`), "utf8");
+    assert.match(md, new RegExp(`^# Week ${isoWeek}`, "m"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

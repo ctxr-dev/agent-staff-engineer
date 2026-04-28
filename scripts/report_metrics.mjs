@@ -17,7 +17,7 @@
 // The JSON rollup is the durable artefact (other tools consume it); the
 // markdown is the human-readable view.
 
-import { mkdirSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgv, boolFlag } from "./lib/argv.mjs";
@@ -133,7 +133,31 @@ async function main() {
   });
   const md = renderMarkdown(rollup);
 
-  if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
+  // Out-dir guard: if the path exists but is not a directory (e.g.
+  // user pointed `--out-dir` at a file), surface a friendly error
+  // and exit 2 instead of letting atomicWriteText surface an opaque
+  // EISDIR/EACCES at write time. Same shape as the metrics-dir
+  // guard in aggregate.mjs::readRecordsInWindow.
+  if (existsSync(outDir)) {
+    let outStat;
+    try {
+      outStat = statSync(outDir);
+    } catch (err) {
+      process.stderr.write(`error: --out-dir ${JSON.stringify(outDir)} stat failed: ${err?.message ?? String(err)}\n`);
+      process.exit(2);
+    }
+    if (!outStat.isDirectory()) {
+      process.stderr.write(`error: --out-dir ${JSON.stringify(outDir)} exists but is not a directory\n`);
+      process.exit(2);
+    }
+  } else {
+    try {
+      mkdirSync(outDir, { recursive: true });
+    } catch (err) {
+      process.stderr.write(`error: --out-dir ${JSON.stringify(outDir)} could not be created: ${err?.message ?? String(err)}\n`);
+      process.exit(2);
+    }
+  }
   const jsonPath = join(outDir, `${window.isoWeek}.json`);
   const mdPath = join(outDir, `${window.isoWeek}.md`);
   // Atomic writes (write-to-temp + rename) so a SIGINT mid-run never
