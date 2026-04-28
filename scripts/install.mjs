@@ -833,7 +833,7 @@ for (const file of ruleFiles) {
       if (seeded.changed) content = seeded.content;
     } catch (err) {
       process.stderr.write(
-        `install: CLAUDE.md compound-learning registry seed skipped (${err.message}).\n` +
+        `install: CLAUDE.md compound-learning registry seed skipped (${err?.message ?? String(err)}).\n` +
           `Fix the registry marker pair in ${targetPath} and re-run --update; the managed block has been refreshed in the meantime.\n`
       );
     }

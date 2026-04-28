@@ -155,9 +155,13 @@ function validateEntry(entry) {
       `section must be one of ${[...VALID_SECTIONS].join(", ")}; got ${JSON.stringify(entry.section)}`,
     );
   }
+  // Required strings. Reject whitespace-only values too — without the
+  // trim() check, `--title "   "` would pass and render an empty H3
+  // line / blank bullet, polluting the registry. The CLI usage layer
+  // applies the same check before calling appendEntryToContent.
   for (const field of ["title", "firstSeen", "remediation"]) {
-    if (typeof entry[field] !== "string" || entry[field].length === 0) {
-      throw new Error(`${field} is required and must be a non-empty string`);
+    if (typeof entry[field] !== "string" || entry[field].trim().length === 0) {
+      throw new Error(`${field} is required and must be a non-empty (non-whitespace-only) string`);
     }
   }
   if (!isValidIsoDate(entry.firstSeen)) {
@@ -169,11 +173,12 @@ function validateEntry(entry) {
   // Optional string fields. Without these checks a bare CLI flag
   // (parseArgv yields boolean `true` for `--linked` without a value)
   // would render into CLAUDE.md as `Linked: true` / `Owner: true`.
-  // Reject anything that is not a non-empty string.
+  // Whitespace-only values are also rejected: a `--linked "   "`
+  // would otherwise render as a blank bullet on disk.
   for (const field of ["linked", "owner"]) {
     if (entry[field] == null) continue;
-    if (typeof entry[field] !== "string" || entry[field].length === 0) {
-      throw new Error(`${field} must be a non-empty string when provided; got ${JSON.stringify(entry[field])}`);
+    if (typeof entry[field] !== "string" || entry[field].trim().length === 0) {
+      throw new Error(`${field} must be a non-empty (non-whitespace-only) string when provided; got ${JSON.stringify(entry[field])}`);
     }
   }
   // Quirk titles render as one-line bullets with an OPTIONAL trailing
@@ -537,15 +542,16 @@ async function runCli() {
   // --flag=value, --flag value.
   const { parseArgv } = await import("../argv.mjs");
   const { flags } = parseArgv(process.argv.slice(2));
-  // Required CLI flags. Each must be a non-empty string. parseArgv
-  // returns boolean `true` for a bare `--flag` (no value supplied);
-  // accepting `true` would pass a boolean down to validateEntry /
-  // readTextOrNull and surface a confusing TypeError instead of the
-  // usage message. Surface the missing flag by name so the user can
-  // fix the command line directly.
+  // Required CLI flags. Each must be a non-empty (non-whitespace-only)
+  // string. parseArgv returns boolean `true` for a bare `--flag` (no
+  // value supplied); accepting `true` would pass a boolean down to
+  // validateEntry / readTextOrNull and surface a confusing TypeError.
+  // A whitespace-only value (`--title "   "`) also fails fast here
+  // so the user gets the usage line instead of a generic "is required"
+  // error from the deeper validateEntry call.
   const requiredFlags = ["path", "section", "title", "first-seen", "remediation"];
   const missingFlags = requiredFlags.filter(
-    (k) => typeof flags[k] !== "string" || flags[k].length === 0,
+    (k) => typeof flags[k] !== "string" || flags[k].trim().length === 0,
   );
   if (missingFlags.length > 0) {
     process.stderr.write(
