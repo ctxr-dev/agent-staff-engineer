@@ -443,7 +443,12 @@ async function runCli() {
   // --flag=value, --flag value.
   const { parseArgv } = await import("../argv.mjs");
   const { flags } = parseArgv(process.argv.slice(2));
-  if (!flags.path) {
+  // `--path` without a value comes back as boolean `true` (parseArgv's
+  // bare-flag form). `if (!flags.path)` would treat `true` as a valid
+  // path and pass a boolean down the line, where readTextOrNull
+  // explodes with a confusing TypeError instead of a usage message.
+  // Require an actual non-empty string.
+  if (typeof flags.path !== "string" || flags.path.length === 0) {
     process.stderr.write("usage: append-entry.mjs --path <CLAUDE.md> --section worked|failed|quirk --title <t> --first-seen YYYY-MM-DD --remediation <r> [--next-review YYYY-MM-DD] [--linked <ref>] [--owner <name>]\n");
     process.exit(2);
   }
