@@ -935,6 +935,36 @@ if (opsConfig.paths.gitignore_dev_working_dir !== false) {
     `${opsConfig.paths.dev_working_dir}/${cacheSub}`,
   ]);
 }
+
+// Metrics state ALWAYS gets gitignored, regardless of the
+// gitignore_dev_working_dir flag: that flag is specifically about whether
+// `${dev_working_dir}/local` and `${dev_working_dir}/cache` should be
+// ignored. The metrics state lives under `.claude/state/`, an entirely
+// different surface that nobody wants in git: the JSONL records contain
+// trace_ids, started_at / ended_at timestamps, token counts, and
+// cost_usd; the weekly rollup files contain the same data aggregated.
+// Both are local artefacts (not code), and would clutter the diff if
+// committed accidentally. Keeping the gitignore here outside the
+// dev_working_dir flag means a project that turns off the .development
+// gitignore (e.g. because it wants to commit shared/) does not silently
+// lose the metrics-state ignore at the same time.
+await ensureGitignore(TARGET, [
+  // Per-skill metrics records (JSONL, per-day) under .claude/state/metrics/.
+  // The recorder writes: trace_id (random hex), parent_trace_id, skill name,
+  // started_at / ended_at (ISO timestamps), model id, token counts
+  // (input/output/cache_read/cache_write), cost_usd, subagent counts,
+  // mcp_servers_used (server names only), and the exit status. No PII;
+  // no payloads; no diffs.
+  ".claude/state/metrics/",
+  // Weekly rollup output from scripts/report_metrics.mjs. Lands under
+  // .claude/state/metrics-weekly/, NOT under .development/**, because
+  // the .development/* roots are wiki-governed (rules/llm-wiki.md) and
+  // demand a nested-scalable layout that flat <yyyy>-Www.json per-week
+  // leaves do not fit. A project that wants a curated rollup published
+  // to its team wiki can copy from here and route the publish through
+  // the wiki skill manually.
+  ".claude/state/metrics-weekly/",
+]);
 for (const w of writes) {
   if (w.content == null) continue;
   await ensureDir(dirname(w.path));
