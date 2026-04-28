@@ -30,7 +30,12 @@
 // Linked, Remediation, Owner, Next review).
 
 import { readTextOrNull, atomicWriteText } from "../fsx.mjs";
-import { REGISTRY_BEGIN_MARKER, REGISTRY_END_MARKER, seedRegistryInContent } from "./seed.mjs";
+import {
+  REGISTRY_BEGIN_MARKER,
+  REGISTRY_END_MARKER,
+  seedRegistryInContent,
+  findRegistryMarkers,
+} from "./seed.mjs";
 
 /**
  * Append or update one compound-learning entry inside a CLAUDE.md string.
@@ -218,9 +223,13 @@ function renderEntry(entry) {
 }
 
 function extractRegistryBlock(content) {
-  const begin = content.indexOf(REGISTRY_BEGIN_MARKER);
-  const end = content.lastIndexOf(REGISTRY_END_MARKER);
-  if (begin === -1 || end === -1 || end <= begin) return null;
+  // Line-boundary anchored marker detection: a marker quoted inside a
+  // code fence or mid-paragraph prose must not be picked up as the real
+  // installer-owned block. seed.mjs::findRegistryMarkers enforces the
+  // anchoring once for both readers and writers.
+  const located = findRegistryMarkers(content);
+  if (!located) return null;
+  const { begin, end } = located;
   // Body lives between the marker lines (exclusive of both). The newline
   // after the marker may be `\n` (POSIX) or `\r\n` (Windows / a CRLF
   // checkout); skip whichever is there so the body slice doesn't begin

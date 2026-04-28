@@ -1269,23 +1269,28 @@ async function runUninstall({ dryRun = false } = {}) {
     }
 
     // The project-level CLAUDE.md is a managed-block injection, not a wrapper
-    // file. Strip the managed block AND the compound-learning registry
-    // block (also installer-owned via scripts/lib/claude-md/seed.mjs);
-    // preserve user content outside both. If nothing of the user's
-    // remains, delete the file (we created it from scratch); otherwise
-    // keep it with their content.
+    // file. Always strip the installer-owned managed block. Strip the
+    // compound-learning registry block ONLY when its body is pristine
+    // (matches the seed stub byte-for-byte modulo whitespace) — once a
+    // human or append-entry.mjs has added real content, that content
+    // belongs to the project and survives uninstall. Anything outside
+    // both blocks is preserved either way.
     if (entry.kind === "project-claude-md") {
-      const { REGISTRY_BEGIN_MARKER, REGISTRY_END_MARKER } = await import(
-        "./lib/claude-md/seed.mjs"
-      );
+      const {
+        REGISTRY_BEGIN_MARKER,
+        REGISTRY_END_MARKER,
+        isPristineRegistryBlock,
+      } = await import("./lib/claude-md/seed.mjs");
       const afterManaged = removeManagedBlock(content, {
         begin: CLAUDE_MD_BEGIN_MARKER,
         end: CLAUDE_MD_END_MARKER,
       });
-      const stripped = removeManagedBlock(afterManaged, {
-        begin: REGISTRY_BEGIN_MARKER,
-        end: REGISTRY_END_MARKER,
-      });
+      const stripped = isPristineRegistryBlock(afterManaged)
+        ? removeManagedBlock(afterManaged, {
+            begin: REGISTRY_BEGIN_MARKER,
+            end: REGISTRY_END_MARKER,
+          })
+        : afterManaged;
       if (stripped === content) {
         process.stdout.write(
           `skip: ${relative(TARGET, absPath)} (managed block already absent)\n`

@@ -15,6 +15,8 @@ import {
   REGISTRY_BEGIN_MARKER,
   REGISTRY_END_MARKER,
   seedRegistryInContent,
+  findRegistryMarkers,
+  isPristineRegistryBlock,
 } from "../../scripts/lib/claude-md/seed.mjs";
 
 test("seed: absent CLAUDE.md gets a fresh registry block", () => {
@@ -73,4 +75,72 @@ test("seed: CLAUDE.md with prose AROUND markers preserves the prose verbatim", (
   const { content: after, changed } = seedRegistryInContent(wrapped);
   assert.equal(changed, false);
   assert.equal(after, wrapped);
+});
+
+test("seed: marker quoted inside a code fence is NOT detected as the real block", () => {
+  // A user-authored CLAUDE.md that documents the marker shape inside a
+  // fenced code block must not trick seedRegistryInContent into thinking
+  // the registry is already present. Line-boundary anchoring requires
+  // the marker to start at column 0 of its own line; an indented copy
+  // inside ```...``` does not qualify.
+  const fenced = [
+    "# Project CLAUDE.md",
+    "",
+    "We use this marker for the compound-learning registry:",
+    "",
+    "```",
+    `    ${REGISTRY_BEGIN_MARKER}`,
+    "    body",
+    `    ${REGISTRY_END_MARKER}`,
+    "```",
+    "",
+    "End.",
+    "",
+  ].join("\n");
+  const { content, changed } = seedRegistryInContent(fenced);
+  assert.equal(changed, true, "fenced/indented marker must not satisfy detection");
+  assert.ok(content.startsWith(fenced), "user prose preserved verbatim");
+  // The newly appended block must be a real, line-anchored marker pair.
+  const located = findRegistryMarkers(content);
+  assert.ok(located, "real block must be detectable after seed");
+});
+
+test("findRegistryMarkers: returns null when markers are missing", () => {
+  assert.equal(findRegistryMarkers("# just prose\n\n"), null);
+  assert.equal(findRegistryMarkers(""), null);
+  assert.equal(findRegistryMarkers(null), null);
+});
+
+test("findRegistryMarkers: locates real line-anchored markers", () => {
+  const { content } = seedRegistryInContent(null);
+  const located = findRegistryMarkers(content);
+  assert.ok(located);
+  assert.ok(located.begin >= 0);
+  assert.ok(located.end > located.begin);
+});
+
+test("isPristineRegistryBlock: true for fresh seed", () => {
+  const { content } = seedRegistryInContent(null);
+  assert.equal(isPristineRegistryBlock(content), true);
+});
+
+test("isPristineRegistryBlock: false when user added an entry", () => {
+  const { content: seeded } = seedRegistryInContent(null);
+  // Simulate a user appending a real entry inside the block.
+  const dirty = seeded.replace(
+    "### Patterns that worked\n\n",
+    "### Patterns that worked\n\n### Pattern: Cache invalidation\n- Status: worked\n- First seen: 2026-04-01.\n\n",
+  );
+  assert.equal(isPristineRegistryBlock(dirty), false);
+});
+
+test("isPristineRegistryBlock: tolerates CRLF newlines from a Windows checkout", () => {
+  const { content } = seedRegistryInContent(null);
+  const crlf = content.replace(/\n/g, "\r\n");
+  assert.equal(isPristineRegistryBlock(crlf), true);
+});
+
+test("isPristineRegistryBlock: false when no markers present", () => {
+  assert.equal(isPristineRegistryBlock("# unrelated content\n"), false);
+  assert.equal(isPristineRegistryBlock(""), false);
 });
