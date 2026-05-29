@@ -29,7 +29,7 @@ Concretely, before writing any leaf:
 
 Before persisting any doc under `.development/{shared,local,cache}/**`:
 
-1. Read the canonical `@ctxr/skill-llm-wiki` SKILL.md. Its path is the `source:` field of the wrapper at `.claude/skills/agent-staff-engineer_llm-wiki.md` if one exists, or the installed location reported by `npx @ctxr/kit list`. On a standard install it sits at `~/.claude/skills/ctxr-skill-llm-wiki/SKILL.md` (never assume; read the wrapper to find the current path).
+1. Read the canonical `@ctxr/skill-llm-wiki` SKILL.md. Its path is the `source:` field of the wrapper at `.claude/skills/agent-staff-engineer_llm-wiki.md` if one exists, or the installed location reported by `npx @ctxr/kit@latest list`. On a standard install it sits at `~/.claude/skills/ctxr-skill-llm-wiki/SKILL.md` (never assume; read the wrapper to find the current path).
 2. Identify the target topic wiki from `ops.config.json`:
    - Runbooks go under `wiki.roots.shared/runbooks/` by default. Nest by subject.
    - Reports go under `wiki.roots.shared/reports/` (this is what `workflow.code_review.report_dir` resolves to). Nest by date via `dynamic_subdirs.template: "{yyyy}/{mm}/{dd}"`.
@@ -56,4 +56,4 @@ Before reading anything under `.development/{shared,local,cache}/**`:
 
 ## Skill discovery
 
-The provider skill is declared in `ops.config.json -> wiki.provider`. When `wiki.required: true`, the installer refuses to apply if the skill is not installed. If the skill cannot be located at runtime (wrapper missing, uninstalled out of band), stop and tell the user to run `npx @ctxr/kit install @ctxr/skill-llm-wiki`. Do not silently write raw markdown bypassing the wiki.
+The provider skill is declared in `ops.config.json -> wiki.provider`. When `wiki.required: true`, the installer refuses to apply if the skill is not installed. If the skill cannot be located at runtime (wrapper missing, uninstalled out of band), stop and tell the user to run `npx @ctxr/kit@latest install @ctxr/skill-llm-wiki`. Do not silently write raw markdown bypassing the wiki.

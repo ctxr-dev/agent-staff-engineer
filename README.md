@@ -77,7 +77,7 @@ For projects where sibling directories have their own git repos and possibly dif
 ```bash
 # 1. Install the agent. Kit offers an interactive menu for the destination:
 #    .claude/agents/, .agents/agents/, ~/.claude/agents/, or a custom --dir.
-npx @ctxr/kit install @ctxr/agent-staff-engineer
+npx @ctxr/kit@latest install @ctxr/agent-staff-engineer
 ```
 
 Then in Claude Code, ask Claude to run the agent, for example:
@@ -107,7 +107,7 @@ The agent requires [`@ctxr/skill-llm-wiki`](https://github.com/ctxr-dev/skill-ll
 
 **What happens when it's missing:**
 
-- **Interactive install (you're sitting at a terminal):** the installer pauses, tells you which skill is missing, prints the exact command to run (`npx @ctxr/kit install @ctxr/skill-llm-wiki`), and waits for you. Run the install in another terminal, press Enter, and the agent rechecks and continues. At the prompt you can also type `help` (prints troubleshooting tips for common install failures, lets you ask the agent for help debugging) or `abort` (cancels cleanly). The installer never silently proceeds without the dependency.
+- **Interactive install (you're sitting at a terminal):** the installer pauses, tells you which skill is missing, prints the exact command to run (`npx @ctxr/kit@latest install @ctxr/skill-llm-wiki`), and waits for you. Run the install in another terminal, press Enter, and the agent rechecks and continues. At the prompt you can also type `help` (prints troubleshooting tips for common install failures, lets you ask the agent for help debugging) or `abort` (cancels cleanly). The installer never silently proceeds without the dependency.
 - **Non-interactive / scripted install (CI, `--yes`, piped stdin):** the installer prints the same "missing skill" message with the install command and exits non-zero so the pipeline fails fast. Install the skill and re-run.
 
 You can opt out entirely by setting `wiki.required: false` in `ops.config.json`, but then you own `.development/` yourself.

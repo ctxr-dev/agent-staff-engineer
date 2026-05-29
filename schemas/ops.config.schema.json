@@ -405,7 +405,7 @@
             "install_hint": {
               "type": "string",
               "description": "One-line hint shown if the provider is configured but not installed in the target project.",
-              "default": "Run: npx @ctxr/kit install @ctxr/skill-code-review  (or clone https://github.com/ctxr-dev/skill-code-review into .claude/skills/)"
+              "default": "Run: npx @ctxr/kit@latest install @ctxr/skill-code-review  (or clone https://github.com/ctxr-dev/skill-code-review into .claude/skills/)"
             }
           }
         },

@@ -28,7 +28,7 @@ agent-staff-engineer depends on a separately-installed skill for docs routing:
 Install it via kit before running `install.mjs --apply`:
 
 ```bash
-npx @ctxr/kit install @ctxr/skill-llm-wiki
+npx @ctxr/kit@latest install @ctxr/skill-llm-wiki
 ```
 
 Kit will place the skill under one of the following destinations (all satisfy the dep check):
@@ -42,7 +42,7 @@ To opt out (you will manage `.development/` manually), set `wiki.required` to `f
 ## Install via kit (recommended)
 
 ```bash
-npx @ctxr/kit install @ctxr/agent-staff-engineer
+npx @ctxr/kit@latest install @ctxr/agent-staff-engineer
 ```
 
 Kit offers an interactive menu of candidate destinations:
