@@ -151,7 +151,7 @@ describe("install.mjs wiki integration: dep check fails when stub missing", () =
     );
     assert.match(
       res.stderr,
-      /npx @ctxr\/kit install @ctxr\/skill-llm-wiki/,
+      /npx @ctxr\/kit@latest install @ctxr\/skill-llm-wiki/,
       `stderr should name the install command`,
     );
   });

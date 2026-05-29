@@ -111,7 +111,7 @@ export async function waitForRequiredSkill({
     `  Missing: ${provider}\n` +
     `  I searched:\n    ${candidates.join("\n    ")}\n\n` +
     `To install it, run this in a separate terminal:\n` +
-    `  npx @ctxr/kit install ${provider}\n\n` +
+    `  npx @ctxr/kit@latest install ${provider}\n\n` +
     `I'll wait here until it's ready.\n`,
   );
 
@@ -205,7 +205,7 @@ export async function waitForRequiredSkill({
           : `  6. If kit itself is misbehaving, consult the README for '${provider}' (usually\n` +
             `     a git clone into ~/.claude/skills/) and re-run this installer.\n\n`;
         stdout.write(
-          `\nTroubleshooting tips for 'npx @ctxr/kit install ${provider}':\n` +
+          `\nTroubleshooting tips for 'npx @ctxr/kit@latest install ${provider}':\n` +
           `  1. 'npx: command not found' -> install Node.js + npm from nodejs.org. The agent needs\n` +
           `     Node ${MIN_NODE_MAJOR} or newer.\n` +
           `  2. 'Not found in registry' -> double-check the package name: '${provider}'. A typo is the\n` +

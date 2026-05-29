@@ -368,7 +368,7 @@ if (opsConfig.wiki?.required) {
         `code-review provider: ${CODE_REVIEW_SKILL} found at ${portableRef(found, TARGET)}\n`,
       );
     } else {
-      const installHint = opsConfig.workflow?.code_review?.install_hint ?? "npx @ctxr/kit install @ctxr/skill-code-review";
+      const installHint = opsConfig.workflow?.code_review?.install_hint ?? "npx @ctxr/kit@latest install @ctxr/skill-code-review";
       const isInteractive =
         Boolean(processStdin.isTTY) &&
         Boolean(processStdout.isTTY) &&
@@ -677,7 +677,7 @@ async function waitForRequiredSkillOrExit(provider, target) {
       `It was not found at any of\n` +
       `  ${candidates.join("\n  ")}\n\n` +
       `Install it first:\n` +
-      `  npx @ctxr/kit install ${provider}\n\n` +
+      `  npx @ctxr/kit@latest install ${provider}\n\n` +
       `Then re-run this installer. To opt out (you will manage .development/ manually),\n` +
       `set 'wiki.required' to false in ops.config.json.\n`,
     );

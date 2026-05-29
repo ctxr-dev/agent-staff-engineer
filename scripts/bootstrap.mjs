@@ -1510,7 +1510,7 @@ export function compose(d, a, bundleRef = ".claude/agents/agent-staff-engineer")
         output_format: "markdown",
         report_dir: ".development/shared/reports",
         block_on_verdict: ["NO-GO"],
-        install_hint: "npx @ctxr/kit install @ctxr/skill-code-review",
+        install_hint: "npx @ctxr/kit@latest install @ctxr/skill-code-review",
       },
     },
     paths: {

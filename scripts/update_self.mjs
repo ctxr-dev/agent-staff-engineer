@@ -8,7 +8,7 @@
 //      checkout the highest (or --tag <name>), and run install.mjs --update
 //      to refresh wrappers.
 //
-//   2. npm install: the bundle was placed by `npm install`/`npx @ctxr/kit`.
+//   2. npm install: the bundle was placed by `npm install`/`npx @ctxr/kit@latest`.
 //      No ".git" folder. We identify the package name from package.json and
 //      run `npm install <name>@latest` in whichever scope the bundle lives
 //      (local node_modules or the user-global @ctxr/kit registry).
@@ -84,7 +84,7 @@ async function main() {
       `update-self: cannot detect install mode (no .git and no npm-style package layout).\n` +
         `To update manually:\n` +
         `  - git clone: cd ${BUNDLE_ABS} && git fetch --tags && git checkout <tag>\n` +
-        `  - npm:       npx @ctxr/kit install @ctxr/agent-staff-engineer@latest\n`
+        `  - npm:       npx @ctxr/kit@latest install @ctxr/agent-staff-engineer@latest\n`
     );
     process.exit(2);
   }
@@ -309,7 +309,7 @@ async function updateViaNpm(bundleAbs, opts) {
   if (installRes.status !== 0) {
     process.stderr.write(`npm install ${pkg}@latest failed:\n${installRes.stderr ?? ""}\n`);
     process.stderr.write(
-      `Try running it yourself, e.g.:\n  npm install -g ${pkg}@latest\n  or: npx @ctxr/kit install ${pkg}@latest\n`
+      `Try running it yourself, e.g.:\n  npm install -g ${pkg}@latest\n  or: npx @ctxr/kit@latest install ${pkg}@latest\n`
     );
     return false;
   }

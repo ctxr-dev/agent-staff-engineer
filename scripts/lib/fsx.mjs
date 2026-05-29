@@ -233,7 +233,7 @@ export async function safeRealpathOrExit(p, label = "path") {
     if (err && err.code === "ENOENT") {
       const hint =
         label === "bundle"
-          ? "Clone the agent bundle first, or run 'npx @ctxr/kit install @ctxr/agent-staff-engineer'.\n"
+          ? "Clone the agent bundle first, or run 'npx @ctxr/kit@latest install @ctxr/agent-staff-engineer'.\n"
           : label === "target"
           ? "Pass --target <existing-project-path> or run from inside the target project.\n"
           : `Ensure the ${label} exists before running this command.\n`;
